@@ -1,0 +1,3 @@
+/home/saykol/C/KPP/build/CMakeFiles/kpp.dir
+/home/saykol/C/KPP/build/CMakeFiles/edit_cache.dir
+/home/saykol/C/KPP/build/CMakeFiles/rebuild_cache.dir

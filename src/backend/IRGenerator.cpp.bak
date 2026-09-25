@@ -1,0 +1,278 @@
+#include "kpp/IRGenerator.hpp"
+
+#include <stdexcept>
+
+namespace kpp {
+
+// ============================================================
+// NOMBRE DE OPCODE
+// ============================================================
+
+const char* irOpcodeName(IROpcode opcode)
+{
+    switch (opcode)
+    {
+        case IROpcode::FunctionBegin:
+            return "FUNCTION";
+
+        case IROpcode::Declare:
+            return "DECLARE";
+
+        case IROpcode::Store:
+            return "STORE";
+
+        case IROpcode::Load:
+            return "LOAD";
+
+        case IROpcode::Print:
+            return "PRINT";
+
+        case IROpcode::Return:
+            return "RETURN";
+
+        case IROpcode::FunctionEnd:
+            return "END";
+    }
+
+    return "UNKNOWN";
+}
+
+// ============================================================
+// GENERAR PROGRAMA IR
+// ============================================================
+
+IRProgram IRGenerator::generate(
+    const Program& program)
+{
+    IRProgram ir;
+
+    for (const auto& function :
+         program.functions)
+    {
+        ir.functions.push_back(
+            generateFunction(*function));
+    }
+
+    return ir;
+}
+
+// ============================================================
+// GENERAR FUNCIÓN
+// ============================================================
+
+IRFunction IRGenerator::generateFunction(
+    const FunctionDeclaration& function)
+{
+    IRFunction irFunction;
+
+    irFunction.name = function.name;
+
+    // --------------------------------------------------------
+    // FUNCTION BEGIN
+    // --------------------------------------------------------
+
+    irFunction.instructions.push_back({
+        IROpcode::FunctionBegin,
+        function.name,
+        0
+    });
+
+    // --------------------------------------------------------
+    // BODY
+    // --------------------------------------------------------
+
+    for (const auto& statement :
+         function.body->statements)
+    {
+        generateStatement(
+            *statement,
+            irFunction);
+    }
+
+    // --------------------------------------------------------
+    // FUNCTION END
+    // --------------------------------------------------------
+
+    irFunction.instructions.push_back({
+        IROpcode::FunctionEnd,
+        "",
+        0
+    });
+
+    return irFunction;
+}
+
+// ============================================================
+// GENERAR SENTENCIA
+// ============================================================
+
+void IRGenerator::generateStatement(
+    const Statement& statement,
+    IRFunction& function)
+{
+    // ========================================================
+    // VARIABLE DECLARATION
+    //
+    // int x = 42;
+    //
+    // ->
+    //
+    // DECLARE x
+    // STORE x, 42
+    // ========================================================
+
+    if (auto* variableDeclaration =
+        dynamic_cast<const VariableDeclaration*>(
+            &statement))
+    {
+        // ----------------------------------------------------
+        // DECLARE
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Declare,
+            variableDeclaration->name,
+            0
+        });
+
+        // ----------------------------------------------------
+        // INITIALIZER
+        // ----------------------------------------------------
+
+        if (auto* integer =
+            dynamic_cast<const IntegerLiteral*>(
+                variableDeclaration->initializer.get()))
+        {
+            function.instructions.push_back({
+                IROpcode::Store,
+                variableDeclaration->name,
+                integer->value
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // Inicializador mediante variable
+        //
+        // int x = y;
+        //
+        // ->
+        //
+        // DECLARE x
+        // LOAD y
+        // STORE x
+        //
+        // En esta primera versión el STORE conserva
+        // el nombre de destino y value queda en 0.
+        // ----------------------------------------------------
+
+        if (auto* variable =
+            dynamic_cast<const VariableExpression*>(
+                variableDeclaration->initializer.get()))
+        {
+            function.instructions.push_back({
+                IROpcode::Load,
+                variable->name,
+                0
+            });
+
+            function.instructions.push_back({
+                IROpcode::Store,
+                variableDeclaration->name,
+                0
+            });
+
+            return;
+        }
+
+        throw std::runtime_error(
+            "K++ IR: inicializador de variable no soportado");
+    }
+
+    // ========================================================
+    // PRINT
+    // ========================================================
+
+    if (auto* printStatement =
+        dynamic_cast<const PrintStatement*>(&statement))
+    {
+        function.instructions.push_back({
+            IROpcode::Print,
+            printStatement->text,
+            0
+        });
+
+        return;
+    }
+
+    // ========================================================
+    // RETURN
+    // ========================================================
+
+    if (auto* returnStatement =
+        dynamic_cast<const ReturnStatement*>(
+            &statement))
+    {
+        // ----------------------------------------------------
+        // return 42;
+        //
+        // ->
+        //
+        // RETURN 42
+        // ----------------------------------------------------
+
+        if (auto* integer =
+            dynamic_cast<const IntegerLiteral*>(
+                returnStatement->expression.get()))
+        {
+            function.instructions.push_back({
+                IROpcode::Return,
+                "",
+                integer->value
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // return x;
+        //
+        // ->
+        //
+        // LOAD x
+        // RETURN
+        // ----------------------------------------------------
+
+        if (auto* variable =
+            dynamic_cast<const VariableExpression*>(
+                returnStatement->expression.get()))
+        {
+            function.instructions.push_back({
+                IROpcode::Load,
+                variable->name,
+                0
+            });
+
+            function.instructions.push_back({
+                IROpcode::Return,
+                "",
+                0
+            });
+
+            return;
+        }
+
+        throw std::runtime_error(
+            "K++ IR: expresión de retorno no soportada");
+    }
+
+    // ========================================================
+    // SENTENCIA NO SOPORTADA
+    // ========================================================
+
+    throw std::runtime_error(
+        "K++ IR: sentencia no soportada");
+}
+
+} // namespace kpp

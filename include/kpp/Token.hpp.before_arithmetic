@@ -1,0 +1,39 @@
+#pragma once
+
+#include <string>
+
+namespace kpp {
+
+enum class TokenType
+{
+    EndOfFile,
+
+    Identifier,
+    Number,
+    String,
+
+    KwInt,
+    KwReturn,
+    KwPrint,
+
+    Assign,
+
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+
+    Semicolon
+};
+
+struct Token
+{
+    TokenType type;
+    std::string text;
+    int line;
+    int column;
+};
+
+const char* tokenTypeName(TokenType type);
+
+}

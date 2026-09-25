@@ -1,0 +1,489 @@
+
+
+#include "kpp/X86Backend.hpp"
+#include "kpp/KolibriRuntime.hpp"
+
+#include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace kpp {
+    void X86Backend::resetTemporaries()
+    {
+        temporaries.clear();
+    }
+
+    void X86Backend::bindTemporaryToEax(
+        const std::string& temporary)
+    {
+        temporaries[temporary] = {
+            TemporaryLocation::Kind::Register,
+            0
+        };
+    }
+
+    void X86Backend::bindTemporaryToEbx(
+        const std::string& temporary)
+    {
+        temporaries[temporary] = {
+            TemporaryLocation::Kind::Register,
+            3
+        };
+    }
+
+    void X86Backend::resetVariables()
+    {
+        variables.clear();
+    }
+
+    std::size_t
+    X86Backend::allocateVariableData(
+        std::vector<std::uint8_t>& data)
+    {
+        const std::size_t offset =
+            data.size();
+
+        data.resize(
+            data.size() + 4,
+            0);
+
+        return offset;
+    }
+
+    void X86Backend::declareVariable(
+        const std::string& name,
+        std::size_t dataOffset)
+    {
+        variables[name] = {
+            dataOffset
+        };
+    }
+
+    bool X86Backend::hasTemporary(
+        const std::string& temporary) const
+    {
+        return temporaries.find(temporary)
+            != temporaries.end();
+    }
+
+    std::uint8_t X86Backend::getTemporaryRegister(
+        const std::string& temporary) const
+    {
+        const auto it =
+            temporaries.find(temporary);
+
+        if (it == temporaries.end())
+        {
+            throw std::runtime_error(
+                "K++ X86: temporal no encontrado: " +
+                temporary);
+        }
+
+        return it->second.registerCode;
+    }
+
+// ============================================================
+// CONSTANTES
+// ============================================================
+
+static constexpr std::uint32_t
+KOLIBRI_HEADER_SIZE = 36;
+
+
+// ============================================================
+// GENERATE
+// ============================================================
+
+std::vector<std::uint8_t>
+X86Backend::generate(
+    const IRProgram& program)
+{
+    /*
+     * ========================================================
+     * STRING POOL
+     * ========================================================
+     *
+     * strings[0] = título
+     * strings[1...] = PRINT
+     */
+
+    std::vector<std::string> strings;
+
+    std::vector<std::uint8_t> data;
+
+    // --------------------------------------------------------
+    // Título automático
+    // --------------------------------------------------------
+
+    strings.push_back(
+        "K++ - KolibriOS");
+
+
+    // --------------------------------------------------------
+    // Buscar PRINT
+    // --------------------------------------------------------
+
+    for (const auto& function :
+         program.functions)
+    {
+        for (const auto& instruction :
+             function.instructions)
+        {
+            if (instruction.opcode ==
+                IROpcode::Print)
+            {
+                strings.push_back(
+                    instruction.name);
+            }
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // Cantidad de PRINT
+    // --------------------------------------------------------
+
+    const std::size_t printCount =
+        strings.size() > 1
+            ? strings.size() - 1
+            : 0;
+
+
+    // ========================================================
+    // RUNTIME
+    // ========================================================
+
+    KolibriRuntime runtime;
+
+    const KolibriRuntimeResult runtimeResult =
+        runtime.emitGraphicsRuntime(
+            emitter);
+
+
+    // ========================================================
+    // MAIN BODY
+    // ========================================================
+    //
+    // Aquí comienza realmente el código generado
+    // correspondiente al programa C++.
+    //
+    // START
+    //   |
+    //   +--> DRAW_WINDOW
+    //   |
+    //   +--> MAIN_BODY
+    //
+    // MAIN_BODY
+    //   |
+    //   +--> PRINT
+    //   +--> PRINT
+    //   +--> RETURN
+    //   |
+    //   +--> EVENT_LOOP
+    //
+
+    const std::size_t mainBody =
+        emitter.size();
+
+
+    std::vector<std::size_t>
+        textPatches;
+
+
+    std::size_t
+        returnEventLoopPatch = 0;
+
+    bool
+        hasReturn = false;
+
+
+    std::size_t
+        printIndex = 0;
+
+    resetTemporaries();
+    resetVariables();
+    // ========================================================
+    // GENERAR INSTRUCCIONES IR
+    // ========================================================
+
+    for (const auto& function :
+         program.functions)
+    {
+        for (const auto& instruction :
+             function.instructions)
+        {
+            // ------------------------------------------------
+            // DECLARE
+            // ------------------------------------------------
+
+            if (instruction.opcode ==
+                IROpcode::Declare)
+            {
+                const std::size_t offset =
+                    allocateVariableData(data);
+
+                declareVariable(
+                    instruction.name,
+                    offset);
+            }
+
+            // ------------------------------------------------
+            // PRINT
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                     IROpcode::Print)
+            {
+                /*
+                 * PRINT 1 -> Y=40
+                 * PRINT 2 -> Y=70
+                 * PRINT 3 -> Y=100
+                 * PRINT 4 -> Y=130
+                 */
+
+                const std::uint32_t y =
+                    40u +
+                    static_cast<std::uint32_t>(
+                        printIndex * 30u);
+
+
+                const std::size_t patch =
+                    runtime.emitPrint(
+                        emitter,
+                        y);
+
+
+                textPatches.push_back(
+                    patch);
+
+                ++printIndex;
+            }
+
+
+            // ------------------------------------------------
+            // RETURN
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                     IROpcode::Return)
+            {
+                /*
+                 * RETURN 0
+                 *
+                 * El valor queda en EAX.
+                 *
+                 * En una aplicación gráfica K++,
+                 * RETURN devuelve el control al
+                 * runtime/event loop.
+                 */
+
+                emitter.emitMovEaxImm32(
+                    instruction.value);
+
+                emitter.emitByte(0xE9);
+
+                returnEventLoopPatch =
+                    emitter.emitRel32Placeholder();
+
+                hasReturn = true;
+
+                /*
+                 * RETURN termina la función.
+                 * No debemos generar instrucciones
+                 * posteriores de esa función.
+                 */
+                break;
+            }
+        }
+    }
+
+
+    // ========================================================
+    // RETURN IMPLÍCITO
+    // ========================================================
+
+    if (!hasReturn)
+    {
+        /*
+         * Si por alguna razón el programa no contiene
+         * RETURN, K++ genera:
+         *
+         * return 0;
+         */
+
+        emitter.emitMovEaxImm32(0);
+
+        emitter.emitByte(0xE9);
+
+        returnEventLoopPatch =
+            emitter.emitRel32Placeholder();
+    }
+
+
+    // ========================================================
+    // PATCH MAIN
+    // ========================================================
+
+    emitter.patchRel32(
+        runtimeResult.mainEntryPatch,
+        mainBody);
+
+    emitter.patchRel32(
+        runtimeResult.redrawMainPatch,
+        mainBody);
+
+
+    // ========================================================
+    // PATCH RETURN
+    // ========================================================
+
+    emitter.patchRel32(
+        returnEventLoopPatch,
+        runtimeResult.eventLoopAddress);
+
+
+    // ========================================================
+    // STRING POOL
+    // ========================================================
+
+    const std::size_t codeSize =
+        emitter.size();
+
+
+    std::vector<std::size_t>
+        stringOffsets;
+
+    for (const auto& text :
+         strings)
+    {
+        stringOffsets.push_back(
+            data.size());
+
+        for (const char c :
+             text)
+        {
+            data.push_back(
+                static_cast<std::uint8_t>(
+                    c));
+        }
+
+        // terminador C
+        data.push_back(0);
+    }
+
+
+    // ========================================================
+    // DATA BASE
+    // ========================================================
+
+    /*
+     * Dirección absoluta dentro del BIN:
+     *
+     * HEADER + CODE + DATA
+     */
+
+    const std::uint32_t
+        dataBase =
+            KOLIBRI_HEADER_SIZE +
+            static_cast<std::uint32_t>(
+                codeSize);
+
+
+    // ========================================================
+    // TITLE ADDRESS
+    // ========================================================
+
+    const std::uint32_t
+        titleAddress =
+            dataBase +
+            static_cast<std::uint32_t>(
+                stringOffsets[0]);
+
+
+    emitter.patch32(
+        runtimeResult.titleAddressPatch,
+        titleAddress);
+
+
+    // ========================================================
+    // VALIDAR PRINT PATCHES
+    // ========================================================
+
+    if (textPatches.size()
+        != printCount)
+    {
+        throw std::runtime_error(
+            "K++: cantidad de patches PRINT incorrecta");
+    }
+
+
+    // ========================================================
+    // PATCH PRINT ADDRESSES
+    // ========================================================
+
+    for (std::size_t i = 0;
+         i < printCount;
+         ++i)
+    {
+        /*
+         * strings:
+         *
+         * [0] = title
+         * [1] = PRINT 1
+         * [2] = PRINT 2
+         * [3] = PRINT 3
+         */
+
+        const std::uint32_t
+            textAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    stringOffsets[i + 1]);
+
+
+        emitter.patch32(
+            textPatches[i],
+            textAddress);
+    }
+
+
+    // ========================================================
+    // CODE + DATA
+    // ========================================================
+
+    std::vector<std::uint8_t>
+        result =
+            emitter.code();
+
+    result.insert(
+        result.end(),
+        data.begin(),
+        data.end());
+
+
+    return result;
+}
+
+
+// ============================================================
+// GENERATE FUNCTION
+// ============================================================
+
+void
+X86Backend::generateFunction(
+    const IRFunction& function)
+{
+    /*
+     * El backend principal genera actualmente
+     * el cuerpo directamente desde IRProgram.
+     *
+     * Esta función se conserva para mantener
+     * la arquitectura preparada para futuras
+     * funciones C++.
+     */
+
+    (void)function;
+}
+
+}

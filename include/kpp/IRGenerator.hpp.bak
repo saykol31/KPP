@@ -1,0 +1,45 @@
+#pragma once
+
+#include "AST.hpp"
+#include "IR.hpp"
+
+namespace kpp {
+
+class IRGenerator
+{
+public:
+
+    // ========================================================
+    // GENERAR IR DEL PROGRAMA
+    // ========================================================
+
+    IRProgram generate(
+        const Program& program);
+
+private:
+
+    // ========================================================
+    // GENERAR IR DE UNA FUNCIÓN
+    // ========================================================
+
+    IRFunction generateFunction(
+        const FunctionDeclaration& function);
+
+    // ========================================================
+    // GENERAR IR DE UNA SENTENCIA
+    // ========================================================
+
+    void generateStatement(
+        const Statement& statement,
+        IRFunction& function);
+
+    // ========================================================
+    // GENERAR IR DE UNA EXPRESIÓN
+    // ========================================================
+
+    void generateExpression(
+        const Expression& expression,
+        IRFunction& function);
+};
+
+}

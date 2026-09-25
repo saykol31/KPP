@@ -1,0 +1,92 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+namespace kpp {
+
+// ============================================================
+// K++ IR OPCODES
+// ============================================================
+
+
+    enum class IROpcode
+{
+    FunctionBegin,
+
+    Declare,
+    Store,
+    Load,
+    Add,
+
+    Print,
+    Return,
+
+    FunctionEnd
+};
+
+// ============================================================
+// IR INSTRUCTION
+// ============================================================
+
+struct IRInstruction
+{
+    IROpcode opcode;
+
+    // Nombre de variable, función, etc.
+    std::string name;
+
+    // Operando textual.
+    //
+    // Ejemplos:
+    //
+    //   STORE x, 42
+    //   STORE y, %0
+    //   RETURN %0
+    //
+    std::string operand;
+
+    // Resultado producido por la instrucción.
+    //
+    // Ejemplo:
+    //
+    //   LOAD x -> %0
+    //
+    std::string result;
+
+    // Valor inmediato entero.
+    //
+    // Ejemplo:
+    //
+    //   STORE x, 42
+    //
+    int value = 0;
+};
+
+// ============================================================
+// IR FUNCTION
+// ============================================================
+
+struct IRFunction
+{
+    std::string name;
+
+    std::vector<IRInstruction> instructions;
+};
+
+// ============================================================
+// IR PROGRAM
+// ============================================================
+
+struct IRProgram
+{
+    std::vector<IRFunction> functions;
+};
+
+// ============================================================
+// OPCODE NAME
+// ============================================================
+
+const char* irOpcodeName(IROpcode opcode);
+
+}

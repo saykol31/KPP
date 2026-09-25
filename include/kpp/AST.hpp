@@ -1,0 +1,170 @@
+#pragma once
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace kpp {
+
+// ============================================================
+// AST BASE
+// ============================================================
+
+struct ASTNode
+{
+    virtual ~ASTNode() = default;
+};
+
+// ============================================================
+// EXPRESIONES
+// ============================================================
+
+struct Expression : ASTNode
+{
+};
+
+struct IntegerLiteral : Expression
+{
+    int value;
+
+    explicit IntegerLiteral(int value)
+        : value(value)
+    {
+    }
+};
+
+// ============================================================
+// VARIABLE EXPRESSION
+// ============================================================
+
+struct VariableExpression : Expression
+{
+    std::string name;
+
+    explicit VariableExpression(
+        const std::string& name)
+        : name(name)
+    {
+    }
+};
+//============================================================
+// BINARY EXPRESSION
+// ============================================================
+
+struct BinaryExpression : Expression
+{
+    std::string op;
+
+    std::unique_ptr<Expression> left;
+    std::unique_ptr<Expression> right;
+
+    BinaryExpression(
+        const std::string& op,
+        std::unique_ptr<Expression> left,
+        std::unique_ptr<Expression> right)
+        : op(op),
+          left(std::move(left)),
+          right(std::move(right))
+    {
+    }
+};
+
+// ============================================================
+// SENTENCIAS
+// ============================================================
+
+struct Statement : ASTNode
+{
+};
+
+struct ReturnStatement : Statement
+{
+    std::unique_ptr<Expression> expression;
+
+    explicit ReturnStatement(
+        std::unique_ptr<Expression> expression)
+        : expression(std::move(expression))
+    {
+    }
+};
+
+struct PrintStatement : Statement
+{
+    std::string text;
+
+    explicit PrintStatement(
+        const std::string& text)
+        : text(text)
+    {
+    }
+};
+
+// ============================================================
+// VARIABLE DECLARATION
+// ============================================================
+
+struct VariableDeclaration : Statement
+{
+    std::string name;
+
+    std::unique_ptr<Expression> initializer;
+
+    VariableDeclaration(
+        const std::string& name,
+        std::unique_ptr<Expression> initializer)
+        : name(name),
+          initializer(std::move(initializer))
+    {
+    }
+};
+
+// ============================================================
+// BLOQUE
+// ============================================================
+
+struct Block : ASTNode
+{
+    std::vector<std::unique_ptr<Statement>> statements;
+};
+
+// ============================================================
+// IF
+// ============================================================
+
+struct IfStatement : Statement
+{
+    std::unique_ptr<Expression> condition;
+
+    std::unique_ptr<Block> thenBlock;
+
+    IfStatement(
+        std::unique_ptr<Expression> condition,
+        std::unique_ptr<Block> thenBlock)
+        : condition(std::move(condition)),
+          thenBlock(std::move(thenBlock))
+    {
+    }
+};
+
+// ============================================================
+// FUNCIÓN
+// ============================================================
+
+struct FunctionDeclaration : ASTNode
+{
+    std::string returnType;
+    std::string name;
+
+    std::unique_ptr<Block> body;
+};
+
+// ============================================================
+// PROGRAMA
+// ============================================================
+
+struct Program : ASTNode
+{
+    std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+};
+
+}
