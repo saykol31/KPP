@@ -75,6 +75,12 @@ private:
         std::size_t dataOffset;
     };
 
+    struct ControlFlowPatch
+    {
+        std::string label;
+        std::size_t patchOffset;
+    };
+
     std::unordered_map<
         std::string,
         TemporaryLocation

@@ -120,9 +120,19 @@ public:
     // --------------------------------------------------------
     // CMP
     // --------------------------------------------------------
-
     void emitCmpEaxImm32(
         std::int32_t value);
+
+    void emitCmpEaxEbx();
+
+    void emitSeteAl();
+    void emitSetneAl();
+    void emitSetlAl();
+    void emitSetleAl();
+    void emitSetgAl();
+    void emitSetgeAl();
+
+    void emitMovzxEaxAl();
 
     void emitCmpAhImm8(
         std::uint8_t value);

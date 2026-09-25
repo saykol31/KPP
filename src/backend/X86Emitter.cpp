@@ -14,7 +14,138 @@ void X86Emitter::emitByte(
     machineCode.push_back(value);
 }
 
+// ============================================================
+// CMP EAX, EBX
+//
+// 39 D8
+//
+// Compara EAX contra EBX.
+// No modifica los registros, solamente EFLAGS.
+// ============================================================
 
+void X86Emitter::emitCmpEaxEbx()
+{
+    machineCode.push_back(0x39);
+    machineCode.push_back(0xD8);
+}
+
+
+// ============================================================
+// SETE AL
+//
+// 0F 94 C0
+//
+// AL = 1 si EAX == EBX
+// AL = 0 en caso contrario.
+// ============================================================
+
+void X86Emitter::emitSeteAl()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0x94);
+    machineCode.push_back(0xC0);
+}
+
+
+// ============================================================
+// SETNE AL
+//
+// 0F 95 C0
+//
+// AL = 1 si EAX != EBX
+// ============================================================
+
+void X86Emitter::emitSetneAl()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0x95);
+    machineCode.push_back(0xC0);
+}
+
+
+// ============================================================
+// SETL AL
+//
+// 0F 9C C0
+//
+// AL = 1 si EAX < EBX
+// comparación signed.
+// ============================================================
+
+void X86Emitter::emitSetlAl()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0x9C);
+    machineCode.push_back(0xC0);
+}
+
+
+// ============================================================
+// SETLE AL
+//
+// 0F 9E C0
+//
+// AL = 1 si EAX <= EBX
+// comparación signed.
+// ============================================================
+
+void X86Emitter::emitSetleAl()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0x9E);
+    machineCode.push_back(0xC0);
+}
+
+
+// ============================================================
+// SETG AL
+//
+// 0F 9F C0
+//
+// AL = 1 si EAX > EBX
+// comparación signed.
+// ============================================================
+
+void X86Emitter::emitSetgAl()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0x9F);
+    machineCode.push_back(0xC0);
+}
+
+
+// ============================================================
+// SETGE AL
+//
+// 0F 9D C0
+//
+// AL = 1 si EAX >= EBX
+// comparación signed.
+// ============================================================
+
+void X86Emitter::emitSetgeAl()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0x9D);
+    machineCode.push_back(0xC0);
+}
+
+
+// ============================================================
+// MOVZX EAX, AL
+//
+// 0F B6 C0
+//
+// Convierte AL = 0/1 en:
+// EAX = 0/1
+// ============================================================
+
+void X86Emitter::emitMovzxEaxAl()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0xB6);
+    machineCode.push_back(0xC0);
+}
 // ============================================================
 // MOV EAX, IMM32
 // ============================================================

@@ -208,16 +208,16 @@ KolibriRuntime::emitGraphicsRuntime(
     emitter.emitMovEaxImm32(0);
 
     // X = 100
-    // WIDTH = 400
+    // WIDTH = 500
     emitter.emitMovRegImm32(
         0xBB,
-        (100u << 16) + 400u);
+        (100u << 16) + 500u);
 
     // Y = 100
-    // HEIGHT = 180
+    // HEIGHT = 220
     emitter.emitMovRegImm32(
         0xB9,
-        (100u << 16) + 180u);
+        (100u << 16) + 220u);
 
     // Work area color
     emitter.emitMovRegImm32(

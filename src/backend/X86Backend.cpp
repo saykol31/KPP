@@ -511,6 +511,14 @@ X86Backend::generate(
     std::vector<TemporaryReloadPatch>
         temporaryReloadPatches;
 
+    std::vector<ControlFlowPatch>
+        controlFlowPatches;
+
+    std::unordered_map<
+        std::string,
+        std::size_t
+    > labels;
+
     std::size_t
         returnEventLoopPatch = 0;
 
@@ -1132,6 +1140,524 @@ X86Backend::generate(
                 }
 
 
+            // ------------------------------------------------
+            // ========================================================
+            // COMPARACIONES
+            // ========================================================
+
+            else if (
+                instruction.opcode ==
+                    IROpcode::CompareLess ||
+                instruction.opcode ==
+                    IROpcode::CompareLessEqual ||
+                instruction.opcode ==
+                    IROpcode::CompareEqual ||
+                instruction.opcode ==
+                    IROpcode::CompareNotEqual ||
+                instruction.opcode ==
+                    IROpcode::CompareGreaterEqual)
+            {
+                /*
+                 * Comparaciones signed:
+                 *
+                 *     <   -> SETL
+                 *     <=  -> SETLE
+                 *     ==  -> SETE
+                 *     !=  -> SETNE
+                 *     >=  -> SETGE
+                 *
+                 * El resultado siempre queda en EAX:
+                 *
+                 *     EAX = 1  verdadero
+                 *     EAX = 0  falso
+                 *
+                 * La secuencia base es:
+                 *
+                 *     CMP EAX, EBX
+                 *     SETcc AL
+                 *     MOVZX EAX, AL
+                 *
+                 * Se mantienen los mismos tres casos
+                 * de operandos soportados por CMP_GT.
+                 */
+
+                const std::size_t comma =
+                    instruction.operand.find(",");
+
+                if (comma == std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: comparación tiene operandos inválidos");
+                }
+
+                const std::string left =
+                    instruction.operand.substr(
+                        0,
+                        comma);
+
+                const std::string right =
+                    instruction.operand.substr(
+                        comma + 2);
+
+                if (!hasTemporary(left))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: comparación usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (!hasTemporary(right))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: comparación usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                const auto leftIt =
+                    temporaries.find(left);
+
+                const auto rightIt =
+                    temporaries.find(right);
+
+                if (leftIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: comparación usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (rightIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: comparación usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                const auto leftKind =
+                    leftIt->second.kind;
+
+                const auto rightKind =
+                    rightIt->second.kind;
+
+
+                /*
+                 * Seleccionamos la operación SETcc.
+                 */
+
+                enum class CompareSet
+                {
+                    Less,
+                    LessEqual,
+                    Equal,
+                    NotEqual,
+                    GreaterEqual
+                };
+
+                CompareSet compareSet;
+
+                switch (instruction.opcode)
+                {
+                    case IROpcode::CompareLess:
+                        compareSet = CompareSet::Less;
+                        break;
+
+                    case IROpcode::CompareLessEqual:
+                        compareSet = CompareSet::LessEqual;
+                        break;
+
+                    case IROpcode::CompareEqual:
+                        compareSet = CompareSet::Equal;
+                        break;
+
+                    case IROpcode::CompareNotEqual:
+                        compareSet = CompareSet::NotEqual;
+                        break;
+
+                    case IROpcode::CompareGreaterEqual:
+                        compareSet = CompareSet::GreaterEqual;
+                        break;
+
+                    default:
+                        throw std::runtime_error(
+                            "K++ X86Backend: comparación interna inválida");
+                }
+
+
+                /*
+                 * Función local para emitir SETcc.
+                 *
+                 * CMP ya dejó los flags correctos.
+                 */
+
+                const auto emitCompareSet =
+                    [&]()
+                    {
+                        switch (compareSet)
+                        {
+                            case CompareSet::Less:
+                                emitter.emitSetlAl();
+                                break;
+
+                            case CompareSet::LessEqual:
+                                emitter.emitSetleAl();
+                                break;
+
+                            case CompareSet::Equal:
+                                emitter.emitSeteAl();
+                                break;
+
+                            case CompareSet::NotEqual:
+                                emitter.emitSetneAl();
+                                break;
+
+                            case CompareSet::GreaterEqual:
+                                emitter.emitSetgeAl();
+                                break;
+                        }
+
+                        emitter.emitMovzxEaxAl();
+                    };
+
+
+                /*
+                 * ------------------------------------------------
+                 * CASO 1
+                 *
+                 * izquierdo = EAX
+                 * derecho   = EBX
+                 * ------------------------------------------------
+                 */
+
+                if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 0 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 3)
+                {
+                    emitter.emitCmpEaxEbx();
+
+                    emitCompareSet();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+
+                /*
+                 * ------------------------------------------------
+                 * CASO 2
+                 *
+                 * izquierdo = EBX
+                 * derecho   = EAX
+                 *
+                 * Conservamos el derecho usando la pila.
+                 * ------------------------------------------------
+                 */
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 3 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 0)
+                {
+                    emitter.emitPushEax();
+                    emitter.emitMovEaxEbx();
+                    emitter.emitPopEbx();
+
+                    emitter.emitCmpEaxEbx();
+
+                    emitCompareSet();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+
+                /*
+                 * ------------------------------------------------
+                 * CASO 3
+                 *
+                 * izquierdo = MEMORY
+                 * derecho   = EAX
+                 * ------------------------------------------------
+                 */
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Memory &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 0)
+                {
+                    emitter.emitPushEax();
+
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        left,
+                        patchOffset,
+                        leftIt->second.dataOffset
+                    });
+
+                    emitter.emitPopEbx();
+
+                    emitter.emitCmpEaxEbx();
+
+                    emitCompareSet();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: combinación de operandos de comparación no soportada");
+                }
+            }
+
+
+            // ------------------------------------------------
+            // CMP_GREATER
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                     IROpcode::CompareGreater)
+            {
+                /*
+                 * CMP_GT %left, %right -> %result
+                 *
+                 * Resultado:
+                 *
+                 *     %result = 1    si left > right
+                 *     %result = 0    en caso contrario
+                 *
+                 * La comparación es SIGNED.
+                 *
+                 * Secuencia base:
+                 *
+                 *     CMP EAX, EBX
+                 *     SETG AL
+                 *     MOVZX EAX, AL
+                 *
+                 * El resultado queda siempre en EAX.
+                 */
+
+                const std::size_t comma =
+                    instruction.operand.find(",");
+
+                if (comma == std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: CMP_GT tiene operandos inválidos");
+                }
+
+                const std::string left =
+                    instruction.operand.substr(
+                        0,
+                        comma);
+
+                const std::string right =
+                    instruction.operand.substr(
+                        comma + 2);
+
+                if (!hasTemporary(left))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: CMP_GT usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (!hasTemporary(right))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: CMP_GT usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                const auto leftIt =
+                    temporaries.find(left);
+
+                const auto rightIt =
+                    temporaries.find(right);
+
+                if (leftIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: CMP_GT usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (rightIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: CMP_GT usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                const auto leftKind =
+                    leftIt->second.kind;
+
+                const auto rightKind =
+                    rightIt->second.kind;
+
+
+                /*
+                 * ------------------------------------------------
+                 * CASO 1
+                 *
+                 * izquierdo = EAX
+                 * derecho   = EBX
+                 *
+                 * EAX > EBX
+                 * ------------------------------------------------
+                 */
+
+                if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 0 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 3)
+                {
+                    emitter.emitCmpEaxEbx();
+                    emitter.emitSetgAl();
+                    emitter.emitMovzxEaxAl();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+
+                /*
+                 * ------------------------------------------------
+                 * CASO 2
+                 *
+                 * izquierdo = EBX
+                 * derecho   = EAX
+                 *
+                 * Necesitamos transformar:
+                 *
+                 *     EBX > EAX
+                 *
+                 * en:
+                 *
+                 *     EAX = EBX
+                 *     EBX = antiguo EAX
+                 *
+                 * usando la pila para conservar el derecho.
+                 *
+                 * ------------------------------------------------
+                 */
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 3 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 0)
+                {
+                    emitter.emitPushEax();
+                    emitter.emitMovEaxEbx();
+                    emitter.emitPopEbx();
+
+                    emitter.emitCmpEaxEbx();
+                    emitter.emitSetgAl();
+                    emitter.emitMovzxEaxAl();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+
+                /*
+                 * ------------------------------------------------
+                 * CASO 3
+                 *
+                 * izquierdo = MEMORY
+                 * derecho   = EAX
+                 *
+                 * Conservamos el derecho:
+                 *
+                 *     PUSH EAX
+                 *
+                 * Recargamos el izquierdo:
+                 *
+                 *     MOV EAX, [izquierdo]
+                 *
+                 * Recuperamos el derecho:
+                 *
+                 *     POP EBX
+                 *
+                 * Después:
+                 *
+                 *     CMP EAX, EBX
+                 *     SETG AL
+                 *     MOVZX EAX, AL
+                 * ------------------------------------------------
+                 */
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Memory &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 0)
+                {
+                    emitter.emitPushEax();
+
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        left,
+                        patchOffset,
+                        leftIt->second.dataOffset
+                    });
+
+                    emitter.emitPopEbx();
+
+                    emitter.emitCmpEaxEbx();
+                    emitter.emitSetgAl();
+                    emitter.emitMovzxEaxAl();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: combinación de operandos CMP_GT no soportada");
+                }
+            }
+
+
 
             // ------------------------------------------------
             // MUL
@@ -1284,7 +1810,104 @@ X86Backend::generate(
 
             }
             // ------------------------------------------------
+            // JUMP IF ZERO
+            // ------------------------------------------------
 
+            else if (instruction.opcode ==
+                     IROpcode::JumpIfZero)
+            {
+                /*
+                 * JUMP_IF_ZERO %condition -> LABEL
+                 *
+                 * La condición generada por las comparaciones
+                 * queda actualmente en EAX.
+                 *
+                 * Generamos:
+                 *
+                 *     CMP EAX, 0
+                 *     JE  LABEL
+                 *
+                 * El desplazamiento de JE se parchea después,
+                 * cuando todas las etiquetas ya tienen posición.
+                 */
+
+                if (instruction.operand.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: JUMP_IF_ZERO sin condición");
+                }
+
+                if (instruction.name.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: JUMP_IF_ZERO sin etiqueta destino");
+                }
+
+                if (!hasTemporary(
+                        instruction.operand))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: JUMP_IF_ZERO usa un temporal inexistente: " +
+                        instruction.operand);
+                }
+
+                const std::uint8_t reg =
+                    getTemporaryRegister(
+                        instruction.operand);
+
+                if (reg != 0)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: JUMP_IF_ZERO actualmente requiere EAX");
+                }
+
+                emitter.emitCmpEaxImm32(0);
+
+                const std::size_t patchOffset =
+                    emitter.emitJeRel32Placeholder();
+
+                controlFlowPatches.push_back({
+                    instruction.name,
+                    patchOffset
+                });
+            }
+
+
+            // ------------------------------------------------
+            // LABEL
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                     IROpcode::Label)
+            {
+                /*
+                 * LABEL no genera bytes.
+                 *
+                 * Simplemente registra la posición actual
+                 * del código máquina para que los saltos
+                 * puedan ser parcheados posteriormente.
+                 */
+
+                if (instruction.name.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: LABEL sin nombre");
+                }
+
+                if (labels.find(instruction.name) !=
+                    labels.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: LABEL duplicado: " +
+                        instruction.name);
+                }
+
+                labels[instruction.name] =
+                    emitter.size();
+            }
+
+
+            // ------------------------------------------------
             // PRINT
             // ------------------------------------------------
 
@@ -1301,7 +1924,7 @@ X86Backend::generate(
                 const std::uint32_t y =
                     40u +
                     static_cast<std::uint32_t>(
-                        printIndex * 30u);
+                        printIndex * 20u);
 
 
                 const std::size_t patch =
@@ -1365,7 +1988,7 @@ X86Backend::generate(
                 const std::uint32_t y =
                     40u +
                     static_cast<std::uint32_t>(
-                        printIndex * 30u);
+                        printIndex * 20u);
 
                 const std::size_t patch =
                     runtime.emitPrintInteger(
@@ -1531,6 +2154,43 @@ X86Backend::generate(
     emitter.patchRel32(
         returnEventLoopPatch,
         runtimeResult.eventLoopAddress);
+
+
+    // ========================================================
+    // PATCH CONTROL FLOW
+    // ========================================================
+
+    /*
+     * JUMP_IF_ZERO ya generó:
+     *
+     *     CMP EAX, 0
+     *     JE  <rel32>
+     *
+     * El rel32 quedó pendiente porque en el momento
+     * de generar el salto todavía no necesariamente
+     * conocíamos la posición final de la etiqueta.
+     *
+     * Ahora todas las instrucciones fueron generadas
+     * y las etiquetas contienen su posición real.
+     */
+
+    for (const auto& patch :
+         controlFlowPatches)
+    {
+        const auto labelIt =
+            labels.find(patch.label);
+
+        if (labelIt == labels.end())
+        {
+            throw std::runtime_error(
+                "K++ X86Backend: etiqueta no definida: " +
+                patch.label);
+        }
+
+        emitter.patchRel32(
+            patch.patchOffset,
+            labelIt->second);
+    }
 
 
     // ========================================================
