@@ -6,6 +6,43 @@
 namespace kpp {
 
 // ============================================================
+// SCOPES
+// ============================================================
+
+void SemanticAnalyzer::enterScope()
+{
+    scopes.emplace_back();
+}
+
+void SemanticAnalyzer::leaveScope()
+{
+    if (!scopes.empty())
+    {
+        scopes.pop_back();
+    }
+}
+
+const std::string*
+SemanticAnalyzer::lookupVariable(
+    const std::string& name) const
+{
+    for (auto it = scopes.rbegin();
+         it != scopes.rend();
+         ++it)
+    {
+        auto variable =
+            it->find(name);
+
+        if (variable != it->end())
+        {
+            return &variable->second;
+        }
+    }
+
+    return nullptr;
+}
+
+// ============================================================
 // ANALIZAR PROGRAMA
 // ============================================================
 
@@ -57,10 +94,11 @@ void SemanticAnalyzer::analyzeFunction(
     currentFunction = function.name;
 
     // --------------------------------------------------------
-    // Cada función tiene su propio ámbito de variables
+    // Cada función comienza con su propio scope.
     // --------------------------------------------------------
 
-    variables.clear();
+    scopes.clear();
+    enterScope();
 
     // --------------------------------------------------------
     // Verificar tipo de retorno
@@ -97,6 +135,12 @@ void SemanticAnalyzer::analyzeFunction(
     {
         analyzeStatement(*statement);
     }
+
+    // --------------------------------------------------------
+    // Salir del scope de la función.
+    // --------------------------------------------------------
+
+    leaveScope();
 }
 
 // ============================================================
@@ -123,7 +167,8 @@ void SemanticAnalyzer::analyzeStatement(
         // Comprobar variable duplicada
         // ----------------------------------------------------
 
-        if (variables.find(name) != variables.end())
+        if (scopes.back().find(name) !=
+            scopes.back().end())
         {
             semanticErrors.push_back({
                 "la variable '" +
@@ -166,10 +211,10 @@ void SemanticAnalyzer::analyzeStatement(
         // Registrar variable
         // ----------------------------------------------------
 
-        if (variables.find(name) ==
-            variables.end())
+        if (scopes.back().find(name) ==
+            scopes.back().end())
         {
-            variables[name] = "int";
+            scopes.back()[name] = "int";
         }
 
         return;
@@ -221,12 +266,20 @@ void SemanticAnalyzer::analyzeStatement(
             return;
         }
 
+        // ----------------------------------------------------
+        // El THEN posee su propio scope.
+        // ----------------------------------------------------
+
+        enterScope();
+
         for (const auto& nestedStatement :
              ifStatement->thenBlock->statements)
         {
             analyzeStatement(
                 *nestedStatement);
         }
+
+        leaveScope();
 
         // ----------------------------------------------------
         // Analizar ELSE, si existe.
@@ -236,12 +289,20 @@ void SemanticAnalyzer::analyzeStatement(
 
         if (ifStatement->elseBlock)
         {
+            // ------------------------------------------------
+            // ELSE posee un scope independiente del THEN.
+            // ------------------------------------------------
+
+            enterScope();
+
             for (const auto& nestedStatement :
                  ifStatement->elseBlock->statements)
             {
                 analyzeStatement(
                     *nestedStatement);
             }
+
+            leaveScope();
         }
 
         return;
@@ -336,9 +397,10 @@ void SemanticAnalyzer::analyzeExpression(
         // Buscar variable
         // ----------------------------------------------------
 
-        auto it = variables.find(name);
+        const std::string* type =
+            lookupVariable(name);
 
-        if (it == variables.end())
+        if (type == nullptr)
         {
             semanticErrors.push_back({
                 "Variable no declarada: " +
@@ -352,7 +414,7 @@ void SemanticAnalyzer::analyzeExpression(
         // Actualmente todas nuestras variables son int
         // ----------------------------------------------------
 
-        if (it->second != "int")
+        if (*type != "int")
         {
             semanticErrors.push_back({
                 "tipo de variable no soportado: " +

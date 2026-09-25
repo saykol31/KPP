@@ -519,11 +519,15 @@ X86Backend::generate(
         std::size_t
     > labels;
 
-    std::size_t
-        returnEventLoopPatch = 0;
+    // ========================================================
+    // RETURN PATCHES
+    //
+    // Puede haber múltiples RETURN debido a if / else.
+    // Cada RETURN genera su propio JMP hacia el event loop.
+    // ========================================================
 
-    bool
-        hasReturn = false;
+    std::vector<std::size_t>
+        returnEventLoopPatches;
 
 
     std::size_t
@@ -2131,17 +2135,8 @@ X86Backend::generate(
 
                 emitter.emitByte(0xE9);
 
-                returnEventLoopPatch =
-                    emitter.emitRel32Placeholder();
-
-                hasReturn = true;
-
-                /*
-                 * RETURN termina la función.
-                 * No debemos generar instrucciones
-                 * posteriores de esa función.
-                 */
-                break;
+                returnEventLoopPatches.push_back(
+                    emitter.emitRel32Placeholder());
             }
         }
     }
@@ -2151,7 +2146,7 @@ X86Backend::generate(
     // RETURN IMPLÍCITO
     // ========================================================
 
-    if (!hasReturn)
+    if (returnEventLoopPatches.empty())
     {
         /*
          * Si por alguna razón el programa no contiene
@@ -2164,8 +2159,8 @@ X86Backend::generate(
 
         emitter.emitByte(0xE9);
 
-        returnEventLoopPatch =
-            emitter.emitRel32Placeholder();
+        returnEventLoopPatches.push_back(
+            emitter.emitRel32Placeholder());
     }
 
 
@@ -2186,9 +2181,13 @@ X86Backend::generate(
     // PATCH RETURN
     // ========================================================
 
-    emitter.patchRel32(
-        returnEventLoopPatch,
-        runtimeResult.eventLoopAddress);
+    for (const auto patchOffset :
+         returnEventLoopPatches)
+    {
+        emitter.patchRel32(
+            patchOffset,
+            runtimeResult.eventLoopAddress);
+    }
 
 
     // ========================================================

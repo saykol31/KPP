@@ -70,20 +70,46 @@ private:
         const std::string& message);
 
     // --------------------------------------------------------
-    // Tabla de variables
+    // --------------------------------------------------------
+    // SCOPES
+    //
+    // Cada bloque semántico posee su propia tabla de variables.
+    //
+    // scope[0] = scope de la función
+    // scope[1] = bloque interno
+    // scope[2] = bloque anidado
     //
     // nombre → tipo
-    //
-    // Ejemplo:
-    //
-    // x → int
-    // y → int
     // --------------------------------------------------------
 
-    std::unordered_map<
-        std::string,
-        std::string
-    > variables;
+    using Scope =
+        std::unordered_map<
+            std::string,
+            std::string
+        >;
+
+    std::vector<Scope> scopes;
+
+    // --------------------------------------------------------
+    // Entrar en un nuevo scope
+    // --------------------------------------------------------
+
+    void enterScope();
+
+    // --------------------------------------------------------
+    // Salir del scope actual
+    // --------------------------------------------------------
+
+    void leaveScope();
+
+    // --------------------------------------------------------
+    // Buscar variable
+    //
+    // Busca desde el scope más interno hacia el externo.
+    // --------------------------------------------------------
+
+    const std::string* lookupVariable(
+        const std::string& name) const;
 
     // --------------------------------------------------------
     // Errores encontrados
