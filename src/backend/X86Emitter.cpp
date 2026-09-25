@@ -691,6 +691,21 @@ void X86Emitter::emitJneRel32(
 
 
 // ============================================================
+// ============================================================
+// JMP rel32 PLACEHOLDER
+//
+// E9 xx xx xx xx
+// ============================================================
+
+std::size_t X86Emitter::emitJmpRel32Placeholder()
+{
+    machineCode.push_back(0xE9);
+
+    return emitRel32Placeholder();
+}
+
+
+// ============================================================
 // JE rel32 PLACEHOLDER
 //
 // 0F 84 xx xx xx xx

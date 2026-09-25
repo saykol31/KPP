@@ -305,9 +305,44 @@ Parser::parseStatement()
         auto thenBlock =
             parseBlock();
 
+        // ----------------------------------------------------
+        // ELSE
+        // ----------------------------------------------------
+
+        std::unique_ptr<Block> elseBlock = nullptr;
+
+        if (match(TokenType::KwElse))
+        {
+            // ------------------------------------------------
+            // ELSE IF
+            // ------------------------------------------------
+
+            if (check(TokenType::KwIf))
+            {
+                auto nestedIf =
+                    parseStatement();
+
+                elseBlock =
+                    std::make_unique<Block>();
+
+                elseBlock->statements.push_back(
+                    std::move(nestedIf));
+            }
+            else
+            {
+                // --------------------------------------------
+                // ELSE normal
+                // --------------------------------------------
+
+                elseBlock =
+                    parseBlock();
+            }
+        }
+
         return std::make_unique<IfStatement>(
             std::move(condition),
-            std::move(thenBlock));
+            std::move(thenBlock),
+            std::move(elseBlock));
     }
 
 

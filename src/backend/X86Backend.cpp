@@ -1874,6 +1874,41 @@ X86Backend::generate(
 
 
             // ------------------------------------------------
+            // JUMP
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                     IROpcode::Jump)
+            {
+                /*
+                 * JUMP LABEL
+                 *
+                 * Generamos:
+                 *
+                 *     JMP LABEL
+                 *
+                 * El desplazamiento relativo se parchea
+                 * posteriormente, cuando todas las etiquetas
+                 * ya tienen posición.
+                 */
+
+                if (instruction.name.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: JUMP sin etiqueta destino");
+                }
+
+                const std::size_t patchOffset =
+                    emitter.emitJmpRel32Placeholder();
+
+                controlFlowPatches.push_back({
+                    instruction.name,
+                    patchOffset
+                });
+            }
+
+
+            // ------------------------------------------------
             // LABEL
             // ------------------------------------------------
 

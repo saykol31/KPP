@@ -228,6 +228,22 @@ void SemanticAnalyzer::analyzeStatement(
                 *nestedStatement);
         }
 
+        // ----------------------------------------------------
+        // Analizar ELSE, si existe.
+        // Esto también permite analizar ELSE IF,
+        // porque contiene otro IfStatement.
+        // ----------------------------------------------------
+
+        if (ifStatement->elseBlock)
+        {
+            for (const auto& nestedStatement :
+                 ifStatement->elseBlock->statements)
+            {
+                analyzeStatement(
+                    *nestedStatement);
+            }
+        }
+
         return;
     }
 

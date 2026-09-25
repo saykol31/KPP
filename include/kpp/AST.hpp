@@ -137,11 +137,15 @@ struct IfStatement : Statement
 
     std::unique_ptr<Block> thenBlock;
 
+    std::unique_ptr<Block> elseBlock;
+
     IfStatement(
         std::unique_ptr<Expression> condition,
-        std::unique_ptr<Block> thenBlock)
+        std::unique_ptr<Block> thenBlock,
+        std::unique_ptr<Block> elseBlock = nullptr)
         : condition(std::move(condition)),
-          thenBlock(std::move(thenBlock))
+          thenBlock(std::move(thenBlock)),
+          elseBlock(std::move(elseBlock))
     {
     }
 };

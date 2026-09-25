@@ -112,6 +112,7 @@ public:
     void emitJneRel32(
         std::int32_t displacement);
 
+    std::size_t emitJmpRel32Placeholder();
     std::size_t emitJeRel32Placeholder();
 
     std::size_t emitJneRel32Placeholder();

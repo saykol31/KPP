@@ -514,20 +514,37 @@ void IRGenerator::generateStatement(
                 function);
 
         // ----------------------------------------------------
-        // Crear etiqueta de salida
+        // Crear etiquetas de control
         //
-        // Si la condición es cero:
+        // Sin ELSE:
         //
-        //     JUMP_IF_ZERO %cond -> L0
+        //     JUMP_IF_ZERO %cond -> endLabel
+        //     THEN
+        //     LABEL endLabel
+        //
+        // Con ELSE:
+        //
+        //     JUMP_IF_ZERO %cond -> elseLabel
+        //     THEN
+        //     JUMP -> endLabel
+        //     LABEL elseLabel
+        //     ELSE
+        //     LABEL endLabel
         //
         // ----------------------------------------------------
 
         std::string endLabel =
             createLabel();
 
+        std::string elseLabel =
+            createLabel();
+
+        const bool hasElse =
+            (ifStatement->elseBlock != nullptr);
+
         function.instructions.push_back({
             IROpcode::JumpIfZero,
-            endLabel,
+            hasElse ? elseLabel : endLabel,
             conditionTemporary,
             "",
             0
@@ -549,6 +566,46 @@ void IRGenerator::generateStatement(
             generateStatement(
                 *nestedStatement,
                 function);
+        }
+
+        // ----------------------------------------------------
+        // Si existe ELSE, saltar el bloque ELSE
+        // después de ejecutar THEN.
+        // ----------------------------------------------------
+
+        if (hasElse)
+        {
+            function.instructions.push_back({
+                IROpcode::Jump,
+                endLabel,
+                "",
+                "",
+                0
+            });
+
+            // ------------------------------------------------
+            // LABEL ELSE
+            // ------------------------------------------------
+
+            function.instructions.push_back({
+                IROpcode::Label,
+                elseLabel,
+                "",
+                "",
+                0
+            });
+
+            // ------------------------------------------------
+            // Generar bloque ELSE
+            // ------------------------------------------------
+
+            for (const auto& nestedStatement :
+                 ifStatement->elseBlock->statements)
+            {
+                generateStatement(
+                    *nestedStatement,
+                    function);
+            }
         }
 
         // ----------------------------------------------------

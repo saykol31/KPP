@@ -50,6 +50,9 @@ const char* tokenTypeName(TokenType type)
         case TokenType::KwIf:
             return "if";
 
+        case TokenType::KwElse:
+            return "else";
+
         // ========================================================
         // ASSIGNMENT
         // ========================================================
@@ -281,6 +284,20 @@ Token Lexer::identifier()
     {
         return {
             TokenType::KwIf,
+            text,
+            startLine,
+            startColumn
+        };
+    }
+
+    // --------------------------------------------------------
+    // KEYWORD: else
+    // --------------------------------------------------------
+
+    if (text == "else")
+    {
+        return {
+            TokenType::KwElse,
             text,
             startLine,
             startColumn

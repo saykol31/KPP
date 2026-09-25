@@ -28,6 +28,7 @@ enum class TokenType
     KwReturn,
     KwPrint,
     KwIf,
+    KwElse,
 
     // ============================================================
     // ASSIGNMENT
