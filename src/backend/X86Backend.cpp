@@ -1664,6 +1664,348 @@ X86Backend::generate(
 
 
             // ------------------------------------------------
+            // SUB
+            // ------------------------------------------------
+            //
+            // SUB %left, %right -> %result
+            //
+            // SUB no es conmutativa.
+            //
+            // Casos soportados:
+            //
+            //     EAX - EBX
+            //     EBX - EAX
+            //     MEMORY - EAX
+            //     EAX - MEMORY
+            //     MEMORY - EBX
+            //     EBX - MEMORY
+            //
+            // El resultado queda en EAX.
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                     IROpcode::Sub)
+            {
+                const std::size_t comma =
+                    instruction.operand.find(",");
+
+                if (comma == std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: SUB requiere dos operandos");
+                }
+
+                const std::string left =
+                    instruction.operand.substr(
+                        0,
+                        comma);
+
+                const std::string right =
+                    instruction.operand.substr(
+                        comma + 2);
+
+                if (!hasTemporary(left))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: SUB usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (!hasTemporary(right))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: SUB usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                const auto leftIt =
+                    temporaries.find(left);
+
+                const auto rightIt =
+                    temporaries.find(right);
+
+                if (leftIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: SUB usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (rightIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: SUB usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                const auto leftKind =
+                    leftIt->second.kind;
+
+                const auto rightKind =
+                    rightIt->second.kind;
+
+                // ------------------------------------------------
+                // CASO 1
+                //
+                // EAX - EBX
+                //
+                // EAX = EAX - EBX
+                // ------------------------------------------------
+
+                if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 0 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 3)
+                {
+                    emitter.emitSubEaxEbx();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                // ------------------------------------------------
+                // CASO 2
+                //
+                // EBX - EAX
+                //
+                // PUSH EAX
+                // MOV  EAX, EBX
+                // POP  EBX
+                // SUB  EAX, EBX
+                // ------------------------------------------------
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 3 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 0)
+                {
+                    emitter.emitPushEax();
+                    emitter.emitMovEaxEbx();
+                    emitter.emitPopEbx();
+
+                    emitter.emitSubEaxEbx();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                // ------------------------------------------------
+                // CASO 3
+                //
+                // MEMORY - EAX
+                //
+                // PUSH EAX
+                // MOV  EAX, [MEMORY]
+                // POP  EBX
+                // SUB  EAX, EBX
+                // ------------------------------------------------
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Memory &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 0)
+                {
+                    emitter.emitPushEax();
+
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        left,
+                        patchOffset,
+                        leftIt->second.dataOffset
+                    });
+
+                    emitter.emitPopEbx();
+
+                    emitter.emitSubEaxEbx();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                // ------------------------------------------------
+                // CASO 4
+                //
+                // EAX - MEMORY
+                //
+                // Guardamos EAX = izquierdo.
+                //
+                // PUSH EAX
+                // MOV  EAX, [MEMORY]
+                // POP  EBX
+                //
+                // Ahora:
+                //     EBX = izquierdo
+                //     EAX = derecho
+                //
+                // Reordenamos:
+                //
+                // PUSH EAX
+                // MOV  EAX, EBX
+                // POP  EBX
+                //
+                // Ahora:
+                //     EAX = izquierdo
+                //     EBX = derecho
+                //
+                // SUB EAX, EBX
+                // ------------------------------------------------
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 0 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Memory)
+                {
+                    emitter.emitPushEax();
+
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        right,
+                        patchOffset,
+                        rightIt->second.dataOffset
+                    });
+
+                    emitter.emitPopEbx();
+
+                    emitter.emitPushEax();
+                    emitter.emitMovEaxEbx();
+                    emitter.emitPopEbx();
+
+                    emitter.emitSubEaxEbx();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                // ------------------------------------------------
+                // CASO 5
+                //
+                // MEMORY - EBX
+                //
+                // MOV EAX, EBX
+                // PUSH EAX
+                // MOV EAX, [MEMORY]
+                // POP EBX
+                // SUB EAX, EBX
+                // ------------------------------------------------
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Memory &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 3)
+                {
+                    emitter.emitMovEaxEbx();
+                    emitter.emitPushEax();
+
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        left,
+                        patchOffset,
+                        leftIt->second.dataOffset
+                    });
+
+                    emitter.emitPopEbx();
+
+                    emitter.emitSubEaxEbx();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                // ------------------------------------------------
+                // CASO 6
+                //
+                // EBX - MEMORY
+                //
+                // MOV EAX, EBX
+                // PUSH EAX
+                // MOV EAX, [MEMORY]
+                // POP EBX
+                //
+                // Ahora:
+                //     EBX = izquierdo
+                //     EAX = derecho
+                //
+                // Reordenamos para SUB:
+                //
+                // EAX = izquierdo
+                // EBX = derecho
+                // ------------------------------------------------
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Register &&
+                    leftIt->second.registerCode == 3 &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Memory)
+                {
+                    emitter.emitMovEaxEbx();
+                    emitter.emitPushEax();
+
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        right,
+                        patchOffset,
+                        rightIt->second.dataOffset
+                    });
+
+                    emitter.emitPopEbx();
+
+                    emitter.emitPushEax();
+                    emitter.emitMovEaxEbx();
+                    emitter.emitPopEbx();
+
+                    emitter.emitSubEaxEbx();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: combinación de operandos SUB no soportada");
+                }
+            }
+
+            // ------------------------------------------------
             // MUL
             // ------------------------------------------------
 

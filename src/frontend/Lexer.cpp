@@ -53,6 +53,9 @@ const char* tokenTypeName(TokenType type)
         case TokenType::KwElse:
             return "else";
 
+        case TokenType::KwWhile:
+            return "while";
+
         // ========================================================
         // ASSIGNMENT
         // ========================================================
@@ -298,6 +301,20 @@ Token Lexer::identifier()
     {
         return {
             TokenType::KwElse,
+            text,
+            startLine,
+            startColumn
+        };
+    }
+
+    // --------------------------------------------------------
+    // KEYWORD: while
+    // --------------------------------------------------------
+
+    if (text == "while")
+    {
+        return {
+            TokenType::KwWhile,
             text,
             startLine,
             startColumn

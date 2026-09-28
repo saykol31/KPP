@@ -16,6 +16,24 @@ KolibriRuntime::emitGraphicsRuntime(
     KolibriRuntimeResult result;
 
     // ========================================================
+    // PRINT CURSOR
+    // ========================================================
+    //
+    // EBP queda reservado para el cursor gráfico de K++.
+    //
+    // X = 35
+    // Y = 40
+    //
+    // KolibriOS recibe X/Y empaquetado en EBX.
+    // El valor inicial se mantiene durante la ejecución
+    // y cada PRINT / PRINT_INT avanza Y.
+    //
+
+    emitter.emitMovRegImm32(
+        0xBD,
+        (35u << 16) + 40u);
+
+    // ========================================================
     // START
     // ========================================================
     //
@@ -301,7 +319,7 @@ KolibriRuntime::emitGraphicsRuntime(
 std::size_t
 KolibriRuntime::emitPrint(
     X86Emitter& emitter,
-    std::uint32_t y)
+    [[maybe_unused]] std::uint32_t y)
 {
     // mov eax, 4
     emitter.emitMovEaxImm32(4);
@@ -313,9 +331,9 @@ KolibriRuntime::emitPrint(
      *
      * X = 35
      */
-    emitter.emitMovRegImm32(
-        0xBB,
-        (35u << 16) + y);
+    // EBX = cursor gráfico actual
+    // EBP contiene X/Y empaquetado.
+    emitter.emitMovEbxEbp();
 
     // Text color
     emitter.emitMovRegImm32(
@@ -336,6 +354,9 @@ KolibriRuntime::emitPrint(
     // int 0x40
     emitter.emitInt(0x40);
 
+    // Avanzar el cursor vertical para el siguiente PRINT.
+    emitter.emitAddEbpImm32(20);
+
     return textPatch;
 }
 
@@ -347,7 +368,7 @@ KolibriRuntime::emitPrint(
 std::size_t
 KolibriRuntime::emitPrintInteger(
     X86Emitter& emitter,
-    std::uint32_t y)
+    [[maybe_unused]] std::uint32_t y)
 {
     /*
      * EAX contiene el entero calculado por K++.
@@ -458,9 +479,9 @@ KolibriRuntime::emitPrintInteger(
 
     emitter.emitMovEaxImm32(4);
 
-    emitter.emitMovRegImm32(
-        0xBB,
-        (35u << 16) | y);
+    // EBX = cursor gráfico actual
+    // EBP contiene X/Y empaquetado.
+    emitter.emitMovEbxEbp();
 
     emitter.emitMovRegImm32(
         0xB9,
@@ -471,6 +492,9 @@ KolibriRuntime::emitPrintInteger(
         16);
 
     emitter.emitInt(0x40);
+
+    // Avanzar el cursor vertical para el siguiente PRINT_INT.
+    emitter.emitAddEbpImm32(20);
 
     /*
      * Restaurar el resultado original.

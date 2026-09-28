@@ -221,6 +221,75 @@ void SemanticAnalyzer::analyzeStatement(
     }
 
     // ========================================================
+    // ASSIGNMENT
+    //
+    // x = x - 1;
+    // ========================================================
+
+    if (auto* assignmentStatement =
+        dynamic_cast<const AssignmentStatement*>(
+            &statement))
+    {
+        const std::string& name =
+            assignmentStatement->name;
+
+        // ----------------------------------------------------
+        // La variable debe existir.
+        // ----------------------------------------------------
+
+        bool variableFound = false;
+
+        for (auto it = scopes.rbegin();
+             it != scopes.rend();
+             ++it)
+        {
+            if (it->find(name) != it->end())
+            {
+                variableFound = true;
+                break;
+            }
+        }
+
+        if (!variableFound)
+        {
+            semanticErrors.push_back({
+                "la variable '" +
+                name +
+                "' no fue declarada en la función '" +
+                currentFunction +
+                "'"
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // La asignación debe tener una expresión.
+        // ----------------------------------------------------
+
+        if (!assignmentStatement->expression)
+        {
+            semanticErrors.push_back({
+                "la asignación de '" +
+                name +
+                "' no tiene expresión"
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // Analizar la expresión.
+        // ----------------------------------------------------
+
+        analyzeExpression(
+            *assignmentStatement->expression);
+
+        return;
+    }
+
+
+    // ========================================================
     // IF
     //
     // if (x > 5)
@@ -310,6 +379,75 @@ void SemanticAnalyzer::analyzeStatement(
 
 
     // ========================================================
+    // WHILE
+    //
+    // while (condición)
+    // {
+    //     ...
+    // }
+    // ========================================================
+
+    if (auto* whileStatement =
+        dynamic_cast<const WhileStatement*>(
+            &statement))
+    {
+        // ----------------------------------------------------
+        // La condición debe existir.
+        // ----------------------------------------------------
+
+        if (!whileStatement->condition)
+        {
+            semanticErrors.push_back({
+                "while sin condición en función '" +
+                currentFunction +
+                "'"
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // Analizar condición.
+        // ----------------------------------------------------
+
+        analyzeExpression(
+            *whileStatement->condition);
+
+        // ----------------------------------------------------
+        // El cuerpo debe existir.
+        // ----------------------------------------------------
+
+        if (!whileStatement->body)
+        {
+            semanticErrors.push_back({
+                "while sin bloque en función '" +
+                currentFunction +
+                "'"
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // El cuerpo posee su propio scope.
+        // ----------------------------------------------------
+
+        enterScope();
+
+        for (const auto& nestedStatement :
+             whileStatement->body->statements)
+        {
+            analyzeStatement(
+                *nestedStatement);
+        }
+
+        leaveScope();
+
+        return;
+    }
+
+
+    // ========================================================
     // RETURN
     // ========================================================
 
@@ -348,6 +486,37 @@ void SemanticAnalyzer::analyzeStatement(
                 "print() no puede recibir una cadena vacía"
             });
         }
+
+        return;
+    }
+
+    // ========================================================
+    // PRINT INTEGER
+    // ========================================================
+    //
+    // print_int(x);
+    // print_int(10);
+    // print_int(x + 1);
+    //
+    // La expresión se valida semánticamente igual que
+    // cualquier otra expresión del lenguaje.
+    // ========================================================
+
+    if (auto* printIntegerStatement =
+        dynamic_cast<const PrintIntegerStatement*>(
+            &statement))
+    {
+        if (!printIntegerStatement->expression)
+        {
+            semanticErrors.push_back({
+                "print_int() requiere una expresión"
+            });
+
+            return;
+        }
+
+        analyzeExpression(
+            *printIntegerStatement->expression);
 
         return;
     }

@@ -433,6 +433,27 @@ void X86Emitter::emitAddEaxEbx()
 
 
 // ============================================================
+// SUB EAX, EBX
+//
+// 29 D8
+// ============================================================
+
+void X86Emitter::emitSubEaxEbx()
+{
+    /*
+     * SUB EAX, EBX
+     *
+     * Resultado:
+     *
+     *     EAX = EAX - EBX
+     */
+
+    machineCode.push_back(0x29);
+    machineCode.push_back(0xD8);
+}
+
+
+// ============================================================
 // MUL / IMUL EAX, EBX
 // 0F AF C3
 // ============================================================
@@ -463,6 +484,32 @@ void X86Emitter::emitMovEbxEax()
     // MOV EBX, EAX
     machineCode.push_back(0x89);
     machineCode.push_back(0xC3);
+}
+
+void X86Emitter::emitMovEbxEbp()
+{
+    // MOV EBX, EBP
+    machineCode.push_back(0x89);
+    machineCode.push_back(0xEB);
+}
+
+void X86Emitter::emitAddEbpImm32(std::uint32_t value)
+{
+    // ADD EBP, imm32
+    machineCode.push_back(0x81);
+    machineCode.push_back(0xC5);
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>(value & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((value >> 8) & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((value >> 16) & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((value >> 24) & 0xFF));
 }
 // ============================================================
 // INTEGER CONVERSION

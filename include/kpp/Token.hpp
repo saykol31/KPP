@@ -29,6 +29,7 @@ enum class TokenType
     KwPrint,
     KwIf,
     KwElse,
+    KwWhile,
 
     // ============================================================
     // ASSIGNMENT

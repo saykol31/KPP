@@ -470,6 +470,63 @@ void IRGenerator::generateStatement(
     }
 
     // ========================================================
+    // ASSIGNMENT
+    //
+    // x = x - 1;
+    //
+    // ->
+    //
+    // LOAD x -> %N
+    // CONST 1 -> %N
+    // SUB %N, %N -> %N
+    // STORE x <- %N
+    // ========================================================
+
+    if (auto* assignmentStatement =
+            dynamic_cast<const AssignmentStatement*>(&statement))
+    {
+        // ----------------------------------------------------
+        // Verificar expresión
+        // ----------------------------------------------------
+
+        if (!assignmentStatement->expression)
+        {
+            throw std::runtime_error(
+                "K++ IR: asignación sin expresión");
+        }
+
+        // ----------------------------------------------------
+        // Generar la expresión completa.
+        //
+        // Esto permite:
+        //
+        // x = 10;
+        // x = y;
+        // x = x - 1;
+        // x = a + b * 3;
+        // ----------------------------------------------------
+
+        std::string temporary =
+            generateExpression(
+                *assignmentStatement->expression,
+                function);
+
+        // ----------------------------------------------------
+        // STORE
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Store,
+            assignmentStatement->name,
+            temporary,
+            "",
+            0
+        });
+
+        return;
+    }
+
+    // ========================================================
     // IF
     //
     // if (x > 5)
@@ -624,6 +681,122 @@ void IRGenerator::generateStatement(
     }
 
     // ========================================================
+    // WHILE
+    //
+    // LABEL startLabel
+    // condición
+    // JUMP_IF_ZERO condición -> endLabel
+    // cuerpo
+    // JUMP -> startLabel
+    // LABEL endLabel
+    // ========================================================
+
+    if (auto* whileStatement =
+        dynamic_cast<const WhileStatement*>(&statement))
+    {
+        // ----------------------------------------------------
+        // Verificar condición
+        // ----------------------------------------------------
+
+        if (!whileStatement->condition)
+        {
+            throw std::runtime_error(
+                "K++ IR: while sin condición");
+        }
+
+        // ----------------------------------------------------
+        // Verificar bloque
+        // ----------------------------------------------------
+
+        if (!whileStatement->body)
+        {
+            throw std::runtime_error(
+                "K++ IR: while sin bloque");
+        }
+
+        // ----------------------------------------------------
+        // Crear etiquetas
+        // ----------------------------------------------------
+
+        std::string startLabel =
+            createLabel();
+
+        std::string endLabel =
+            createLabel();
+
+        // ----------------------------------------------------
+        // LABEL inicio
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Label,
+            startLabel,
+            "",
+            "",
+            0
+        });
+
+        // ----------------------------------------------------
+        // Generar condición
+        // ----------------------------------------------------
+
+        std::string conditionTemporary =
+            generateExpression(
+                *whileStatement->condition,
+                function);
+
+        // ----------------------------------------------------
+        // Si condición == 0, salir del ciclo
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::JumpIfZero,
+            endLabel,
+            conditionTemporary,
+            "",
+            0
+        });
+
+        // ----------------------------------------------------
+        // Generar cuerpo
+        // ----------------------------------------------------
+
+        for (const auto& nestedStatement :
+             whileStatement->body->statements)
+        {
+            generateStatement(
+                *nestedStatement,
+                function);
+        }
+
+        // ----------------------------------------------------
+        // Volver al inicio
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Jump,
+            startLabel,
+            "",
+            "",
+            0
+        });
+
+        // ----------------------------------------------------
+        // LABEL salida
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Label,
+            endLabel,
+            "",
+            "",
+            0
+        });
+
+        return;
+    }
+
+    // ========================================================
     // PRINT
     // ========================================================
 
@@ -634,6 +807,44 @@ void IRGenerator::generateStatement(
             IROpcode::Print,
             printStatement->text,
             "",
+            "",
+            0
+        });
+
+        return;
+    }
+
+    // ========================================================
+    // PRINT INTEGER
+    // ========================================================
+    //
+    // print_int(x);
+    // print_int(10);
+    // print_int(x + 1);
+    //
+    // Primero generamos la expresión para obtener
+    // el temporal que contiene el valor entero.
+    // ========================================================
+
+    if (auto* printIntegerStatement =
+        dynamic_cast<const PrintIntegerStatement*>(
+            &statement))
+    {
+        if (!printIntegerStatement->expression)
+        {
+            throw std::runtime_error(
+                "K++ IR: print_int sin expresión");
+        }
+
+        std::string temporary =
+            generateExpression(
+                *printIntegerStatement->expression,
+                function);
+
+        function.instructions.push_back({
+            IROpcode::PrintInteger,
+            "",
+            temporary,
             "",
             0
         });

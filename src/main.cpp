@@ -146,6 +146,75 @@ int main(int argc, char** argv)
                 }
 
                 // ==================================================
+                // WHILE
+                // ==================================================
+
+                if (auto* whileStatement =
+                    dynamic_cast<
+                        kpp::WhileStatement*>(
+                        statement.get()))
+                {
+                    std::cout
+                        << "        ├── While\n";
+
+                    // --------------------------------------------------
+                    // CONDITION
+                    // --------------------------------------------------
+
+                    std::cout
+                        << "        │   ├── Condition\n";
+
+                    if (auto* integer =
+                        dynamic_cast<
+                            kpp::IntegerLiteral*>(
+                            whileStatement->condition.get()))
+                    {
+                        std::cout
+                            << "        │   │   └── Integer: "
+                            << integer->value
+                            << '\n';
+                    }
+                    else if (auto* variable =
+                        dynamic_cast<
+                            kpp::VariableExpression*>(
+                            whileStatement->condition.get()))
+                    {
+                        std::cout
+                            << "        │   │   └── Variable: "
+                            << variable->name
+                            << '\n';
+                    }
+
+                    // --------------------------------------------------
+                    // BODY
+                    // --------------------------------------------------
+
+                    std::cout
+                        << "        │   └── Body\n";
+
+                    if (whileStatement->body)
+                    {
+                        for (const auto& nestedStatement :
+                            whileStatement->body->statements)
+                        {
+                            if (auto* print =
+                                dynamic_cast<
+                                    kpp::PrintStatement*>(
+                                    nestedStatement.get()))
+                            {
+                                std::cout
+                                    << "        │       └── Print: "
+                                    << print->text
+                                    << '\n';
+                            }
+                        }
+                    }
+
+                    continue;
+                }
+
+
+                // ==================================================
                 // RETURN
                 // ==================================================
 

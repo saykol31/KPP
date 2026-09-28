@@ -100,6 +100,21 @@ struct PrintStatement : Statement
 };
 
 // ============================================================
+// PRINT INTEGER
+// ============================================================
+
+struct PrintIntegerStatement : Statement
+{
+    std::unique_ptr<Expression> expression;
+
+    explicit PrintIntegerStatement(
+        std::unique_ptr<Expression> expression)
+        : expression(std::move(expression))
+    {
+    }
+};
+
+// ============================================================
 // VARIABLE DECLARATION
 // ============================================================
 
@@ -114,6 +129,25 @@ struct VariableDeclaration : Statement
         std::unique_ptr<Expression> initializer)
         : name(name),
           initializer(std::move(initializer))
+    {
+    }
+};
+
+// ============================================================
+// ASSIGNMENT
+// ============================================================
+
+struct AssignmentStatement : Statement
+{
+    std::string name;
+
+    std::unique_ptr<Expression> expression;
+
+    AssignmentStatement(
+        const std::string& name,
+        std::unique_ptr<Expression> expression)
+        : name(name),
+          expression(std::move(expression))
     {
     }
 };
@@ -146,6 +180,25 @@ struct IfStatement : Statement
         : condition(std::move(condition)),
           thenBlock(std::move(thenBlock)),
           elseBlock(std::move(elseBlock))
+    {
+    }
+};
+
+// ============================================================
+// WHILE
+// ============================================================
+
+struct WhileStatement : Statement
+{
+    std::unique_ptr<Expression> condition;
+
+    std::unique_ptr<Block> body;
+
+    WhileStatement(
+        std::unique_ptr<Expression> condition,
+        std::unique_ptr<Block> body)
+        : condition(std::move(condition)),
+          body(std::move(body))
     {
     }
 };

@@ -281,6 +281,65 @@ Parser::parseStatement()
 
 
     // ========================================================
+    // PRINT INTEGER
+    //
+    // print_int(x);
+    // ========================================================
+
+    if (check(TokenType::Identifier) &&
+        current().text == "print_int")
+    {
+        advance();
+
+        expect(
+            TokenType::LParen,
+            "se esperaba '(' después de print_int");
+
+        auto expression =
+            parseExpression();
+
+        expect(
+            TokenType::RParen,
+            "se esperaba ')' después de print_int");
+
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después de print_int");
+
+        return std::make_unique<PrintIntegerStatement>(
+            std::move(expression));
+    }
+
+
+    // ========================================================
+    // ASSIGNMENT
+    //
+    // x = x - 1;
+    // ========================================================
+
+    if (check(TokenType::Identifier))
+    {
+        std::string name =
+            advance().text;
+
+        expect(
+            TokenType::Assign,
+            "se esperaba '=' después del nombre de variable");
+
+        auto expression =
+            parseExpression();
+
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después de asignación");
+
+        return std::make_unique<AssignmentStatement>(
+            name,
+            std::move(expression));
+    }
+
+
+    // ========================================================
     // IF
     //
     // if (x > 5)
@@ -343,6 +402,37 @@ Parser::parseStatement()
             std::move(condition),
             std::move(thenBlock),
             std::move(elseBlock));
+    }
+
+
+    // ========================================================
+    // WHILE
+    //
+    // while (x > 0)
+    // {
+    //     ...
+    // }
+    // ========================================================
+
+    if (match(TokenType::KwWhile))
+    {
+        expect(
+            TokenType::LParen,
+            "se esperaba '(' después de while");
+
+        auto condition =
+            parseExpression();
+
+        expect(
+            TokenType::RParen,
+            "se esperaba ')' después de condición de while");
+
+        auto body =
+            parseBlock();
+
+        return std::make_unique<WhileStatement>(
+            std::move(condition),
+            std::move(body));
     }
 
 
