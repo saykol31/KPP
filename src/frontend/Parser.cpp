@@ -906,10 +906,41 @@ Parser::parsePrimary()
     // x
     // ========================================================
 
+    // ========================================================
+    // VARIABLE / CALL EXPRESSION
+    //
+    // x
+    // suma()
+    // resta()
+    // cualquierFuncion()
+    //
+    // FASE 4.1:
+    // - llamadas sin parámetros
+    // - devuelve int
+    // ========================================================
+
     if (check(TokenType::Identifier))
     {
         std::string name =
             advance().text;
+
+        // ----------------------------------------------------
+        // FUNCTION CALL
+        // ----------------------------------------------------
+
+        if (match(TokenType::LParen))
+        {
+            expect(
+                TokenType::RParen,
+                "se esperaba ')' después del nombre de función");
+
+            return std::make_unique<CallExpression>(
+                name);
+        }
+
+        // ----------------------------------------------------
+        // VARIABLE
+        // ----------------------------------------------------
 
         return std::make_unique<VariableExpression>(
             name);

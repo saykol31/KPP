@@ -47,6 +47,29 @@ struct VariableExpression : Expression
     {
     }
 };
+
+// ============================================================
+// CALL EXPRESSION
+//
+// suma()
+// resta()
+// cualquierFuncion()
+//
+// FASE 4.1:
+// - sin parámetros
+// - devuelve int
+// ============================================================
+
+struct CallExpression : Expression
+{
+    std::string callee;
+
+    explicit CallExpression(
+        const std::string& callee)
+        : callee(callee)
+    {
+    }
+};
 //============================================================
 // BINARY EXPRESSION
 // ============================================================

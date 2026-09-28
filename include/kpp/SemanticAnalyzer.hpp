@@ -4,6 +4,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace kpp {
@@ -89,6 +90,17 @@ private:
         >;
 
     std::vector<Scope> scopes;
+
+    // --------------------------------------------------------
+    // FUNCIONES
+    //
+    // nombre de función → función declarada
+    //
+    // Se registran todas las funciones antes de analizar
+    // los cuerpos para permitir llamadas hacia adelante.
+    // --------------------------------------------------------
+
+    std::unordered_set<std::string> functionNames;
 
     // --------------------------------------------------------
     // Entrar en un nuevo scope

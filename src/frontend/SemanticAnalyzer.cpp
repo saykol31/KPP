@@ -50,6 +50,7 @@ bool SemanticAnalyzer::analyze(
     const Program& program)
 {
     semanticErrors.clear();
+    functionNames.clear();
 
     if (program.functions.empty())
     {
@@ -62,6 +63,26 @@ bool SemanticAnalyzer::analyze(
 
     bool hasMain = false;
 
+    // ========================================================
+    // PRIMERA PASADA
+    //
+    // Registrar todas las funciones antes de analizar
+    // sus cuerpos.
+    //
+    // Esto permite:
+    //
+    // int main()
+    // {
+    //     return suma();
+    // }
+    //
+    // int suma()
+    // {
+    //     return 10;
+    // }
+    //
+    // ========================================================
+
     for (const auto& function :
          program.functions)
     {
@@ -70,6 +91,26 @@ bool SemanticAnalyzer::analyze(
             hasMain = true;
         }
 
+        if (!functionNames.insert(
+                function->name).second)
+        {
+            semanticErrors.push_back({
+                "la función '" +
+                function->name +
+                "' está declarada más de una vez"
+            });
+        }
+    }
+
+    // ========================================================
+    // SEGUNDA PASADA
+    //
+    // Analizar los cuerpos de todas las funciones.
+    // ========================================================
+
+    for (const auto& function :
+         program.functions)
+    {
         analyzeFunction(*function);
     }
 
@@ -546,6 +587,43 @@ void SemanticAnalyzer::analyzeExpression(
     if (dynamic_cast<const IntegerLiteral*>(
             &expression))
     {
+        return;
+    }
+
+    // ========================================================
+    // CALL EXPRESSION
+    //
+    // return suma();
+    // return cualquierFuncion();
+    //
+    // FASE 4.1:
+    // - sin parámetros
+    // - devuelve int
+    // ========================================================
+
+    if (auto* call =
+        dynamic_cast<const CallExpression*>(
+            &expression))
+    {
+        // ----------------------------------------------------
+        // Verificar que la función exista.
+        // ----------------------------------------------------
+
+        if (functionNames.find(call->callee) ==
+            functionNames.end())
+        {
+            semanticErrors.push_back({
+                "función no declarada: " +
+                call->callee
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // Las funciones de FASE 4.1 devuelven int.
+        // ----------------------------------------------------
+
         return;
     }
 

@@ -487,8 +487,14 @@ X86Backend::generate(
     //   +--> EVENT_LOOP
     //
 
-    const std::size_t mainBody =
-        emitter.size();
+    // --------------------------------------------------------
+    // MAIN BODY
+    //
+    // La dirección real de main se conoce cuando encontramos
+    // FUNCTION_BEGIN main.
+    // --------------------------------------------------------
+
+    std::size_t mainBody = 0;
 
 
     std::vector<std::size_t>
@@ -533,8 +539,19 @@ X86Backend::generate(
     std::size_t
         printIndex = 0;
 
+    functionEntries.clear();
+    functionCallPatches.clear();
+    functionVariables.clear();
+
     resetTemporaries();
     resetVariables();
+
+    // ========================================================
+    // FUNCIÓN ACTUAL
+    // ========================================================
+
+    std::string currentFunctionName;
+
     // ========================================================
     // GENERAR INSTRUCCIONES IR
     // ========================================================
@@ -545,6 +562,73 @@ X86Backend::generate(
         for (const auto& instruction :
              function.instructions)
         {
+
+            // ------------------------------------------------
+            // FUNCTION BEGIN
+            // ------------------------------------------------
+            //
+            // FUNCTION_BEGIN suma
+            //
+            // Registra la dirección de entrada de la función.
+            // ------------------------------------------------
+
+            if (instruction.opcode ==
+                IROpcode::FunctionBegin)
+            {
+                if (instruction.name.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: FUNCTION_BEGIN sin nombre");
+                }
+
+                if (functionEntries.find(
+                        instruction.name) !=
+                    functionEntries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: función duplicada: " +
+                        instruction.name);
+                }
+
+                functionEntries[
+                    instruction.name] =
+                    emitter.size();
+
+                // ------------------------------------------------
+                // Guardar el contexto de variables de la función
+                // anterior antes de comenzar la siguiente.
+                // ------------------------------------------------
+
+                if (!currentFunctionName.empty())
+                {
+                    functionVariables[
+                        currentFunctionName] =
+                        variables;
+                }
+
+                currentFunctionName =
+                    instruction.name;
+
+                // ------------------------------------------------
+                // MAIN
+                //
+                // El runtime debe entrar exactamente aquí.
+                // ------------------------------------------------
+
+                if (instruction.name == "main")
+                {
+                    mainBody =
+                        emitter.size();
+                }
+
+                // ------------------------------------------------
+                // Cada función tiene su propio estado local.
+                // ------------------------------------------------
+
+                resetTemporaries();
+                resetVariables();
+            }
+
 
             // ------------------------------------------------
             // CONST
@@ -728,6 +812,7 @@ X86Backend::generate(
                 }
 
                 variableStorePatches.push_back({
+                    currentFunctionName,
                     instruction.name,
                     patchOffset
                 });
@@ -826,6 +911,7 @@ X86Backend::generate(
                         emitter.emitMovEaxMem32Placeholder();
 
                     variableLoadPatches.push_back({
+                        currentFunctionName,
                         instruction.name,
                         patchOffset
                     });
@@ -840,6 +926,7 @@ X86Backend::generate(
                         emitter.emitMovEbxMem32Placeholder();
 
                     variableLoadPatches.push_back({
+                        currentFunctionName,
                         instruction.name,
                         patchOffset
                     });
@@ -2384,6 +2471,60 @@ X86Backend::generate(
 
 
             // ------------------------------------------------
+            // CALL
+            // ------------------------------------------------
+            //
+            // CALL suma -> %0
+            //
+            // x86:
+            //
+            //     E8 rel32
+            //
+            // El resultado de una función K++ se devuelve
+            // mediante EAX.
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                     IROpcode::Call)
+            {
+                if (instruction.name.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: CALL sin función destino");
+                }
+
+                if (instruction.result.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: CALL sin temporal resultado");
+                }
+
+                // ------------------------------------------------
+                // CALL rel32
+                // ------------------------------------------------
+
+                emitter.emitByte(0xE8);
+
+                const std::size_t patchOffset =
+                    emitter.emitRel32Placeholder();
+
+                functionCallPatches.push_back({
+                    instruction.name,
+                    patchOffset
+                });
+
+                // ------------------------------------------------
+                // Resultado de la función:
+                //
+                //     EAX -> %N
+                // ------------------------------------------------
+
+                bindTemporaryToEax(
+                    instruction.result);
+            }
+
+
+            // ------------------------------------------------
             // RETURN
             // ------------------------------------------------
 
@@ -2475,10 +2616,26 @@ X86Backend::generate(
                         instruction.value);
                 }
 
-                emitter.emitByte(0xE9);
+                // ------------------------------------------------
+                // RETURN DE FUNCIÓN
+                //
+                // Las funciones llamadas devuelven mediante RET.
+                //
+                // main mantiene el mecanismo especial de
+                // KolibriOS: salto al event loop.
+                // ------------------------------------------------
 
-                returnEventLoopPatches.push_back(
-                    emitter.emitRel32Placeholder());
+                if (currentFunctionName != "main")
+                {
+                    emitter.emitRet();
+                }
+                else
+                {
+                    emitter.emitByte(0xE9);
+
+                    returnEventLoopPatches.push_back(
+                        emitter.emitRel32Placeholder());
+                }
             }
         }
     }
@@ -2532,6 +2689,21 @@ X86Backend::generate(
     }
 
 
+    // --------------------------------------------------------
+    // Guardar el contexto de variables de la última función.
+    //
+    // FUNCTION_END no necesita lógica especial aquí porque
+    // el backend genera todas las funciones secuencialmente.
+    // --------------------------------------------------------
+
+    if (!currentFunctionName.empty())
+    {
+        functionVariables[
+            currentFunctionName] =
+            variables;
+    }
+
+
     // ========================================================
     // PATCH CONTROL FLOW
     // ========================================================
@@ -2566,6 +2738,38 @@ X86Backend::generate(
         emitter.patchRel32(
             patch.patchOffset,
             labelIt->second);
+    }
+
+
+    // ========================================================
+    // PATCH FUNCTION CALLS
+    // ========================================================
+    //
+    // Cada CALL fue generado como:
+    //
+    //     E8 00 00 00 00
+    //
+    // Ahora conocemos la dirección de todas las funciones.
+    // ========================================================
+
+    for (const auto& patch :
+         functionCallPatches)
+    {
+        const auto functionIt =
+            functionEntries.find(
+                patch.functionName);
+
+        if (functionIt ==
+            functionEntries.end())
+        {
+            throw std::runtime_error(
+                "K++ X86Backend: función no definida: " +
+                patch.functionName);
+        }
+
+        emitter.patchRel32(
+            patch.patchOffset,
+            functionIt->second);
     }
 
 
@@ -2718,13 +2922,29 @@ std::vector<std::size_t>
     for (const auto& patch :
          variableLoadPatches)
     {
-        const auto variableIt =
-            variables.find(patch.name);
+        const auto functionIt =
+            functionVariables.find(
+                patch.functionName);
 
-        if (variableIt == variables.end())
+        if (functionIt ==
+            functionVariables.end())
+        {
+            throw std::runtime_error(
+                "K++ X86Backend: contexto de variables LOAD no encontrado para función: " +
+                patch.functionName);
+        }
+
+        const auto variableIt =
+            functionIt->second.find(
+                patch.name);
+
+        if (variableIt ==
+            functionIt->second.end())
         {
             throw std::runtime_error(
                 "K++ X86Backend: variable LOAD no encontrada durante patch: " +
+                patch.functionName +
+                "::" +
                 patch.name);
         }
 
@@ -2748,13 +2968,29 @@ std::vector<std::size_t>
 for (const auto& patch :
      variableStorePatches)
 {
-    const auto variableIt =
-        variables.find(patch.name);
+    const auto functionIt =
+        functionVariables.find(
+            patch.functionName);
 
-    if (variableIt == variables.end())
+    if (functionIt ==
+        functionVariables.end())
+    {
+        throw std::runtime_error(
+            "K++ X86Backend: contexto de variables STORE no encontrado para función: " +
+            patch.functionName);
+    }
+
+    const auto variableIt =
+        functionIt->second.find(
+            patch.name);
+
+    if (variableIt ==
+        functionIt->second.end())
     {
         throw std::runtime_error(
             "K++ X86Backend: variable STORE no encontrada durante patch: " +
+            patch.functionName +
+            "::" +
             patch.name);
     }
 

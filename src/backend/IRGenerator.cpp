@@ -980,6 +980,40 @@ std::string IRGenerator::generateExpression(
     }
 
     // ========================================================
+    // CALL EXPRESSION
+    //
+    // suma()
+    // resta()
+    // cualquierFuncion()
+    //
+    // ->
+    //
+    // CALL suma -> %0
+    //
+    // FASE 4.1:
+    // - sin parámetros
+    // - devuelve int
+    // ========================================================
+
+    if (auto* call =
+        dynamic_cast<const CallExpression*>(
+            &expression))
+    {
+        std::string result =
+            createTemporary();
+
+        function.instructions.push_back({
+            IROpcode::Call,
+            call->callee,
+            "",
+            result,
+            0
+        });
+
+        return result;
+    }
+
+    // ========================================================
     // VARIABLE
     //
     // x

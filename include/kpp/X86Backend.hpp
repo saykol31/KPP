@@ -50,12 +50,14 @@ private:
 
     struct VariableLoadPatch
     {
+        std::string functionName;
         std::string name;
         std::size_t patchOffset;
     };
 
     struct VariableStorePatch
     {
+        std::string functionName;
         std::string name;
         std::size_t patchOffset;
     };
@@ -81,6 +83,22 @@ private:
         std::size_t patchOffset;
     };
 
+    // --------------------------------------------------------
+    // FUNCTION CALL PATCH
+    //
+    // CALL rel32 se emite antes de conocer necesariamente
+    // la dirección de la función destino.
+    //
+    // El rel32 se parchea cuando todas las funciones
+    // ya fueron generadas.
+    // --------------------------------------------------------
+
+    struct FunctionCallPatch
+    {
+        std::string functionName;
+        std::size_t patchOffset;
+    };
+
     std::unordered_map<
         std::string,
         TemporaryLocation
@@ -90,6 +108,36 @@ private:
         std::string,
         VariableLocation
     > variables;
+
+    // --------------------------------------------------------
+    // VARIABLES POR FUNCIÓN
+    //
+    // Cada función mantiene su propio contexto de variables.
+    // Esto permite resolver LOAD/STORE después de generar
+    // todas las funciones, incluso con llamadas hacia adelante.
+    // --------------------------------------------------------
+
+    std::unordered_map<
+        std::string,
+        std::unordered_map<
+            std::string,
+            VariableLocation
+        >
+    > functionVariables;
+
+    // --------------------------------------------------------
+    // FUNCIONES
+    //
+    // nombre de función -> posición dentro del código generado
+    // --------------------------------------------------------
+
+    std::unordered_map<
+        std::string,
+        std::size_t
+    > functionEntries;
+
+    std::vector<FunctionCallPatch>
+        functionCallPatches;
 
     X86Emitter emitter;
 
