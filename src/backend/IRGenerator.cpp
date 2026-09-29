@@ -308,12 +308,40 @@ IRFunction IRGenerator::generateFunction(
 
     // --------------------------------------------------------
     // FUNCTION BEGIN
+    //
+    // Transportamos los nombres de los parámetros dentro de
+    // operand para que el backend pueda asociarlos con los
+    // registros de argumentos.
+    //
+    // Ejemplo:
+    //
+    // int suma(int a, int b)
+    //
+    // ->
+    //
+    // FUNCTION suma
+    // operand = "a, b"
     // --------------------------------------------------------
+
+    std::string parameters;
+
+    for (std::size_t i = 0;
+         i < function.parameters.size();
+         ++i)
+    {
+        if (i != 0)
+        {
+            parameters += ", ";
+        }
+
+        parameters +=
+            function.parameters[i].name;
+    }
 
     irFunction.instructions.push_back({
         IROpcode::FunctionBegin,
         function.name,
-        "",
+        parameters,
         "",
         0
     });
@@ -983,29 +1011,79 @@ std::string IRGenerator::generateExpression(
     // CALL EXPRESSION
     //
     // suma()
-    // resta()
-    // cualquierFuncion()
+    // suma(10, 20)
+    // suma(x, 20)
     //
-    // ->
+    // FASE 4.2.4:
+    // - generar cada argumento
+    // - conservar sus temporales en operand
+    // - generar CALL con argumentos
     //
-    // CALL suma -> %0
+    // Ejemplo:
     //
-    // FASE 4.1:
-    // - sin parámetros
-    // - devuelve int
+    // CONST 10 -> %0
+    // CONST 20 -> %1
+    // CALL suma %0, %1 -> %2
     // ========================================================
 
     if (auto* call =
         dynamic_cast<const CallExpression*>(
             &expression))
     {
+        // ----------------------------------------------------
+        // Generar los argumentos en el orden en que aparecen.
+        //
+        // suma(10, 20)
+        //
+        // primero 10
+        // después 20
+        // ----------------------------------------------------
+
+        std::string arguments;
+
+        for (std::size_t i = 0;
+             i < call->arguments.size();
+             ++i)
+        {
+            if (!call->arguments[i])
+            {
+                throw std::runtime_error(
+                    "K++ IR: argumento nulo en llamada a " +
+                    call->callee);
+            }
+
+            std::string argumentTemporary =
+                generateExpression(
+                    *call->arguments[i],
+                    function);
+
+            if (i != 0)
+            {
+                arguments += ", ";
+            }
+
+            arguments += argumentTemporary;
+        }
+
+        // ----------------------------------------------------
+        // Crear temporal para el resultado de la llamada.
+        // ----------------------------------------------------
+
         std::string result =
             createTemporary();
+
+        // ----------------------------------------------------
+        // CALL función argumentos -> resultado
+        //
+        // Ejemplo:
+        //
+        // CALL suma %0, %1 -> %2
+        // ----------------------------------------------------
 
         function.instructions.push_back({
             IROpcode::Call,
             call->callee,
-            "",
+            arguments,
             result,
             0
         });

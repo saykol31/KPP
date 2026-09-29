@@ -1,0 +1,9 @@
+int suma(int a, int b)
+{
+    return 30;
+}
+
+int main()
+{
+    return suma(10, 20, 30);
+}

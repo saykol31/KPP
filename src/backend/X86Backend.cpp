@@ -627,6 +627,122 @@ X86Backend::generate(
 
                 resetTemporaries();
                 resetVariables();
+
+                // ------------------------------------------------
+                // PARÁMETROS DE FUNCIÓN
+                //
+                // Convención inicial de K++:
+                //
+                // parámetro 0 -> EAX
+                // parámetro 1 -> EBX
+                //
+                // Los parámetros se materializan inmediatamente
+                // como variables backend normales.
+                //
+                // Esto evita crear alias peligrosos dentro del
+                // allocator:
+                //
+                //     a  -> EAX
+                //     %0 -> EAX
+                //
+                // En su lugar:
+                //
+                //     EAX -> [a]
+                //     EBX -> [b]
+                //
+                // Después, LOAD a / LOAD b utilizan el camino
+                // normal de variables y temporales.
+                //
+                // FUNCTION suma a, b
+                // ------------------------------------------------
+
+                if (!instruction.operand.empty())
+                {
+                    const std::string parameters =
+                        instruction.operand;
+
+                    std::size_t start = 0;
+                    std::size_t parameterIndex = 0;
+
+                    while (start < parameters.size())
+                    {
+                        const std::size_t comma =
+                            parameters.find(',', start);
+
+                        const std::size_t end =
+                            (comma == std::string::npos)
+                                ? parameters.size()
+                                : comma;
+
+                        std::string parameter =
+                            parameters.substr(
+                                start,
+                                end - start);
+
+                        while (!parameter.empty() &&
+                               parameter.front() == ' ')
+                        {
+                            parameter.erase(
+                                parameter.begin());
+                        }
+
+                        while (!parameter.empty() &&
+                               parameter.back() == ' ')
+                        {
+                            parameter.pop_back();
+                        }
+
+                        if (parameter.empty())
+                        {
+                            throw std::runtime_error(
+                                "K++ X86Backend: parámetro vacío en FUNCTION " +
+                                instruction.name);
+                        }
+
+                        if (parameterIndex > 1)
+                        {
+                            throw std::runtime_error(
+                                "K++ X86Backend: más de 2 parámetros "
+                                "no soportados todavía en función " +
+                                instruction.name);
+                        }
+
+                        const std::size_t dataOffset =
+                            allocateVariableData(data);
+
+                        declareVariable(
+                            parameter,
+                            dataOffset);
+
+                        std::size_t patchOffset = 0;
+
+                        if (parameterIndex == 0)
+                        {
+                            patchOffset =
+                                emitter.emitMovMemEax32Placeholder();
+                        }
+                        else
+                        {
+                            patchOffset =
+                                emitter.emitMovMemEbx32Placeholder();
+                        }
+
+                        variableStorePatches.push_back({
+                            currentFunctionName,
+                            parameter,
+                            patchOffset
+                        });
+
+                        ++parameterIndex;
+
+                        if (comma == std::string::npos)
+                        {
+                            break;
+                        }
+
+                        start = comma + 1;
+                    }
+                }
             }
 
 
@@ -2196,6 +2312,18 @@ X86Backend::generate(
 
 
                 /*
+                * MUL consume ambos operandos.
+                *
+                * Aunque las instrucciones x86 ya utilizaron
+                * físicamente EAX y EBX, el allocator todavía
+                * conserva sus asociaciones. Debemos liberarlas
+                * antes de registrar el nuevo resultado.
+                */
+
+                freeTemporary(left);
+                freeTemporary(right);
+
+                /*
                 * El resultado de MUL queda en EAX.
                 */
 
@@ -2497,6 +2625,339 @@ X86Backend::generate(
                 {
                     throw std::runtime_error(
                         "K++ X86Backend: CALL sin temporal resultado");
+                }
+
+                // ------------------------------------------------
+                // ARGUMENTOS DE CALL
+                //
+                // Convención inicial de K++:
+                //
+                //     argumento 0 -> EAX
+                //     argumento 1 -> EBX
+                //
+                // Los argumentos pueden encontrarse:
+                //
+                //     EAX
+                //     EBX
+                //     MEMORY
+                //
+                // Antes de CALL los normalizamos físicamente.
+                // ------------------------------------------------
+
+                std::string left;
+                std::string right;
+
+                if (!instruction.operand.empty())
+                {
+                    const std::size_t comma =
+                        instruction.operand.find(',');
+
+                    left =
+                        instruction.operand.substr(
+                            0,
+                            comma);
+
+                    if (comma != std::string::npos)
+                    {
+                        right =
+                            instruction.operand.substr(
+                                comma + 1);
+
+                        if (right.find(',') !=
+                            std::string::npos)
+                        {
+                            throw std::runtime_error(
+                                "K++ X86Backend: CALL soporta como máximo 2 argumentos");
+                        }
+                    }
+
+                    while (!left.empty() &&
+                           left.front() == ' ')
+                    {
+                        left.erase(
+                            left.begin());
+                    }
+
+                    while (!left.empty() &&
+                           left.back() == ' ')
+                    {
+                        left.pop_back();
+                    }
+
+                    while (!right.empty() &&
+                           right.front() == ' ')
+                    {
+                        right.erase(
+                            right.begin());
+                    }
+
+                    while (!right.empty() &&
+                           right.back() == ' ')
+                    {
+                        right.pop_back();
+                    }
+
+                    if (left.empty())
+                    {
+                        throw std::runtime_error(
+                            "K++ X86Backend: CALL argumento vacío");
+                    }
+
+                    const auto leftIt =
+                        temporaries.find(left);
+
+                    if (leftIt == temporaries.end())
+                    {
+                        throw std::runtime_error(
+                            "K++ X86Backend: CALL argumento no encontrado: " +
+                            left);
+                    }
+
+                    if (!right.empty())
+                    {
+                        const auto rightIt =
+                            temporaries.find(right);
+
+                        if (rightIt == temporaries.end())
+                        {
+                            throw std::runtime_error(
+                                "K++ X86Backend: CALL argumento no encontrado: " +
+                                right);
+                        }
+                    }
+
+                    auto emitLoadMemoryToEax =
+                        [&](const std::string& temporary,
+                            std::size_t dataOffset)
+                    {
+                        const std::size_t reloadPatchOffset =
+                            emitter.emitMovEaxMem32Placeholder();
+
+                        temporaryReloadPatches.push_back({
+                            temporary,
+                            reloadPatchOffset,
+                            dataOffset
+                        });
+                    };
+
+                    const auto& leftLocation =
+                        leftIt->second;
+
+                    if (right.empty())
+                    {
+                        // ----------------------------------------
+                        // Un solo argumento -> EAX
+                        // ----------------------------------------
+
+                        if (leftLocation.kind ==
+                            TemporaryLocation::Kind::Memory)
+                        {
+                            emitLoadMemoryToEax(
+                                left,
+                                leftLocation.dataOffset);
+                        }
+                        else if (
+                            leftLocation.registerCode == 0)
+                        {
+                            // Ya está en EAX.
+                        }
+                        else if (
+                            leftLocation.registerCode == 3)
+                        {
+                            emitter.emitMovEaxEbx();
+                        }
+                        else
+                        {
+                            throw std::runtime_error(
+                                "K++ X86Backend: registro de argumento no soportado");
+                        }
+                    }
+                    else
+                    {
+                        const auto& rightLocation =
+                            temporaries.at(right);
+
+                        const auto leftKind =
+                            leftLocation.kind;
+
+                        const auto rightKind =
+                            rightLocation.kind;
+
+                        const bool leftEax =
+                            leftKind ==
+                                TemporaryLocation::Kind::Register &&
+                            leftLocation.registerCode == 0;
+
+                        const bool leftEbx =
+                            leftKind ==
+                                TemporaryLocation::Kind::Register &&
+                            leftLocation.registerCode == 3;
+
+                        const bool leftMemory =
+                            leftKind ==
+                                TemporaryLocation::Kind::Memory;
+
+                        const bool rightEax =
+                            rightKind ==
+                                TemporaryLocation::Kind::Register &&
+                            rightLocation.registerCode == 0;
+
+                        const bool rightEbx =
+                            rightKind ==
+                                TemporaryLocation::Kind::Register &&
+                            rightLocation.registerCode == 3;
+
+                        const bool rightMemory =
+                            rightKind ==
+                                TemporaryLocation::Kind::Memory;
+
+                        // ----------------------------------------
+                        // EAX , EBX
+                        // ----------------------------------------
+
+                        if (leftEax && rightEbx)
+                        {
+                            // Ya preparados.
+                        }
+
+                        // ----------------------------------------
+                        // EBX , EAX
+                        // ----------------------------------------
+
+                        else if (leftEbx && rightEax)
+                        {
+                            emitter.emitPushEax();
+                            emitter.emitMovEaxEbx();
+                            emitter.emitPopEbx();
+                        }
+
+                        // ----------------------------------------
+                        // EAX , MEMORY
+                        // ----------------------------------------
+
+                        else if (leftEax && rightMemory)
+                        {
+                            // Guardamos argumento 0.
+                            emitter.emitPushEax();
+
+                            // Cargamos argumento 1.
+                            emitLoadMemoryToEax(
+                                right,
+                                rightLocation.dataOffset);
+
+                            // EBX = argumento 0.
+                            emitter.emitPopEbx();
+
+                            // Intercambiamos:
+                            //
+                            // EAX = argumento 0
+                            // EBX = argumento 1
+                            emitter.emitPushEax();
+                            emitter.emitMovEaxEbx();
+                            emitter.emitPopEbx();
+                        }
+
+                        // ----------------------------------------
+                        // EBX , MEMORY
+                        // ----------------------------------------
+
+                        else if (leftEbx && rightMemory)
+                        {
+                            // Conservamos argumento 0 en EAX.
+                            emitter.emitMovEaxEbx();
+                            emitter.emitPushEax();
+
+                            // Cargamos argumento 1.
+                            emitLoadMemoryToEax(
+                                right,
+                                rightLocation.dataOffset);
+
+                            // EBX = argumento 0.
+                            emitter.emitPopEbx();
+
+                            // Intercambiamos.
+                            emitter.emitPushEax();
+                            emitter.emitMovEaxEbx();
+                            emitter.emitPopEbx();
+                        }
+
+                        // ----------------------------------------
+                        // MEMORY , EAX
+                        // ----------------------------------------
+
+                        else if (leftMemory && rightEax)
+                        {
+                            // Guardamos argumento 1.
+                            emitter.emitPushEax();
+
+                            // EAX = argumento 0.
+                            emitLoadMemoryToEax(
+                                left,
+                                leftLocation.dataOffset);
+
+                            // EBX = argumento 1.
+                            emitter.emitPopEbx();
+                        }
+
+                        // ----------------------------------------
+                        // MEMORY , EBX
+                        // ----------------------------------------
+
+                        else if (leftMemory && rightEbx)
+                        {
+                            // EAX = argumento 0.
+                            emitLoadMemoryToEax(
+                                left,
+                                leftLocation.dataOffset);
+
+                            // EBX ya contiene argumento 1.
+                        }
+
+                        // ----------------------------------------
+                        // MEMORY , MEMORY
+                        // ----------------------------------------
+
+                        else if (leftMemory && rightMemory)
+                        {
+                            // EAX = argumento 0.
+                            emitLoadMemoryToEax(
+                                left,
+                                leftLocation.dataOffset);
+
+                            // Conservamos argumento 0.
+                            emitter.emitPushEax();
+
+                            // EAX = argumento 1.
+                            emitLoadMemoryToEax(
+                                right,
+                                rightLocation.dataOffset);
+
+                            // EBX = argumento 0.
+                            emitter.emitPopEbx();
+
+                            // Intercambiamos.
+                            emitter.emitPushEax();
+                            emitter.emitMovEaxEbx();
+                            emitter.emitPopEbx();
+                        }
+
+                        else
+                        {
+                            throw std::runtime_error(
+                                "K++ X86Backend: combinación de argumentos CALL no soportada");
+                        }
+                    }
+
+                    // ------------------------------------------------
+                    // Los argumentos quedan consumidos por CALL.
+                    // ------------------------------------------------
+
+                    freeTemporary(left);
+
+                    if (!right.empty())
+                    {
+                        freeTemporary(right);
+                    }
                 }
 
                 // ------------------------------------------------

@@ -1,0 +1,12 @@
+int main()
+{
+    int x = 0;
+    x = suma();
+    print_int(x);
+    return 0;
+}
+
+int suma()
+{
+    return 20;
+}

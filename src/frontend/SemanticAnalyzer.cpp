@@ -51,6 +51,7 @@ bool SemanticAnalyzer::analyze(
 {
     semanticErrors.clear();
     functionNames.clear();
+    functionDeclarations.clear();
 
     if (program.functions.empty())
     {
@@ -100,6 +101,11 @@ bool SemanticAnalyzer::analyze(
                 "' está declarada más de una vez"
             });
         }
+        else
+        {
+            functionDeclarations[function->name] =
+                function.get();
+        }
     }
 
     // ========================================================
@@ -140,6 +146,51 @@ void SemanticAnalyzer::analyzeFunction(
 
     scopes.clear();
     enterScope();
+
+    // --------------------------------------------------------
+    // REGISTRAR PARÁMETROS DE LA FUNCIÓN
+    //
+    // Los parámetros forman parte del scope local de la
+    // función y pueden utilizarse como variables:
+    //
+    // int suma(int a, int b)
+    // {
+    //     return a + b;
+    // }
+    //
+    // a -> int
+    // b -> int
+    // --------------------------------------------------------
+
+    for (const auto& parameter :
+         function.parameters)
+    {
+        if (parameter.name.empty())
+        {
+            semanticErrors.push_back({
+                "parámetro sin nombre en la función '" +
+                function.name + "'"
+            });
+
+            continue;
+        }
+
+        if (scopes.back().find(parameter.name) !=
+            scopes.back().end())
+        {
+            semanticErrors.push_back({
+                "parámetro duplicado '" +
+                parameter.name +
+                "' en la función '" +
+                function.name + "'"
+            });
+
+            continue;
+        }
+
+        scopes.back()[parameter.name] =
+            parameter.type;
+    }
 
     // --------------------------------------------------------
     // Verificar tipo de retorno
@@ -601,6 +652,20 @@ void SemanticAnalyzer::analyzeExpression(
     // - devuelve int
     // ========================================================
 
+    // ========================================================
+    // CALL EXPRESSION
+    //
+    // return suma();
+    // return suma(10, 20);
+    // return suma(x, 20);
+    //
+    // FASE 4.2.3:
+    // - verificar existencia de la función
+    // - verificar cantidad de argumentos
+    // - analizar cada argumento
+    // - relacionar argumento[i] con parámetro[i]
+    // ========================================================
+
     if (auto* call =
         dynamic_cast<const CallExpression*>(
             &expression))
@@ -621,7 +686,119 @@ void SemanticAnalyzer::analyzeExpression(
         }
 
         // ----------------------------------------------------
-        // Las funciones de FASE 4.1 devuelven int.
+        // Obtener la declaración de la función.
+        // ----------------------------------------------------
+
+        auto functionIt =
+            functionDeclarations.find(
+                call->callee);
+
+        if (functionIt ==
+            functionDeclarations.end())
+        {
+            semanticErrors.push_back({
+                "no se pudo obtener la declaración de la función: " +
+                call->callee
+            });
+
+            return;
+        }
+
+        const FunctionDeclaration& function =
+            *functionIt->second;
+
+        // ----------------------------------------------------
+        // Verificar cantidad de argumentos.
+        //
+        // suma(int a, int b)
+        //
+        // suma(10, 20)
+        //      2       2
+        // ----------------------------------------------------
+
+        if (call->arguments.size() !=
+            function.parameters.size())
+        {
+            semanticErrors.push_back({
+                "la función '" +
+                call->callee +
+                "' requiere " +
+                std::to_string(
+                    function.parameters.size()) +
+                " argumento(s), pero recibió " +
+                std::to_string(
+                    call->arguments.size())
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // Relacionar cada argumento con su parámetro.
+        //
+        // argumento[0] ↔ parámetro[0]
+        // argumento[1] ↔ parámetro[1]
+        // ...
+        //
+        // Actualmente todos los parámetros y argumentos
+        // válidos del lenguaje son int.
+        // ----------------------------------------------------
+
+        for (std::size_t i = 0;
+             i < call->arguments.size();
+             ++i)
+        {
+            const auto& argument =
+                call->arguments[i];
+
+            if (!argument)
+            {
+                semanticErrors.push_back({
+                    "argumento nulo en la posición " +
+                    std::to_string(i + 1) +
+                    " de la función '" +
+                    call->callee +
+                    "'"
+                });
+
+                continue;
+            }
+
+            // ----------------------------------------------
+            // Analizar expresión del argumento.
+            //
+            // Esto valida:
+            //
+            // suma(x, 10)
+            // suma(10 + 20, x)
+            // suma(suma(), 20)
+            // ----------------------------------------------
+
+            analyzeExpression(*argument);
+
+            // ----------------------------------------------
+            // Actualmente el tipo del parámetro es int.
+            // La comprobación de tipos de argumentos se
+            // ampliará cuando el lenguaje tenga más tipos.
+            // ----------------------------------------------
+
+            const Parameter& parameter =
+                function.parameters[i];
+
+            if (parameter.type != "int")
+            {
+                semanticErrors.push_back({
+                    "tipo de parámetro no soportado: " +
+                    parameter.type +
+                    " en la función '" +
+                    call->callee +
+                    "'"
+                });
+            }
+        }
+
+        // ----------------------------------------------------
+        // Las funciones actuales devuelven int.
         // ----------------------------------------------------
 
         return;

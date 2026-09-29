@@ -1,0 +1,11 @@
+int suma()
+{
+    return 10;
+}
+
+int main()
+{
+    int x = 0;
+    x = suma();
+    return 0;
+}

@@ -84,6 +84,35 @@ int main(int argc, char** argv)
                 << function->returnType
                 << '\n';
 
+            // ==================================================
+            // PARAMETERS
+            // ==================================================
+
+            if (!function->parameters.empty())
+            {
+                std::cout
+                    << "    ├── Parameters\n";
+
+                for (std::size_t i = 0;
+                     i < function->parameters.size();
+                     ++i)
+                {
+                    const auto& parameter =
+                        function->parameters[i];
+
+                    const bool last =
+                        (i + 1 == function->parameters.size());
+
+                    std::cout
+                        << "    │   "
+                        << (last ? "└── " : "├── ")
+                        << parameter.type
+                        << " "
+                        << parameter.name
+                        << '\n';
+                }
+            }
+
             std::cout
                 << "    └── Body\n";
 
@@ -246,6 +275,126 @@ int main(int argc, char** argv)
                             << variable->name
                             << '\n';
                     }
+                    else if (auto* call =
+                        dynamic_cast<
+                            kpp::CallExpression*>(
+                            ret->expression.get()))
+                    {
+                        std::cout
+                            << "            └── Call: "
+                            << call->callee
+                            << '\n';
+
+                        if (!call->arguments.empty())
+                    {
+                        std::cout
+                            << "                └── Arguments\n";
+
+                        auto printArgument =
+                            [&](const auto& self,
+                                const kpp::Expression* expression,
+                                const std::string& prefix,
+                                bool last) -> void
+                        {
+                            const std::string branch =
+                                last
+                                    ? "└── "
+                                    : "├── ";
+
+                            if (auto* integer =
+                                    dynamic_cast<
+                                        const kpp::IntegerLiteral*>(
+                                        expression))
+                            {
+                                std::cout
+                                    << prefix
+                                    << branch
+                                    << "Integer: "
+                                    << integer->value
+                                    << '\n';
+
+                                return;
+                            }
+
+                            if (auto* variable =
+                                    dynamic_cast<
+                                        const kpp::VariableExpression*>(
+                                        expression))
+                            {
+                                std::cout
+                                    << prefix
+                                    << branch
+                                    << "Variable: "
+                                    << variable->name
+                                    << '\n';
+
+                                return;
+                            }
+
+                            if (auto* binary =
+                                    dynamic_cast<
+                                        const kpp::BinaryExpression*>(
+                                        expression))
+                            {
+                                std::cout
+                                    << prefix
+                                    << branch
+                                    << "Binary: "
+                                    << binary->op
+                                    << '\n';
+
+                                const std::string childPrefix =
+                                    prefix +
+                                    (last
+                                        ? "    "
+                                        : "│   ");
+
+                                if (binary->left)
+                                {
+                                    self(
+                                        self,
+                                        binary->left.get(),
+                                        childPrefix,
+                                        !binary->right);
+                                }
+
+                                if (binary->right)
+                                {
+                                    self(
+                                        self,
+                                        binary->right.get(),
+                                        childPrefix,
+                                        true);
+                                }
+
+                                return;
+                            }
+
+                            std::cout
+                                << prefix
+                                << branch
+                                << "Expression\n";
+                        };
+
+                        for (std::size_t i = 0;
+                             i < call->arguments.size();
+                             ++i)
+                        {
+                            const auto& argument =
+                                call->arguments[i];
+
+                            const bool last =
+                                (i + 1 ==
+                                 call->arguments.size());
+
+                            printArgument(
+                                printArgument,
+                                argument.get(),
+                                "                    ",
+                                last);
+                        }
+                    }
+                    }
                 }
             }
         }
@@ -325,7 +474,16 @@ int main(int argc, char** argv)
 
                         std::cout
                             << "FUNCTION "
-                            << instruction.name
+                            << instruction.name;
+
+                        if (!instruction.operand.empty())
+                        {
+                            std::cout
+                                << " "
+                                << instruction.operand;
+                        }
+
+                        std::cout
                             << '\n';
 
                         break;

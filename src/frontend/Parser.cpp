@@ -158,12 +158,75 @@ Parser::parseFunction()
 
 
     // --------------------------------------------------------
+    // PARÁMETROS
+    //
+    // int suma(int a, int b)
+    //
+    // FASE 4.2.1:
+    // - declaración de parámetros
+    // - solamente tipo int
+    // - todavía no se procesan argumentos
+    // --------------------------------------------------------
+
+    std::vector<Parameter> parameters;
+
+    if (!check(TokenType::RParen))
+    {
+        while (true)
+        {
+            // ------------------------------------------------
+            // tipo
+            // ------------------------------------------------
+
+            expect(
+                TokenType::KwInt,
+                "se esperaba 'int' en parámetro");
+
+
+            // ------------------------------------------------
+            // nombre
+            // ------------------------------------------------
+
+            if (!check(TokenType::Identifier))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba nombre de parámetro");
+            }
+
+            std::string parameterName =
+                advance().text;
+
+
+            // ------------------------------------------------
+            // guardar parámetro
+            // ------------------------------------------------
+
+            parameters.push_back(
+                Parameter{
+                    "int",
+                    parameterName
+                });
+
+
+            // ------------------------------------------------
+            // siguiente parámetro
+            // ------------------------------------------------
+
+            if (!match(TokenType::Comma))
+            {
+                break;
+            }
+        }
+    }
+
+
+    // --------------------------------------------------------
     // )
     // --------------------------------------------------------
 
     expect(
         TokenType::RParen,
-        "se esperaba ')'");
+        "se esperaba ')' después de los parámetros");
 
 
     // --------------------------------------------------------
@@ -183,6 +246,7 @@ Parser::parseFunction()
 
     function->returnType = "int";
     function->name = name;
+    function->parameters = std::move(parameters);
     function->body = std::move(body);
 
     return function;
@@ -930,12 +994,38 @@ Parser::parsePrimary()
 
         if (match(TokenType::LParen))
         {
+            auto call =
+                std::make_unique<CallExpression>(
+                    name);
+
+            // ------------------------------------------------
+            // ARGUMENTS
+            //
+            // suma()
+            // suma(10)
+            // suma(10, 20)
+            // suma(x, 20)
+            // ------------------------------------------------
+
+            if (!check(TokenType::RParen))
+            {
+                while (true)
+                {
+                    call->arguments.push_back(
+                        parseExpression());
+
+                    if (!match(TokenType::Comma))
+                    {
+                        break;
+                    }
+                }
+            }
+
             expect(
                 TokenType::RParen,
-                "se esperaba ')' después del nombre de función");
+                "se esperaba ')' después de los argumentos");
 
-            return std::make_unique<CallExpression>(
-                name);
+            return call;
         }
 
         // ----------------------------------------------------

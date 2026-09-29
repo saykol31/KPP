@@ -64,6 +64,8 @@ struct CallExpression : Expression
 {
     std::string callee;
 
+    std::vector<std::unique_ptr<Expression>> arguments;
+
     explicit CallExpression(
         const std::string& callee)
         : callee(callee)
@@ -227,6 +229,16 @@ struct WhileStatement : Statement
 };
 
 // ============================================================
+// PARÁMETRO DE FUNCIÓN
+// ============================================================
+
+struct Parameter
+{
+    std::string type;
+    std::string name;
+};
+
+// ============================================================
 // FUNCIÓN
 // ============================================================
 
@@ -234,6 +246,8 @@ struct FunctionDeclaration : ASTNode
 {
     std::string returnType;
     std::string name;
+
+    std::vector<Parameter> parameters;
 
     std::unique_ptr<Block> body;
 };

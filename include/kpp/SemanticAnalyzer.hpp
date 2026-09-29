@@ -103,6 +103,19 @@ private:
     std::unordered_set<std::string> functionNames;
 
     // --------------------------------------------------------
+    // DECLARACIONES DE FUNCIONES
+    //
+    // nombre de función → declaración AST
+    //
+    // Permite consultar los parámetros de una función
+    // cuando analizamos una llamada.
+    // --------------------------------------------------------
+
+    std::unordered_map<
+        std::string,
+        const FunctionDeclaration*> functionDeclarations;
+
+    // --------------------------------------------------------
     // Entrar en un nuevo scope
     // --------------------------------------------------------
 

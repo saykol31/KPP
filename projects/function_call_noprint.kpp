@@ -1,0 +1,9 @@
+int suma()
+{
+    return 10;
+}
+
+int main()
+{
+    return suma();
+}
