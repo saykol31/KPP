@@ -553,6 +553,32 @@ X86Backend::generate(
     std::string currentFunctionName;
 
     // ========================================================
+    // LABELS LOCALES POR FUNCIÓN
+    //
+    // El IR puede reutilizar L0, L1, L2 en distintas funciones.
+    // El backend necesita nombres físicamente únicos.
+    //
+    // IR:
+    //     L0
+    //
+    // Backend:
+    //     funcion::L0
+    // ========================================================
+
+    const auto makeScopedLabel =
+        [&currentFunctionName](const std::string& label)
+        {
+            if (currentFunctionName.empty())
+            {
+                throw std::runtime_error(
+                    "K++ X86Backend: etiqueta fuera de una función: " +
+                    label);
+            }
+
+            return currentFunctionName + "::" + label;
+        };
+
+    // ========================================================
     // GENERAR INSTRUCCIONES IR
     // ========================================================
 
@@ -2428,7 +2454,7 @@ X86Backend::generate(
                     emitter.emitJeRel32Placeholder();
 
                 controlFlowPatches.push_back({
-                    instruction.name,
+                    makeScopedLabel(instruction.name),
                     patchOffset
                 });
             }
@@ -2463,7 +2489,7 @@ X86Backend::generate(
                     emitter.emitJmpRel32Placeholder();
 
                 controlFlowPatches.push_back({
-                    instruction.name,
+                    makeScopedLabel(instruction.name),
                     patchOffset
                 });
             }
@@ -2490,15 +2516,18 @@ X86Backend::generate(
                         "K++ X86Backend: LABEL sin nombre");
                 }
 
-                if (labels.find(instruction.name) !=
+                const std::string scopedLabel =
+                    makeScopedLabel(instruction.name);
+
+                if (labels.find(scopedLabel) !=
                     labels.end())
                 {
                     throw std::runtime_error(
                         "K++ X86Backend: LABEL duplicado: " +
-                        instruction.name);
+                        scopedLabel);
                 }
 
-                labels[instruction.name] =
+                labels[scopedLabel] =
                     emitter.size();
             }
 

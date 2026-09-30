@@ -181,7 +181,7 @@ struct AssignmentStatement : Statement
 // BLOQUE
 // ============================================================
 
-struct Block : ASTNode
+struct Block : Statement
 {
     std::vector<std::unique_ptr<Statement>> statements;
 };

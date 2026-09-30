@@ -555,6 +555,36 @@ void IRGenerator::generateStatement(
     }
 
     // ========================================================
+    // BLOCK
+    //
+    // {
+    //     int x = 100;
+    //     print_int(x);
+    // }
+    //
+    // Un bloque explícito no genera una instrucción IR propia.
+    // Simplemente genera sus sentencias en orden.
+    //
+    // El manejo del scope ya fue realizado por el
+    // SemanticAnalyzer.
+    // ========================================================
+
+    if (auto* block =
+            dynamic_cast<const Block*>(&statement))
+    {
+        for (const auto& nestedStatement :
+             block->statements)
+        {
+            generateStatement(
+                *nestedStatement,
+                function);
+        }
+
+        return;
+    }
+
+
+    // ========================================================
     // IF
     //
     // if (x > 5)

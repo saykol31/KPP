@@ -1,0 +1,140 @@
+int suma(int a, int b)
+{
+    int resultado = a + b;
+    return resultado;
+}
+
+int diferencia(int a, int b)
+{
+    int resultado = a - b;
+    return resultado;
+}
+
+int clasificar(int x)
+{
+    if (x > 20)
+    {
+        return 3;
+    }
+    else if (x > 10)
+    {
+        return 2;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+int contar_hasta_cero(int x)
+{
+    int contador = x;
+
+    while (contador > 0)
+    {
+        contador = contador - 1;
+    }
+
+    return contador;
+}
+
+int main()
+{
+    int x = 10;
+    int y = 5;
+
+    x = 20;
+
+    print("FASE 1");
+    print_int(x);
+
+    int suma_resultado = suma(10, 5);
+
+    print("CALL CONSTANTES");
+    print_int(suma_resultado);
+
+    int variable_a = 7;
+    int variable_b = 3;
+
+    int suma_variables = suma(variable_a, variable_b);
+
+    print("CALL VARIABLES");
+    print_int(suma_variables);
+
+    int suma_expresiones = suma(x - 5, y + 2);
+
+    print("CALL EXPRESIONES");
+    print_int(suma_expresiones);
+
+    int suma_dos_expresiones = suma(x - 10, y + 5);
+
+    print("CALL DOS EXPRESIONES");
+    print_int(suma_dos_expresiones);
+
+    print("FASE 2");
+
+    if (x > y)
+    {
+        print("IF TRUE");
+    }
+    else
+    {
+        print("IF FALSE");
+    }
+
+    int categoria = clasificar(x);
+
+    print("ELSE IF RETURN");
+    print_int(categoria);
+
+    {
+        int x = 100;
+
+        print("SHADOWING");
+        print_int(x);
+    }
+
+    print("X EXTERIOR");
+    print_int(x);
+
+    x = suma(2, 3);
+
+    print("STORE CALL");
+    print_int(x);
+
+    int cargado = x;
+
+    print("LOAD");
+    print_int(cargado);
+
+    int contador = 3;
+
+    print("WHILE");
+
+    while (contador > 0)
+    {
+        print_int(contador);
+
+        contador = contador - 1;
+    }
+
+    print("WHILE FINAL");
+    print_int(contador);
+
+    int cero = contar_hasta_cero(5);
+
+    print("FUNCTION WHILE");
+    print_int(cero);
+
+    int resta = diferencia(20, 8);
+
+    print("FUNCTION SUB");
+    print_int(resta);
+
+    int compuesto = diferencia(suma(4, 6), 3);
+
+    print("COMPOSITION");
+    print_int(compuesto);
+
+    return 0;
+}

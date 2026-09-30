@@ -291,6 +291,22 @@ std::unique_ptr<Statement>
 Parser::parseStatement()
 {
     // ========================================================
+    // BLOQUE EXPLICITO
+    //
+    // {
+    //     int x = 100;
+    //     print_int(x);
+    // }
+    //
+    // Permite scopes anidados explícitos.
+    // ========================================================
+
+    if (check(TokenType::LBrace))
+    {
+        return parseBlock();
+    }
+
+    // ========================================================
     // VARIABLE
     //
     // int x = 42;

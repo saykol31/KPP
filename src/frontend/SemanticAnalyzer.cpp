@@ -382,6 +382,53 @@ void SemanticAnalyzer::analyzeStatement(
 
 
     // ========================================================
+    // BLOCK
+    //
+    // {
+    //     int x = 100;
+    //     print_int(x);
+    // }
+    //
+    // Un bloque explícito crea un scope independiente.
+    // Esto permite shadowing de variables:
+    //
+    // int x = 20;
+    // {
+    //     int x = 100;
+    // }
+    // ========================================================
+
+    if (auto* block =
+            dynamic_cast<const Block*>(&statement))
+    {
+        // ----------------------------------------------------
+        // El bloque posee su propio scope.
+        // ----------------------------------------------------
+
+        enterScope();
+
+        // ----------------------------------------------------
+        // Analizar cada sentencia del bloque.
+        // ----------------------------------------------------
+
+        for (const auto& nestedStatement :
+             block->statements)
+        {
+            analyzeStatement(
+                *nestedStatement);
+        }
+
+        // ----------------------------------------------------
+        // Destruir el scope al salir del bloque.
+        // ----------------------------------------------------
+
+        leaveScope();
+
+        return;
+    }
+
+
+    // ========================================================
     // IF
     //
     // if (x > 5)
