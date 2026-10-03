@@ -330,20 +330,23 @@ Parser::parseStatement()
 
 
         // ----------------------------------------------------
-        // =
+        // inicializador opcional
+        //
+        // int x;
+        // int x = 10;
         // ----------------------------------------------------
 
-        expect(
-            TokenType::Assign,
-            "se esperaba '='");
+        std::unique_ptr<Expression> initializer = nullptr;
 
+        if (match(TokenType::Assign))
+        {
+            // ------------------------------------------------
+            // expresión inicial
+            // ------------------------------------------------
 
-        // ----------------------------------------------------
-        // expresión inicial
-        // ----------------------------------------------------
-
-        auto initializer =
-            parseExpression();
+            initializer =
+                parseExpression();
+        }
 
 
         // ----------------------------------------------------

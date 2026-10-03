@@ -1,0 +1,20 @@
+int sumar(int a, int b)
+{
+    return a + b;
+}
+
+int restar(int a, int b)
+{
+    return a - b;
+}
+
+int main()
+{
+    int resultado = restar(
+        sumar(10, 20),
+        sumar(3, 4)
+    );
+
+    print_int(resultado);
+    return 0;
+}

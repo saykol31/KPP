@@ -1,5 +1,53 @@
 K++ 0.9
 
+
+|      EAX | Función                                                | Utilidad para K++          |
+| -------: | ------------------------------------------------------ | -------------------------- |
+|     `-1` | `terminate thread/process`                             | **Terminar Stage**         |
+|      `2` | `get the code of the pressed key`                      | Entrada teclado            |
+|      `3` | `get system time`                                      | Tiempo                     |
+|      `4` | `draw text string`                                     | **Mostrar mensajes/debug** |
+|      `5` | `delay`                                                | Esperas                    |
+|      `9` | `information on execution thread`                      | Información del proceso    |
+|     `10` | `wait for event`                                       | Eventos                    |
+|     `11` | `check for event, no wait`                             | Eventos sin bloquear       |
+|     `14` | `get screen size`                                      | Pantalla                   |
+|     `17` | `get the identifier of the pressed button`             | GUI                        |
+|     `22` | `set system date/time`                                 | Fecha/hora                 |
+|     `23` | `wait for event with timeout`                          | Eventos                    |
+|     `29` | `get system date`                                      | Fecha                      |
+|     `30` | `work with the current folder`                         | Directorio                 |
+|     `37` | `work with mouse`                                      | Ratón                      |
+|     `40` | `set the mask for expected events`                     | Eventos                    |
+|     `47` | `draw a number in the window`                          | Debug/números              |
+|     `60` | `Inter Process Communication (IPC)`                    | Comunicación               |
+|     `61` | `get parameters for direct graphics access`            | Gráficos                   |
+|     `64` | `resize application memory`                            | Memoria                    |
+|     `66` | `work with keyboard`                                   | Teclado                    |
+|     `67` | `change position/sizes of window`                      | Ventana                    |
+| **`70`** | **`work with file system with long names support`**    | **⭐ ARCHIVOS K++**         |
+|     `71` | `set window caption`                                   | Ventana                    |
+|     `72` | `send message to a window`                             | GUI                        |
+|     `73` | `blit bitmap`                                          | Gráficos                   |
+| **`80`** | **`file system interface with parameter of encoding`** | **⭐ ARCHIVOS/ENCODING**    |
+
+
+Function 70
+    │
+    ├── 0  READ_FILE
+    ├── 1  READ_FOLDER
+    ├── 2  CREATE_FILE
+    ├── 3  WRITE_FILE
+    ├── 4  SET_END
+    ├── 5  GET_INFO
+    ├── 6  SET_INFO
+    ├── 7  START_APP
+    ├── 8  DELETE
+    ├── 9  CREATE_FOLDER
+    ├── 10 RENAME/MOVE
+    ├── 11 SYMLINK
+    └── 12 READ_SYMLINK
+
 tree
 
 KPP
@@ -62,31 +110,268 @@ KPP
 objetivo
 
 FASE 1
+
+FASE 1 — VARIABLES Y ASIGNACIÓN
+
 ┌──────────────────────────────┐
-│ Variables + asignación       │
-│ scopes                       │
+│ Variables                    │
+│ declaración                  │
+│ asignación                   │
+│ LOAD / STORE                 │
+│ RETURN                       │
 └──────────────┬───────────────┘
                ↓
-FASE 2
+          🟢 COMPLETA
+               ↓
+FASE 2 — CONTROL DE FLUJO
+
 ┌──────────────────────────────┐
-│ if / else                    │
-│ comparación                  │
+│ if                           │
+│ else                         │
+│ else if                      │
+│ comparación   - x = suma();
+
+             El error:
+
+             K++ Parser error at 8:10: se esperaba '='      El mensaje:
+
+Parser error at 8:10: se esperaba '='
+
+corresponde justamente a:
+
+int x;
+     ^
+
+El bloque de asignación independiente sí existe y está implementado correctamente:
+
+x = suma();                    │
 │ saltos                       │
+│ scopes                       │
+│ shadowing                    │
+│ múltiples RETURN             │
 └──────────────┬───────────────┘
                ↓
-FASE 3
+          🟢 COMPLETA
+               ↓
+
+               ↓
+FASE 3 — CONTROL DE REPETICIÓN
 ┌──────────────────────────────┐
 │ while                        │
+│ mutación de variable         │
 │ loops                        │
+│                              │
+│ condición                    │
+│ cuerpo                       │
+│ salto hacia atrás            │
+│ salida del ciclo             │
+│ variables dentro del loop    │
+│ LOAD / STORE dentro del loop │
+│ SUB dentro del loop          │
+│ print_int dentro del loop    │
 └──────────────┬───────────────┘
                ↓
-FASE 4
+          🟢 COMPLETA
+               ↓
+
+               | Izquierdo | Derecho | Estrategia                                             |
+| --------- | ------- | ------------------------------------------------------ |
+| EAX       | EBX     | `SUB EAX, EBX`                                         |
+| EBX       | EAX     | intercambio mediante pila                              |
+| MEMORY    | EAX     | recargar izquierdo conservando derecho                 |
+| EAX       | MEMORY  | recargar derecho conservando izquierdo                 |
+| EBX       | MEMORY  | conservar EBX, recargar derecho y después intercambiar |
+| MEMORY    | EBX     | conservar EBX, recargar izquierdo                      |
+
+
+
+FASE 4 — FUNCIONES
 ┌──────────────────────────────┐
 │ funciones                    │
+│                              │
+│ declaración de funciones     │
 │ parámetros                   │
 │ llamadas                     │
+│ argumentos                   │
+│ retorno de valores           │
+│                              │
+│ ámbito de variables          │
+│ variables locales            │
+│ RETURN desde función         │
+│                              │
+│ salto / retorno              │
+│ preservación de registros    │
 └──────────────┬───────────────┘
                ↓
+          🟡 EN DESARROLLO
+
+────────────────────────────
+FASE 4 — FUNCIONES
+
+
+┌────────────────────────────────────┐
+│ FASE 4.1 — Function calls          │
+├────────────────────────────────────┤
+│ Parser                             │ 🟢
+│ CallExpression                     │ 🟢
+│ Análisis semántico                 │ 🟢
+│ Funciones declaradas después       │ 🟢
+│ IR CALL                            │ 🟢
+│ CALL x86 rel32                     │ 🟢
+│ Retorno de función                 │ 🟢
+│ RET                                │ 🟢
+│ STORE del CALL                     │ 🟢
+│ LOAD del CALL                      │ 🟢
+│ PRINT_INT                          │ 🟢
+│ Backend con múltiples funciones    │ 🟢
+│ KolibriOS                          │ 🟢
+└────────────────────────────────────┘
+
+
+
+     ↓
+
+FASE 4.2 — PARÁMETROS
+
+4.2.1 Declaración
+────────────────────────────────
+Parameter AST                       🟢
+FunctionDeclaration.parameters      🟢
+Parser                              🟢
+AST printer                         🟢
+Compatibilidad con 4.1             🟢
+
+
+4.2.2 Argumentos
+────────────────────────────────
+CallExpression.arguments            🟢
+Parser de argumentos                🟢
+Validación cantidad                 🟢
+Validación tipos                    🟢
+AST printer de argumentos           🟢
+
+
+4.2.3 Paso de valores
+────────────────────────────────
+Relación parámetro ↔ argumento      🟢
+Constantes                          🟢
+Variables                           🟢
+Expresiones                         🟢
+Argumentos en registros             🟢
+Argumentos en memoria/spill         🟢
+
+
+4.2.4 CALL con argumentos
+────────────────────────────────
+CALL con 0 argumentos               🟢
+CALL con constantes                 🟢
+CALL con variables                  🟢
+CALL con expresiones                🟢
+CALL con 2 expresiones              🟢
+Argumento 0 → EAX                   🟢
+Argumento 1 → EBX                   🟢
+Resultado → EAX                     🟢
+KolibriOS                           🟢
+
+
+4.2.5 RETURN
+────────────────────────────────
+RETURN desde función con parámetros 🟢
+RETURN de expresión                 🟢
+Resultado recibido por caller       🟢
+KolibriOS                           🟢
+
+
+
+────────────────────────────
+
+4.3  Argumentos avanzados
+     ⬜
+
+     evaluación de argumentos
+     múltiples expresiones
+     composición de argumentos
+     orden de evaluación
+     argumentos anidados
+     argumentos provenientes de CALL
+     presión de registros
+     argumentos con temporales en memoria
+
+     ↓
+
+4.4  Llamadas / composición
+     ⬜
+
+     función → función
+     CALL dentro de expresión
+     CALL como argumento de otra función
+     composición:
+
+         suma(2, 3)
+         suma(suma(1,2), 4)
+
+     múltiples CALL consecutivos
+     CALL anidados
+     resultados temporales entre CALL
+     composición profunda
+
+     ↓
+
+4.5  Valores de retorno
+     ⬜
+
+     RETURN constante
+     RETURN variable
+     RETURN expresión
+     RETURN CALL
+     retorno entre funciones
+     retorno de funciones anidadas
+     recepción del resultado
+     preservación del valor retornado
+
+     ↓
+
+4.6  Variables locales / scopes
+     ⬜
+
+     variables locales por función
+     scope de parámetros
+     scope de variables
+     shadowing
+     misma variable en funciones diferentes
+     lifetime lógico de variables
+     contexto de variables por función
+     LOAD / STORE por scope
+     interacción entre parámetros y locales
+
+     ↓
+
+4.7  CALL / RET + preservación de registros
+     ⬜
+
+     ABI interno de K++
+
+     EAX
+     EBX
+     ECX
+     EDX
+
+     registros de argumentos
+     registro de retorno
+     registros caller-saved
+     registros callee-saved
+     temporales vivos durante CALL
+     spills antes de CALL
+     restauración después de CALL
+     preservación entre CALL y CALL
+     CALL dentro de expresiones
+     RET seguro
+
+     ↓
+
+     🟢 ABI de funciones estable2
+               ↓
+
 FASE 5
 ┌──────────────────────────────┐
 │ memoria / arrays / punteros  │
@@ -112,24 +397,34 @@ FASE 8
 └──────────────────────────────┘
 
 
-lo que tenemos
+FASE 5 — TIPOS
+FASE 6 — ESTRUCTURAS DE DATOS
+FASE 7 — ARRAYS
+FASE 8 — STRINGS
+FASE 9 — POINTERS / MEMORY
+FASE 10 — RUNTIME K++
+FASE 11 — ABI K++ / KOLIBRIOS
+FASE 12 — I/O KOLIBRIOS
+FASE 13 — GUI KOLIBRIOS
+FASE 14 — SELF-HOSTING
 
 
-| Componente          | Estado                                   |
-| ------------------- | ---------------------------------------- |
-| Lexer               | 🟡 funcional, faltan keywords de control |
-| Parser              | 🟡 necesita crecer junto al AST          |
-| AST                 | 🟡 falta control de flujo/funciones      |
-| SemanticAnalyzer    | 🟡 necesita scopes y nuevas sentencias   |
-| IR                  | 🟢 ya tiene bastante infraestructura     |
-| IRGenerator         | 🟡 necesita conectar el IR existente     |
-| Allocator           | 🟢 funcional para el conjunto actual     |
-| X86Emitter          | 🟢 tiene saltos básicos y patching       |
-| X86Backend          | 🟡 falta conectar control-flow           |
-| KolibriRuntime      | 🟢 funcional como base                   |
-| BinaryWriter        | 🟢 probado                               |
-| Ejecución KolibriOS | 🟢 probada                               |
-| Self-hosting        | 🔴 todavía falta lenguaje suficiente     |
+| Componente              | Estado actual                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Lexer**               | 🟢 Funcional para el conjunto actual de tokens, variables, operadores, `if`, `else`, `return`, `print`, etc.                               |
+| **Parser**              | 🟢 Funcional para declaraciones, expresiones, variables, operadores, `if`, `else`, `else if`, `return` y bloques                           |
+| **AST**                 | 🟢 Representa variables, expresiones, `if`, `else`, `else if`, `return`, bloques y llamadas/impresiones necesarias                         |
+| **SemanticAnalyzer**    | 🟢 Valida variables, expresiones, condiciones, `return` y estructura actual de `if/else`                                                   |
+| **IR**                  | 🟢 Infraestructura funcional con variables, `LOAD`, `STORE`, aritmética, comparaciones, `LABEL`, `JUMP`, `JUMP_IF_ZERO`, `RETURN`, `PRINT` |
+| **IRGenerator**         | 🟢 Conecta variables, `LOAD`, `STORE`, `if`, `else`, `else if`, comparaciones, `return` y salida al IR                                     |
+| **Allocator**           | 🟢 Funcional para el conjunto actual, incluyendo EAX/EBX y spills/reloads                                                                  |
+| **X86Emitter**          | 🟢 Genera instrucciones aritméticas, `CMP`, `SETcc`, `MOVZX`, `JMP`, saltos condicionales y patching                                       |
+| **X86Backend**          | 🟢 Control de flujo, comparaciones, `JUMP`, `JUMP_IF_ZERO`, `if`, `else` y `else if` funcionales                                           |
+| **KolibriRuntime**      | 🟢 Funcional; ventana, `PRINT` y `PRINT_INTEGER` probados en KolibriOS                                                                     |
+| **BinaryWriter**        | 🟢 Probado generando ejecutables `.BIN`                                                                                                    |
+| **Ejecución KolibriOS** | 🟢 **Probada extremo a extremo**                                                                                                           |
+| **Self-hosting**        | 🔴 Todavía falta suficiente lenguaje para que K++ pueda compilarse a sí mismo                                                              |
+                                                        |
 
 
 

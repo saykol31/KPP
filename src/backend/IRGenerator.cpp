@@ -415,13 +415,18 @@ void IRGenerator::generateStatement(
         });
 
         // ----------------------------------------------------
-        // Verificar inicializador
+        // Inicializador opcional
+        //
+        // int x;
+        // int x = 42;
+        //
+        // Una declaración sin inicializador solamente necesita
+        // el DECLARE.
         // ----------------------------------------------------
 
         if (!variableDeclaration->initializer)
         {
-            throw std::runtime_error(
-                "K++ IR: variable sin inicializador");
+            return;
         }
 
         // ----------------------------------------------------

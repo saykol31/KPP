@@ -274,40 +274,28 @@ void SemanticAnalyzer::analyzeStatement(
         }
 
         // ----------------------------------------------------
-        // Debe existir un inicializador
-        // ----------------------------------------------------
-
-        if (!variableDeclaration->initializer)
-        {
-            semanticErrors.push_back({
-                "la variable '" +
-                name +
-                "' no tiene inicializador"
-            });
-
-            return;
-        }
-
-        // ----------------------------------------------------
-        // Analizar primero el inicializador
+        // Inicializador opcional
         //
+        // int x;
+        // int x = 10;
+        //
+        // Analizar primero el inicializador cuando existe.
         // Esto evita aceptar:
         //
         // int x = x;
         // ----------------------------------------------------
 
-        analyzeExpression(
-            *variableDeclaration->initializer);
+        if (variableDeclaration->initializer)
+        {
+            analyzeExpression(
+                *variableDeclaration->initializer);
+        }
 
         // ----------------------------------------------------
         // Registrar variable
         // ----------------------------------------------------
 
-        if (scopes.back().find(name) ==
-            scopes.back().end())
-        {
-            scopes.back()[name] = "int";
-        }
+        scopes.back()[name] = "int";
 
         return;
     }
