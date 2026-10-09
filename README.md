@@ -596,7 +596,7 @@ K++ processes a C++ program through several compilation stages:
 | argumentos              | ✅      |
 | llamadas                | ✅
 | literales print           ✅
-| `struct`                | ❌      |
+| `struct`                | ✅      |
 | `enum`                  | ❌      |
 | string                    ✅
 

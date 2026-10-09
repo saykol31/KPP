@@ -44,6 +44,9 @@ const char* tokenTypeName(TokenType type)
         case TokenType::KwString:
             return "string";
 
+        case TokenType::KwStruct:
+            return "struct";
+
         case TokenType::KwReturn:
             return "return";
 
@@ -269,6 +272,19 @@ Token Lexer::identifier()
         };
     }
 
+    // --------------------------------------------------------
+    // KEYWORD: struct
+    // --------------------------------------------------------
+
+    if (text == "struct")
+    {
+        return {
+            TokenType::KwStruct,
+            text,
+            startLine,
+            startColumn
+        };
+    }
 
     // --------------------------------------------------------
     // KEYWORD: return

@@ -102,6 +102,7 @@ void Parser::expect(
 // PARSE
 // ============================================================
 
+
 std::unique_ptr<Program>
 Parser::parse()
 {
@@ -110,8 +111,33 @@ Parser::parse()
 
     while (!check(TokenType::EndOfFile))
     {
-        program->functions.push_back(
-            parseFunction());
+        // ----------------------------------------------------
+        // STRUCT DECLARATION
+        // ----------------------------------------------------
+
+        if (check(TokenType::KwStruct))
+        {
+            program->structs.push_back(
+                parseStruct());
+
+            continue;
+        }
+
+        // ----------------------------------------------------
+        // FUNCTION DECLARATION
+        // ----------------------------------------------------
+
+        if (check(TokenType::KwInt))
+        {
+            program->functions.push_back(
+                parseFunction());
+
+            continue;
+        }
+
+        throw std::runtime_error(
+            "K++: se esperaba una declaración global "
+            "(struct o función int)");
     }
 
     return program;
@@ -250,6 +276,116 @@ Parser::parseFunction()
     function->body = std::move(body);
 
     return function;
+}
+
+
+ // ============================================================
+ // PARSE STRUCT
+ // ============================================================
+
+std::unique_ptr<StructDeclaration>
+Parser::parseStruct()
+{
+    // --------------------------------------------------------
+    // KEYWORD: struct
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::KwStruct,
+        "se esperaba 'struct'");
+
+    // --------------------------------------------------------
+    // NOMBRE DE LA ESTRUCTURA
+    // --------------------------------------------------------
+
+    if (!check(TokenType::Identifier))
+    {
+        throw std::runtime_error(
+            "K++: se esperaba nombre de estructura");
+    }
+
+    const std::string structName =
+        advance().text;
+
+    // --------------------------------------------------------
+    // INICIO DEL CUERPO
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::LBrace,
+        "se esperaba '{' después del nombre de estructura");
+
+    auto declaration =
+        std::make_unique<StructDeclaration>();
+
+    declaration->name = structName;
+
+    // --------------------------------------------------------
+    // CAMPOS
+    //
+    // Tipos admitidos en esta etapa:
+    //   int edad;
+    //   string nombre;
+    // --------------------------------------------------------
+
+    while (
+        !check(TokenType::RBrace)
+        && !check(TokenType::EndOfFile))
+    {
+        std::string fieldType;
+
+        if (match(TokenType::KwInt))
+        {
+            fieldType = "int";
+        }
+        else if (match(TokenType::KwString))
+        {
+            fieldType = "string";
+        }
+        else
+        {
+            throw std::runtime_error(
+                "K++: tipo de campo no admitido en struct; "
+                "se esperaba 'int' o 'string'");
+        }
+
+        if (!check(TokenType::Identifier))
+        {
+            throw std::runtime_error(
+                "K++: se esperaba nombre del campo");
+        }
+
+        const std::string fieldName =
+            advance().text;
+
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después del campo");
+
+        declaration->fields.push_back(
+            StructField{
+                fieldType,
+                fieldName
+            });
+    }
+
+    // --------------------------------------------------------
+    // CIERRE DE LA ESTRUCTURA
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::RBrace,
+        "se esperaba '}' al cerrar la estructura");
+
+    // --------------------------------------------------------
+    // TERMINADOR DE LA DECLARACIÓN
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::Semicolon,
+        "se esperaba ';' después de la declaración struct");
+
+    return declaration;
 }
 
 

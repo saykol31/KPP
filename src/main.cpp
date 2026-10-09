@@ -70,11 +70,43 @@ int main(int argc, char** argv)
             << "AST\n"
             << "---\n";
 
-        for (const auto& function :
-            program->functions)
+               std::cout << "Program\n";
+
+        // ====================================================
+        // STRUCT DECLARATIONS
+        // ====================================================
+
+        for (const auto& structure : program->structs)
         {
             std::cout
-                << "Program\n"
+                << "├── Struct: "
+                << structure->name
+                << '\n';
+
+            for (std::size_t i = 0;
+                 i < structure->fields.size();
+                 ++i)
+            {
+                const auto& field = structure->fields[i];
+                const bool last = (i + 1 == structure->fields.size());
+
+                std::cout
+                    << "│   "
+                    << (last ? "└── " : "├── ")
+                    << field.type
+                    << " "
+                    << field.name
+                    << '\n';
+            }
+        }
+
+        // ====================================================
+        // FUNCTION DECLARATIONS
+        // ====================================================
+
+        for (const auto& function : program->functions)
+        {
+            std::cout
                 << "└── Function: "
                 << function->name
                 << '\n';

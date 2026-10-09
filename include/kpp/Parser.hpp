@@ -45,6 +45,8 @@ private:
     std::unique_ptr<FunctionDeclaration>
     parseFunction();
 
+    std::unique_ptr<StructDeclaration>
+    parseStruct();
 
     // ========================================================
     // BLOQUE

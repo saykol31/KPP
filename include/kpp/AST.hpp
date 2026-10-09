@@ -252,6 +252,24 @@ struct Parameter
     std::string name;
 };
 
+
+// ============================================================
+// STRUCT DECLARATION
+// ============================================================
+
+struct StructField
+{
+    std::string type;
+    std::string name;
+};
+
+struct StructDeclaration : ASTNode
+{
+    std::string name;
+    std::vector<StructField> fields;
+};
+
+
 // ============================================================
 // FUNCIÓN
 // ============================================================
@@ -273,6 +291,6 @@ struct FunctionDeclaration : ASTNode
 struct Program : ASTNode
 {
     std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+    std::vector<std::unique_ptr<StructDeclaration>> structs;
 };
-
 }

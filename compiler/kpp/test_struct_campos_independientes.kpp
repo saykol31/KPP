@@ -1,0 +1,16 @@
+struct Persona
+{
+    int edad;
+    string nombre;
+};
+
+struct Producto
+{
+    int edad;
+    string nombre;
+};
+
+int main()
+{
+    return 0;
+}
