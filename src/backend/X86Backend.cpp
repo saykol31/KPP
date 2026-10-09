@@ -412,6 +412,8 @@ X86Backend::generate(
 
     std::vector<std::string> strings;
 
+    std::vector<std::string> stringConstTexts;
+
     std::vector<std::uint8_t> data;
 
     std::size_t integerBufferOffset = 0;
@@ -424,6 +426,7 @@ X86Backend::generate(
         "K++ - KolibriOS");
 
 
+
     // --------------------------------------------------------
     // Buscar PRINT
     // --------------------------------------------------------
@@ -434,10 +437,12 @@ X86Backend::generate(
         for (const auto& instruction :
              function.instructions)
         {
+
+
             if (instruction.opcode ==
-                IROpcode::Print)
+                IROpcode::StringConst)
             {
-                strings.push_back(
+                stringConstTexts.push_back(
                     instruction.name);
             }
         }
@@ -448,10 +453,6 @@ X86Backend::generate(
     // Cantidad de PRINT
     // --------------------------------------------------------
 
-    const std::size_t printCount =
-        strings.size() > 1
-            ? strings.size() - 1
-            : 0;
 
 
     // ========================================================
@@ -494,11 +495,11 @@ X86Backend::generate(
     // FUNCTION_BEGIN main.
     // --------------------------------------------------------
 
+
     std::size_t mainBody = 0;
 
 
-    std::vector<std::size_t>
-        textPatches;
+
 
     std::vector<std::size_t>
         integerBufferPatches;
@@ -516,6 +517,9 @@ X86Backend::generate(
 
     std::vector<TemporaryReloadPatch>
         temporaryReloadPatches;
+
+    std::vector<StringConstPatch>
+        stringConstPatches;
 
     std::vector<ControlFlowPatch>
         controlFlowPatches;
@@ -538,6 +542,9 @@ X86Backend::generate(
 
     std::size_t
         printIndex = 0;
+
+    std::size_t
+        stringConstIndex = 0;
 
     functionEntries.clear();
     functionCallPatches.clear();
@@ -863,6 +870,80 @@ X86Backend::generate(
                 }
             }
 
+
+
+            // ------------------------------------------------
+            // STRING_CONST
+            // ------------------------------------------------
+
+            else if (instruction.opcode ==
+                IROpcode::StringConst)
+            {
+                /*
+                 * STRING_CONST "texto" -> temporal
+                 *
+                 * El valor real del temporal es la dirección
+                 * absoluta del texto dentro de DATA.
+                 *
+                 * En este punto DATA todavía no conoce su
+                 * dirección absoluta, por lo que emitimos:
+                 *
+                 *     MOV EAX, 0
+                 *     o
+                 *     MOV EBX, 0
+                 *
+                 * y guardamos un patch para resolverlo después.
+                 */
+
+                const std::uint8_t registerCode =
+                    allocateRegisterForTemporary(
+                        instruction.result,
+                        data,
+                        temporarySpillPatches);
+
+                std::size_t patchOffset = 0;
+
+                if (registerCode == 0)
+                {
+                    /*
+                     * EAX
+                     *
+                     * El inmediato comienza un byte después
+                     * del opcode B8.
+                     */
+                    patchOffset =
+                        emitter.size() + 1;
+
+                    emitter.emitMovEaxImm32(0);
+                }
+                else if (registerCode == 3)
+                {
+                    /*
+                     * EBX
+                     *
+                     * El inmediato comienza un byte después
+                     * del opcode BB.
+                     */
+                    patchOffset =
+                        emitter.size() + 1;
+
+                    emitter.emitMovRegImm32(
+                        0xBB,
+                        0);
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: registro no soportado para STRING_CONST.");
+                }
+
+                stringConstPatches.push_back({
+                    patchOffset,
+                    stringConstIndex
+                });
+
+                ++stringConstIndex;
+            }
 
 
             // ------------------------------------------------
@@ -2532,51 +2613,20 @@ X86Backend::generate(
             }
 
 
+
+
+
             // ------------------------------------------------
             // PRINT
             // ------------------------------------------------
-
             else if (instruction.opcode ==
-                     IROpcode::Print)
-            {
-                /*
-                 * PRINT 1 -> Y=40
-                 * PRINT 2 -> Y=70
-                 * PRINT 3 -> Y=100
-                 * PRINT 4 -> Y=130
-                 */
-
-                const std::uint32_t y =
-                    40u +
-                    static_cast<std::uint32_t>(
-                        printIndex * 20u);
-
-
-                const std::size_t patch =
-                    runtime.emitPrint(
-                        emitter,
-                        y);
-
-
-                textPatches.push_back(
-                    patch);
-
-                ++printIndex;
-            }
-
-
-            // ------------------------------------------------
-            // PRINT INTEGER
-            // ------------------------------------------------
-
-            else if (instruction.opcode ==
-                     IROpcode::PrintInteger)
+                    IROpcode::Print)
             {
                 if (!hasTemporary(
                         instruction.operand))
                 {
                     throw std::runtime_error(
-                        "PRINT_INT usa un temporal inexistente: " +
+                        "PRINT usa un temporal inexistente: " +
                         instruction.operand);
                 }
 
@@ -2584,30 +2634,20 @@ X86Backend::generate(
                     getTemporaryRegister(
                         instruction.operand);
 
-                /*
-                 * PRINT_INT utiliza EAX como registro de entrada.
-                 *
-                 * El allocator puede haber colocado el temporal
-                 * en EAX o EBX.
-                 *
-                 * EAX:
-                 *     no hacemos nada.
-                 *
-                 * EBX:
-                 *     MOV EAX, EBX
-                 *
-                 * De esta forma PRINT_INT siempre recibe el valor
-                 * correcto en EAX sin imponer al allocator que
-                 * todos los resultados finales vivan en EAX.
-                 */
-                if (reg == 3)
+                if (reg == 0)
                 {
-                    emitter.emitMovEaxEbx();
+                    // MOV EDX, EAX
+                    emitter.emitMovEdxEax();
                 }
-                else if (reg != 0)
+                else if (reg == 3)
+                {
+                    // MOV EDX, EBX
+                    emitter.emitMovEdxEbx();
+                }
+                else
                 {
                     throw std::runtime_error(
-                        "PRINT_INT: registro temporal no soportado.");
+                        "PRINT: registro temporal no soportado.");
                 }
 
                 const std::uint32_t y =
@@ -2615,13 +2655,9 @@ X86Backend::generate(
                     static_cast<std::uint32_t>(
                         printIndex * 20u);
 
-                const std::size_t patch =
-                    runtime.emitPrintInteger(
-                        emitter,
-                        y);
-
-                integerBufferPatches.push_back(
-                    patch);
+                runtime.emitPrintFromEdx(
+                    emitter,
+                    y);
 
                 ++printIndex;
             }
@@ -3287,12 +3323,14 @@ if (!integerBufferPatches.empty())
 }
 
 
+
 // ========================================================
 // STRING POOL
 // ========================================================
 
 std::vector<std::size_t>
     stringOffsets;
+
 
     for (const auto& text :
          strings)
@@ -3312,6 +3350,30 @@ std::vector<std::size_t>
         data.push_back(0);
     }
 
+    // ========================================================
+    // STRING CONSTANTS
+    // ========================================================
+
+    std::vector<std::size_t>
+        stringConstOffsets;
+
+    for (const auto& text :
+        stringConstTexts)
+    {
+        stringConstOffsets.push_back(
+            data.size());
+
+        for (const char c :
+            text)
+        {
+            data.push_back(
+                static_cast<std::uint8_t>(
+                    c));
+        }
+
+        // terminador C
+        data.push_back(0);
+    }
 
     // ========================================================
     // DATA BASE
@@ -3328,6 +3390,33 @@ std::vector<std::size_t>
             KOLIBRI_HEADER_SIZE +
             static_cast<std::uint32_t>(
                 codeSize);
+
+
+    // ========================================================
+    // PATCH STRING CONSTANTS
+    // ========================================================
+
+    for (const auto& patch :
+         stringConstPatches)
+    {
+        if (patch.stringIndex >=
+            stringConstOffsets.size())
+        {
+            throw std::runtime_error(
+                "K++ X86Backend: índice de STRING_CONST fuera de rango.");
+        }
+
+        const std::uint32_t
+            stringAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    stringConstOffsets[
+                        patch.stringIndex]);
+
+        emitter.patch32(
+            patch.patchOffset,
+            stringAddress);
+    }
 
 
     // ========================================================
@@ -3510,46 +3599,8 @@ for (const auto& patch :
         titleAddress);
 
 
-    // ========================================================
-    // VALIDAR PRINT PATCHES
-    // ========================================================
-
-    if (textPatches.size()
-        != printCount)
-    {
-        throw std::runtime_error(
-            "K++: cantidad de patches PRINT incorrecta");
-    }
 
 
-    // ========================================================
-    // PATCH PRINT ADDRESSES
-    // ========================================================
-
-    for (std::size_t i = 0;
-         i < printCount;
-         ++i)
-    {
-        /*
-         * strings:
-         *
-         * [0] = title
-         * [1] = PRINT 1
-         * [2] = PRINT 2
-         * [3] = PRINT 3
-         */
-
-        const std::uint32_t
-            textAddress =
-                dataBase +
-                static_cast<std::uint32_t>(
-                    stringOffsets[i + 1]);
-
-
-        emitter.patch32(
-            textPatches[i],
-            textAddress);
-    }
 
 
     // ========================================================
@@ -3590,6 +3641,7 @@ for (const auto& patch :
 
     return result;
 }
+
 
 
 // ============================================================

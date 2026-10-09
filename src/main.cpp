@@ -167,9 +167,39 @@ int main(int argc, char** argv)
                         statement.get()))
                 {
                     std::cout
-                        << "        ├── Print: "
-                        << print->text
+                        << "        ├── Print"
                         << '\n';
+
+                    if (auto* integer =
+                        dynamic_cast<
+                            kpp::IntegerLiteral*>(
+                            print->expression.get()))
+                    {
+                        std::cout
+                            << "        │   └── Integer: "
+                            << integer->value
+                            << '\n';
+                    }
+                    else if (auto* string =
+                        dynamic_cast<
+                            kpp::StringLiteral*>(
+                            print->expression.get()))
+                    {
+                        std::cout
+                            << "        │   └── String: "
+                            << string->value
+                            << '\n';
+                    }
+                    else if (auto* variable =
+                        dynamic_cast<
+                            kpp::VariableExpression*>(
+                            print->expression.get()))
+                    {
+                        std::cout
+                            << "        │   └── Variable: "
+                            << variable->name
+                            << '\n';
+                    }
 
                     continue;
                 }
@@ -232,9 +262,39 @@ int main(int argc, char** argv)
                                     nestedStatement.get()))
                             {
                                 std::cout
-                                    << "        │       └── Print: "
-                                    << print->text
+                                    << "        │     └── Print"
                                     << '\n';
+
+                                if (auto* integer =
+                                    dynamic_cast<
+                                        kpp::IntegerLiteral*>(
+                                        print->expression.get()))
+                                {
+                                    std::cout
+                                        << "        │         └── Integer: "
+                                        << integer->value
+                                        << '\n';
+                                }
+                                else if (auto* string =
+                                    dynamic_cast<
+                                        kpp::StringLiteral*>(
+                                        print->expression.get()))
+                                {
+                                    std::cout
+                                        << "        │         └── String: "
+                                        << string->value
+                                        << '\n';
+                                }
+                                else if (auto* variable =
+                                    dynamic_cast<
+                                        kpp::VariableExpression*>(
+                                        print->expression.get()))
+                                {
+                                    std::cout
+                                        << "        │         └── Variable: "
+                                        << variable->name
+                                        << '\n';
+                                }
                             }
                         }
                     }
@@ -498,6 +558,22 @@ int main(int argc, char** argv)
                         std::cout
                             << "CONST "
                             << instruction.value
+                            << " -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    // ========================================================
+                    // STRING CONSTANT
+                    // ========================================================
+
+                    case kpp::IROpcode::StringConst:
+
+                        std::cout
+                            << "STRING_CONST "
+                            << instruction.name
                             << " -> "
                             << instruction.result
                             << '\n';

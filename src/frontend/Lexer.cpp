@@ -41,6 +41,9 @@ const char* tokenTypeName(TokenType type)
         case TokenType::KwInt:
             return "int";
 
+        case TokenType::KwString:
+            return "string";
+
         case TokenType::KwReturn:
             return "return";
 
@@ -250,6 +253,22 @@ Token Lexer::identifier()
             startColumn
         };
     }
+
+
+    // --------------------------------------------------------
+    // KEYWORD: string
+    // --------------------------------------------------------
+
+    if (text == "string")
+    {
+        return {
+            TokenType::KwString,
+            text,
+            startLine,
+            startColumn
+        };
+    }
+
 
     // --------------------------------------------------------
     // KEYWORD: return

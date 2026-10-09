@@ -77,6 +77,12 @@ private:
         std::size_t dataOffset;
     };
 
+    struct StringConstPatch
+    {
+        std::size_t patchOffset;
+        std::size_t stringIndex;
+    };
+
     struct ControlFlowPatch
     {
         std::string label;

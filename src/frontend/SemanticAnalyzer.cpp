@@ -607,12 +607,17 @@ void SemanticAnalyzer::analyzeStatement(
         dynamic_cast<const PrintStatement*>(
             &statement))
     {
-        if (printStatement->text.empty())
+        if (!printStatement->expression)
         {
             semanticErrors.push_back({
-                "print() no puede recibir una cadena vacía"
+                "print() requiere una expresión"
             });
+
+            return;
         }
+
+        analyzeExpression(
+            *printStatement->expression);
 
         return;
     }
@@ -676,6 +681,14 @@ void SemanticAnalyzer::analyzeExpression(
         return;
     }
 
+    // ========================================================
+    // STRING
+    // ========================================================
+
+    if (dynamic_cast<const StringLiteral*>(&expression))
+    {
+        return;
+}
     // ========================================================
     // CALL EXPRESSION
     //
@@ -1052,3 +1065,4 @@ SemanticAnalyzer::errors() const
 }
 
 } // namespace kpp
+

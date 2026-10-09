@@ -32,6 +32,13 @@ const char* irOpcodeName(IROpcode opcode)
             return "CONST";
 
         // ====================================================
+        // STRING
+        // ====================================================
+
+        case IROpcode::StringConst:
+            return "STRING_CONST";
+
+        // ====================================================
         // VARIABLES Y MEMORIA
         // ====================================================
 
@@ -866,10 +873,21 @@ void IRGenerator::generateStatement(
     if (auto* printStatement =
         dynamic_cast<const PrintStatement*>(&statement))
     {
+        if (!printStatement->expression)
+        {
+            throw std::runtime_error(
+                "K++ IR: print sin expresión");
+        }
+
+        std::string temporary =
+            generateExpression(
+                *printStatement->expression,
+                function);
+
         function.instructions.push_back({
             IROpcode::Print,
-            printStatement->text,
             "",
+            temporary,
             "",
             0
         });
@@ -1024,6 +1042,7 @@ std::string IRGenerator::generateExpression(
 
 
 
+
     if (auto* integer =
         dynamic_cast<const IntegerLiteral*>(
             &expression))
@@ -1037,6 +1056,31 @@ std::string IRGenerator::generateExpression(
             "",
             result,
             integer->value
+        });
+
+        return result;
+    }
+
+
+    // ========================================================
+    // STRING
+    //
+    // "Hola"
+    // ========================================================
+
+    if (auto* stringLiteral =
+        dynamic_cast<const StringLiteral*>(
+            &expression))
+    {
+        std::string result =
+            createTemporary();
+
+        function.instructions.push_back({
+            IROpcode::StringConst,
+            stringLiteral->value,
+            "",
+            result,
+            0
         });
 
         return result;

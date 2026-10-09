@@ -1,5 +1,7 @@
 int main()
 {
-    int x = 10;
-    return x;
+    print("Este progrma fue compilado por:");
+    print("K++ version 1.9");
+    print("Author Esequiel Pena");
+    return 42;
 }

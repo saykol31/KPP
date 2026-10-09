@@ -312,8 +312,18 @@ Parser::parseStatement()
     // int x = 42;
     // int x = 10 + 20 * 3;
     // ========================================================
+    std::string variableType;
 
     if (match(TokenType::KwInt))
+    {
+        variableType = "int";
+    }
+    else if (match(TokenType::KwString))
+    {
+        variableType = "string";
+    }
+
+    if (!variableType.empty())
     {
         // ----------------------------------------------------
         // nombre
@@ -330,20 +340,13 @@ Parser::parseStatement()
 
 
         // ----------------------------------------------------
-        // inicializador opcional
-        //
-        // int x;
-        // int x = 10;
+        // inicializador
         // ----------------------------------------------------
 
         std::unique_ptr<Expression> initializer = nullptr;
 
         if (match(TokenType::Assign))
         {
-            // ------------------------------------------------
-            // expresión inicial
-            // ------------------------------------------------
-
             initializer =
                 parseExpression();
         }
@@ -357,11 +360,12 @@ Parser::parseStatement()
             TokenType::Semicolon,
             "se esperaba ';'");
 
+
         return std::make_unique<VariableDeclaration>(
+            variableType,
             name,
             std::move(initializer));
     }
-
 
     // ========================================================
     // PRINT INTEGER
@@ -430,6 +434,7 @@ Parser::parseStatement()
     //     print("IF OK");
     // }
     // ========================================================
+
 
     if (match(TokenType::KwIf))
     {
@@ -553,14 +558,8 @@ Parser::parseStatement()
             TokenType::LParen,
             "se esperaba '(' después de print");
 
-        if (!check(TokenType::String))
-        {
-            throw std::runtime_error(
-                "K++: print() requiere una cadena");
-        }
-
-        std::string text =
-            advance().text;
+        std::unique_ptr<Expression> expression =
+            parseExpression();
 
         expect(
             TokenType::RParen,
@@ -571,7 +570,7 @@ Parser::parseStatement()
             "se esperaba ';'");
 
         return std::make_unique<PrintStatement>(
-            text);
+            std::move(expression));
     }
 
 
@@ -973,6 +972,7 @@ Parser::parsePrimary()
     // 42
     // ========================================================
 
+
     if (check(TokenType::Number))
     {
         int value =
@@ -982,6 +982,20 @@ Parser::parsePrimary()
             value);
     }
 
+    // ========================================================
+    // STRING
+    //
+    // "Hola"
+    // ========================================================
+
+    if (check(TokenType::String))
+    {
+        std::string value =
+            advance().text;
+
+        return std::make_unique<StringLiteral>(
+            value);
+    }
 
     // ========================================================
     // VARIABLE

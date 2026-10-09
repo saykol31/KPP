@@ -1,0 +1,8 @@
+int main()
+{
+    string nombre = "KolibriOS";
+
+    print("Mi nombre es");
+    print(nombre);
+    return 0;
+}

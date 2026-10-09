@@ -1,0 +1,10 @@
+enum Test
+{
+    A,
+    B
+};
+
+int main()
+{
+    return 0;
+}

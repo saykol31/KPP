@@ -361,6 +361,39 @@ KolibriRuntime::emitPrint(
 }
 
 
+std::size_t
+KolibriRuntime::emitPrintFromEdx(
+    X86Emitter& emitter,
+    [[maybe_unused]] std::uint32_t y)
+{
+    // mov eax, 4
+    emitter.emitMovEaxImm32(4);
+
+    // EBX = cursor gráfico actual
+    emitter.emitMovEbxEbp();
+
+    // Text color
+    emitter.emitMovRegImm32(
+        0xB9,
+        0x80000000);
+
+    // EDX ya contiene la dirección del string.
+
+    // Text size
+    emitter.emitMovRegImm32(
+        0xBE,
+        40);
+
+    // int 0x40
+    emitter.emitInt(0x40);
+
+    // Avanzar el cursor vertical.
+    emitter.emitAddEbpImm32(20);
+
+    return 0;
+}
+
+
 // ============================================================
 // EXIT
 // ============================================================

@@ -25,6 +25,7 @@ enum class TokenType
     // ============================================================
 
     KwInt,
+    KwString,
     KwReturn,
     KwPrint,
     KwIf,

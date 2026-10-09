@@ -493,6 +493,20 @@ void X86Emitter::emitMovEbxEbp()
     machineCode.push_back(0xEB);
 }
 
+void X86Emitter::emitMovEdxEax()
+{
+    // MOV EDX, EAX
+    machineCode.push_back(0x89);
+    machineCode.push_back(0xC2);
+}
+
+void X86Emitter::emitMovEdxEbx()
+{
+    // MOV EDX, EBX
+    machineCode.push_back(0x89);
+    machineCode.push_back(0xDA);
+}
+
 void X86Emitter::emitAddEbpImm32(std::uint32_t value)
 {
     // ADD EBP, imm32

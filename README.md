@@ -129,22 +129,7 @@ FASE 2 — CONTROL DE FLUJO
 │ if                           │
 │ else                         │
 │ else if                      │
-│ comparación   - x = suma();
-
-             El error:
-
-             K++ Parser error at 8:10: se esperaba '='      El mensaje:
-
-Parser error at 8:10: se esperaba '='
-
-corresponde justamente a:
-
-int x;
-     ^
-
-El bloque de asignación independiente sí existe y está implementado correctamente:
-
-x = suma();                    │
+│ comparació                   │
 │ saltos                       │
 │ scopes                       │
 │ shadowing                    │
@@ -282,7 +267,7 @@ Resultado recibido por caller       🟢
 KolibriOS                           🟢
 
 
-
+K++ actualmente NO soporta struct,void nada solo int
 ────────────────────────────
 
 4.3  Argumentos avanzados
@@ -395,6 +380,20 @@ FASE 8
 │                              │
 │ SELF-HOSTING                 │
 └──────────────────────────────┘
+
+
+| #  | Tipo           | Ejemplo                 | Uso                          |
+| -- | -------------- | ----------------------- | ---------------------------- |
+| 1  | `void`         | `void saludar()`        | No devuelve valor            |
+| 2  | `int`          | `int sumar()`           | Números enteros              |
+| 3  | `bool`         | `bool existe()`         | Verdadero/falso              |
+| 4  | `double`       | `double promedio()`     | Decimales de precisión doble |
+| 5  | `float`        | `float calcular()`      | Decimales                    |
+| 6  | `char`         | `char obtenerLetra()`   | Un carácter                  |
+| 7  | `long`         | `long obtenerTotal()`   | Enteros grandes              |
+| 8  | `short`        | `short obtenerEdad()`   | Enteros pequeños             |
+| 9  | `unsigned int` | `unsigned int tamaño()` | Enteros sin negativos        |
+| 10 | `long long`    | `long long factorial()` | Enteros muy grandes          |
 
 
 FASE 5 — TIPOS
@@ -583,6 +582,24 @@ K++ processes a C++ program through several compilation stages:
                             │
                             ▼
                        KOLIBRIOS BIN
+
+
+      statrge 0                 | Capacidad               | Estado |
+| ----------------------- | ------ |
+| `int`                   | ✅      |
+| variables               | ✅      |
+| inicializadores         | ✅      |
+| expresiones aritméticas | ✅      |
+| `return`                | ✅      |
+| funciones               | ✅      |
+| parámetros              | ✅      |
+| argumentos              | ✅      |
+| llamadas                | ✅
+| literales print           ✅
+| `struct`                | ❌      |
+| `enum`                  | ❌      |
+| string                    ✅
+
 
 The compiler is divided into independent stages so that each part can be developed and tested separately.
 
