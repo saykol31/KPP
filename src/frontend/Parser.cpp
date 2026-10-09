@@ -127,6 +127,14 @@ Parser::parse()
         // FUNCTION DECLARATION
         // ----------------------------------------------------
 
+        if (check(TokenType::KwEnum))
+        {
+            program->enums.push_back(
+                parseEnum());
+
+            continue;
+        }
+
         if (check(TokenType::KwInt))
         {
             program->functions.push_back(
@@ -137,7 +145,7 @@ Parser::parse()
 
         throw std::runtime_error(
             "K++: se esperaba una declaración global "
-            "(struct o función int)");
+            "(struct, enum o función int)");
     }
 
     return program;
@@ -392,6 +400,77 @@ Parser::parseStruct()
 // ============================================================
 // PARSE BLOCK
 // ============================================================
+
+std::unique_ptr<EnumDeclaration>
+Parser::parseEnum()
+{
+    expect(TokenType::KwEnum, "se esperaba 'enum'");
+
+    if (!check(TokenType::Identifier))
+    {
+        throw std::runtime_error(
+            "K++: se esperaba nombre de enum");
+    }
+
+    auto declaration = std::make_unique<EnumDeclaration>();
+    declaration->name = advance().text;
+
+    expect(TokenType::LBrace, "se esperaba '{' después del nombre de enum");
+
+    int nextValue = 0;
+
+    while (!check(TokenType::RBrace)
+           && !check(TokenType::EndOfFile))
+    {
+        if (!check(TokenType::Identifier))
+        {
+            throw std::runtime_error(
+                "K++: se esperaba nombre de enumerador");
+        }
+
+        EnumValue value;
+        value.name = advance().text;
+        value.value = nextValue;
+
+        if (match(TokenType::Assign))
+        {
+            if (!check(TokenType::Number))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba número después de '=' en enum");
+            }
+
+            value.value = std::stoi(advance().text);
+        }
+
+        nextValue = value.value + 1;
+
+        const std::string qualifiedName =
+            declaration->name + "::" + value.name;
+
+        if (enumConstants.count(qualifiedName) != 0)
+        {
+            throw std::runtime_error(
+                "K++: enumerador duplicado: " + qualifiedName);
+        }
+
+        enumConstants[qualifiedName] = value.value;
+        declaration->values.push_back(value);
+
+        if (!check(TokenType::RBrace))
+        {
+            expect(TokenType::Comma,
+                   "se esperaba ',' entre enumeradores");
+        }
+    }
+
+    expect(TokenType::RBrace, "se esperaba '}' al cerrar enum");
+    expect(TokenType::Semicolon,
+           "se esperaba ';' después de la declaración enum");
+
+    return declaration;
+}
+
 
 std::unique_ptr<Block>
 Parser::parseBlock()
@@ -1156,6 +1235,31 @@ Parser::parsePrimary()
     {
         std::string name =
             advance().text;
+
+        // ----------------------------------------------------
+        // ENUM CONSTANT: Color::Rojo
+        // ----------------------------------------------------
+
+        if (match(TokenType::ColonColon))
+        {
+            if (!check(TokenType::Identifier))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba nombre de enumerador después de '::'");
+            }
+
+            name += "::" + advance().text;
+
+            const auto it = enumConstants.find(name);
+
+            if (it == enumConstants.end())
+            {
+                throw std::runtime_error(
+                    "K++: enumerador no declarado: " + name);
+            }
+
+            return std::make_unique<IntegerLiteral>(it->second);
+        }
 
         // ----------------------------------------------------
         // FUNCTION CALL

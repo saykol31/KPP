@@ -6,6 +6,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace kpp {
@@ -47,6 +49,9 @@ private:
 
     std::unique_ptr<StructDeclaration>
     parseStruct();
+
+    std::unique_ptr<EnumDeclaration>
+    parseEnum();
 
     // ========================================================
     // BLOQUE
@@ -121,6 +126,8 @@ private:
     // ========================================================
 
     const std::vector<Token>& tokens;
+
+    std::unordered_map<std::string, int> enumConstants;
 
     std::size_t position = 0;
 };

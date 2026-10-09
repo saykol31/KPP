@@ -1,0 +1,10 @@
+enum Color
+{
+    Rojo,
+    Verde
+};
+
+int main()
+{
+    return Color::Inexistente;
+}

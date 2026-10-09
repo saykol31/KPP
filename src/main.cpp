@@ -101,6 +101,35 @@ int main(int argc, char** argv)
         }
 
         // ====================================================
+        // ENUM DECLARATIONS
+        // ====================================================
+
+        for (const auto& enumeration : program->enums)
+        {
+            std::cout
+                << "├── Enum: "
+                << enumeration->name
+                << '\n';
+
+            for (std::size_t i = 0;
+                 i < enumeration->values.size();
+                 ++i)
+            {
+                const auto& value = enumeration->values[i];
+
+                std::cout
+                    << "│   "
+                    << (i + 1 == enumeration->values.size()
+                            ? "└── "
+                            : "├── ")
+                    << value.name
+                    << " = "
+                    << value.value
+                    << '\n';
+            }
+        }
+
+        // ====================================================
         // FUNCTION DECLARATIONS
         // ====================================================
 
