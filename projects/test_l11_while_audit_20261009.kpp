@@ -1,0 +1,17 @@
+int main()
+{
+    print("L11 WHILE");
+
+    int contador = 3;
+
+    while (contador > 0)
+    {
+        print_int(contador);
+        contador = contador - 1;
+    }
+
+    print("WHILE FINAL");
+    print_int(contador);
+
+    return 0;
+}

@@ -58,6 +58,10 @@ public:
         X86Emitter& emitter,
         std::uint32_t y);
 
+    std::size_t
+    emitPrintFromEdx(
+        X86Emitter& emitter,
+        std::uint32_t y);
     /*
      * Imprime el entero actualmente contenido en EAX.
      *

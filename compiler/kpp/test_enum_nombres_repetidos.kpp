@@ -1,0 +1,16 @@
+enum Color
+{
+    Rojo = 1,
+    Verde = 2
+};
+
+enum Alerta
+{
+    Rojo = 10,
+    Verde = 20
+};
+
+int main()
+{
+    return Color::Rojo + Alerta::Rojo;
+}

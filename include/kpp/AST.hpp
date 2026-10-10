@@ -23,11 +23,22 @@ struct Expression : ASTNode
 {
 };
 
+
 struct IntegerLiteral : Expression
 {
     int value;
 
     explicit IntegerLiteral(int value)
+        : value(value)
+    {
+    }
+};
+
+struct StringLiteral : Expression
+{
+    std::string value;
+
+    explicit StringLiteral(const std::string& value)
         : value(value)
     {
     }
@@ -115,11 +126,11 @@ struct ReturnStatement : Statement
 
 struct PrintStatement : Statement
 {
-    std::string text;
+    std::unique_ptr<Expression> expression;
 
     explicit PrintStatement(
-        const std::string& text)
-        : text(text)
+        std::unique_ptr<Expression> expression)
+        : expression(std::move(expression))
     {
     }
 };
@@ -145,14 +156,17 @@ struct PrintIntegerStatement : Statement
 
 struct VariableDeclaration : Statement
 {
+    std::string type;
     std::string name;
 
     std::unique_ptr<Expression> initializer;
 
     VariableDeclaration(
+        const std::string& type,
         const std::string& name,
         std::unique_ptr<Expression> initializer)
-        : name(name),
+        : type(type),
+          name(name),
           initializer(std::move(initializer))
     {
     }
@@ -238,6 +252,41 @@ struct Parameter
     std::string name;
 };
 
+
+// ============================================================
+// STRUCT DECLARATION
+// ============================================================
+
+struct StructField
+{
+    std::string type;
+    std::string name;
+};
+
+struct StructDeclaration : ASTNode
+{
+    std::string name;
+    std::vector<StructField> fields;
+};
+
+
+// ============================================================
+// ENUM DECLARATION
+// ============================================================
+
+struct EnumValue
+{
+    std::string name;
+    int value;
+};
+
+struct EnumDeclaration : ASTNode
+{
+    std::string name;
+    std::vector<EnumValue> values;
+};
+
+
 // ============================================================
 // FUNCIÓN
 // ============================================================
@@ -259,6 +308,9 @@ struct FunctionDeclaration : ASTNode
 struct Program : ASTNode
 {
     std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+    std::vector<std::unique_ptr<StructDeclaration>> structs;
+    std::vector<std::unique_ptr<EnumDeclaration>> enums;
 };
+
 
 }

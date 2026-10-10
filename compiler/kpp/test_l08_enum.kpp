@@ -1,0 +1,12 @@
+enum Color
+{
+    ROJO,
+    VERDE,
+    AZUL
+};
+
+int main()
+{
+    print("L08 ENUM");
+    return 0;
+}

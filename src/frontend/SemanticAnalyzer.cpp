@@ -53,6 +53,81 @@ bool SemanticAnalyzer::analyze(
     functionNames.clear();
     functionDeclarations.clear();
 
+    // ========================================================
+    // VALIDAR Y REGISTRAR DECLARACIONES STRUCT
+    // ========================================================
+
+    std::unordered_set<std::string> structNames;
+
+    for (const auto& structure : program.structs)
+    {
+        if (!structure)
+        {
+            semanticErrors.push_back({
+                "declaración struct inválida"
+            });
+
+            continue;
+        }
+
+        // ----------------------------------------------------
+        // Comprobar nombre de estructura duplicado
+        // ----------------------------------------------------
+
+        if (!structNames.insert(structure->name).second)
+        {
+            semanticErrors.push_back({
+                "la estructura '" +
+                structure->name +
+                "' está declarada más de una vez"
+            });
+
+            continue;
+        }
+
+        // ----------------------------------------------------
+        // Comprobar nombres y tipos de los campos
+        // ----------------------------------------------------
+
+        std::unordered_set<std::string> fieldNames;
+
+        for (const auto& field : structure->fields)
+        {
+            if (field.name.empty())
+            {
+                semanticErrors.push_back({
+                    "campo sin nombre en la estructura '" +
+                    structure->name + "'"
+                });
+
+                continue;
+            }
+
+            if (!fieldNames.insert(field.name).second)
+            {
+                semanticErrors.push_back({
+                    "el campo '" +
+                    field.name +
+                    "' está duplicado en la estructura '" +
+                    structure->name + "'"
+                });
+            }
+
+            if (field.type != "int" &&
+                field.type != "string")
+            {
+                semanticErrors.push_back({
+                    "tipo no soportado '" +
+                    field.type +
+                    "' en el campo '" +
+                    field.name +
+                    "' de la estructura '" +
+                    structure->name + "'"
+                });
+            }
+        }
+    }
+
     if (program.functions.empty())
     {
         semanticErrors.push_back({
@@ -274,40 +349,28 @@ void SemanticAnalyzer::analyzeStatement(
         }
 
         // ----------------------------------------------------
-        // Debe existir un inicializador
-        // ----------------------------------------------------
-
-        if (!variableDeclaration->initializer)
-        {
-            semanticErrors.push_back({
-                "la variable '" +
-                name +
-                "' no tiene inicializador"
-            });
-
-            return;
-        }
-
-        // ----------------------------------------------------
-        // Analizar primero el inicializador
+        // Inicializador opcional
         //
+        // int x;
+        // int x = 10;
+        //
+        // Analizar primero el inicializador cuando existe.
         // Esto evita aceptar:
         //
         // int x = x;
         // ----------------------------------------------------
 
-        analyzeExpression(
-            *variableDeclaration->initializer);
+        if (variableDeclaration->initializer)
+        {
+            analyzeExpression(
+                *variableDeclaration->initializer);
+        }
 
         // ----------------------------------------------------
         // Registrar variable
         // ----------------------------------------------------
 
-        if (scopes.back().find(name) ==
-            scopes.back().end())
-        {
-            scopes.back()[name] = "int";
-        }
+        scopes.back()[name] = "int";
 
         return;
     }
@@ -619,12 +682,17 @@ void SemanticAnalyzer::analyzeStatement(
         dynamic_cast<const PrintStatement*>(
             &statement))
     {
-        if (printStatement->text.empty())
+        if (!printStatement->expression)
         {
             semanticErrors.push_back({
-                "print() no puede recibir una cadena vacía"
+                "print() requiere una expresión"
             });
+
+            return;
         }
+
+        analyzeExpression(
+            *printStatement->expression);
 
         return;
     }
@@ -688,6 +756,14 @@ void SemanticAnalyzer::analyzeExpression(
         return;
     }
 
+    // ========================================================
+    // STRING
+    // ========================================================
+
+    if (dynamic_cast<const StringLiteral*>(&expression))
+    {
+        return;
+}
     // ========================================================
     // CALL EXPRESSION
     //
@@ -1064,3 +1140,4 @@ SemanticAnalyzer::errors() const
 }
 
 } // namespace kpp
+

@@ -1,0 +1,13 @@
+int main()
+{
+    int a = 10;
+    int b = 20;
+    int c = a + b;
+
+    print("L02 VARIABLES");
+    print_int(a);
+    print_int(b);
+    print_int(c);
+
+    return 0;
+}

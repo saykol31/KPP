@@ -1,0 +1,18 @@
+enum Color
+{
+    Rojo,
+    Verde,
+    Azul
+};
+
+enum Estado
+{
+    Inactivo = 0,
+    Activo = 10,
+    Pausado
+};
+
+int main()
+{
+    return Color::Verde;
+}

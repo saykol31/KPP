@@ -70,11 +70,72 @@ int main(int argc, char** argv)
             << "AST\n"
             << "---\n";
 
-        for (const auto& function :
-            program->functions)
+               std::cout << "Program\n";
+
+        // ====================================================
+        // STRUCT DECLARATIONS
+        // ====================================================
+
+        for (const auto& structure : program->structs)
         {
             std::cout
-                << "Program\n"
+                << "├── Struct: "
+                << structure->name
+                << '\n';
+
+            for (std::size_t i = 0;
+                 i < structure->fields.size();
+                 ++i)
+            {
+                const auto& field = structure->fields[i];
+                const bool last = (i + 1 == structure->fields.size());
+
+                std::cout
+                    << "│   "
+                    << (last ? "└── " : "├── ")
+                    << field.type
+                    << " "
+                    << field.name
+                    << '\n';
+            }
+        }
+
+        // ====================================================
+        // ENUM DECLARATIONS
+        // ====================================================
+
+        for (const auto& enumeration : program->enums)
+        {
+            std::cout
+                << "├── Enum: "
+                << enumeration->name
+                << '\n';
+
+            for (std::size_t i = 0;
+                 i < enumeration->values.size();
+                 ++i)
+            {
+                const auto& value = enumeration->values[i];
+
+                std::cout
+                    << "│   "
+                    << (i + 1 == enumeration->values.size()
+                            ? "└── "
+                            : "├── ")
+                    << value.name
+                    << " = "
+                    << value.value
+                    << '\n';
+            }
+        }
+
+        // ====================================================
+        // FUNCTION DECLARATIONS
+        // ====================================================
+
+        for (const auto& function : program->functions)
+        {
+            std::cout
                 << "└── Function: "
                 << function->name
                 << '\n';
@@ -167,9 +228,39 @@ int main(int argc, char** argv)
                         statement.get()))
                 {
                     std::cout
-                        << "        ├── Print: "
-                        << print->text
+                        << "        ├── Print"
                         << '\n';
+
+                    if (auto* integer =
+                        dynamic_cast<
+                            kpp::IntegerLiteral*>(
+                            print->expression.get()))
+                    {
+                        std::cout
+                            << "        │   └── Integer: "
+                            << integer->value
+                            << '\n';
+                    }
+                    else if (auto* string =
+                        dynamic_cast<
+                            kpp::StringLiteral*>(
+                            print->expression.get()))
+                    {
+                        std::cout
+                            << "        │   └── String: "
+                            << string->value
+                            << '\n';
+                    }
+                    else if (auto* variable =
+                        dynamic_cast<
+                            kpp::VariableExpression*>(
+                            print->expression.get()))
+                    {
+                        std::cout
+                            << "        │   └── Variable: "
+                            << variable->name
+                            << '\n';
+                    }
 
                     continue;
                 }
@@ -232,9 +323,39 @@ int main(int argc, char** argv)
                                     nestedStatement.get()))
                             {
                                 std::cout
-                                    << "        │       └── Print: "
-                                    << print->text
+                                    << "        │     └── Print"
                                     << '\n';
+
+                                if (auto* integer =
+                                    dynamic_cast<
+                                        kpp::IntegerLiteral*>(
+                                        print->expression.get()))
+                                {
+                                    std::cout
+                                        << "        │         └── Integer: "
+                                        << integer->value
+                                        << '\n';
+                                }
+                                else if (auto* string =
+                                    dynamic_cast<
+                                        kpp::StringLiteral*>(
+                                        print->expression.get()))
+                                {
+                                    std::cout
+                                        << "        │         └── String: "
+                                        << string->value
+                                        << '\n';
+                                }
+                                else if (auto* variable =
+                                    dynamic_cast<
+                                        kpp::VariableExpression*>(
+                                        print->expression.get()))
+                                {
+                                    std::cout
+                                        << "        │         └── Variable: "
+                                        << variable->name
+                                        << '\n';
+                                }
                             }
                         }
                     }
@@ -498,6 +619,22 @@ int main(int argc, char** argv)
                         std::cout
                             << "CONST "
                             << instruction.value
+                            << " -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    // ========================================================
+                    // STRING CONSTANT
+                    // ========================================================
+
+                    case kpp::IROpcode::StringConst:
+
+                        std::cout
+                            << "STRING_CONST "
+                            << instruction.name
                             << " -> "
                             << instruction.result
                             << '\n';

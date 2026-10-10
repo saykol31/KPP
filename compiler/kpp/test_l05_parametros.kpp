@@ -1,0 +1,14 @@
+int sumar(int a, int b)
+{
+    return a + b;
+}
+
+int main()
+{
+    print("L05 PARAMETROS");
+
+    int resultado = sumar(10, 20);
+    print_int(resultado);
+
+    return 0;
+}

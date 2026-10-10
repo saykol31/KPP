@@ -102,6 +102,7 @@ void Parser::expect(
 // PARSE
 // ============================================================
 
+
 std::unique_ptr<Program>
 Parser::parse()
 {
@@ -110,8 +111,41 @@ Parser::parse()
 
     while (!check(TokenType::EndOfFile))
     {
-        program->functions.push_back(
-            parseFunction());
+        // ----------------------------------------------------
+        // STRUCT DECLARATION
+        // ----------------------------------------------------
+
+        if (check(TokenType::KwStruct))
+        {
+            program->structs.push_back(
+                parseStruct());
+
+            continue;
+        }
+
+        // ----------------------------------------------------
+        // FUNCTION DECLARATION
+        // ----------------------------------------------------
+
+        if (check(TokenType::KwEnum))
+        {
+            program->enums.push_back(
+                parseEnum());
+
+            continue;
+        }
+
+        if (check(TokenType::KwInt))
+        {
+            program->functions.push_back(
+                parseFunction());
+
+            continue;
+        }
+
+        throw std::runtime_error(
+            "K++: se esperaba una declaración global "
+            "(struct, enum o función int)");
     }
 
     return program;
@@ -253,9 +287,190 @@ Parser::parseFunction()
 }
 
 
+ // ============================================================
+ // PARSE STRUCT
+ // ============================================================
+
+std::unique_ptr<StructDeclaration>
+Parser::parseStruct()
+{
+    // --------------------------------------------------------
+    // KEYWORD: struct
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::KwStruct,
+        "se esperaba 'struct'");
+
+    // --------------------------------------------------------
+    // NOMBRE DE LA ESTRUCTURA
+    // --------------------------------------------------------
+
+    if (!check(TokenType::Identifier))
+    {
+        throw std::runtime_error(
+            "K++: se esperaba nombre de estructura");
+    }
+
+    const std::string structName =
+        advance().text;
+
+    // --------------------------------------------------------
+    // INICIO DEL CUERPO
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::LBrace,
+        "se esperaba '{' después del nombre de estructura");
+
+    auto declaration =
+        std::make_unique<StructDeclaration>();
+
+    declaration->name = structName;
+
+    // --------------------------------------------------------
+    // CAMPOS
+    //
+    // Tipos admitidos en esta etapa:
+    //   int edad;
+    //   string nombre;
+    // --------------------------------------------------------
+
+    while (
+        !check(TokenType::RBrace)
+        && !check(TokenType::EndOfFile))
+    {
+        std::string fieldType;
+
+        if (match(TokenType::KwInt))
+        {
+            fieldType = "int";
+        }
+        else if (match(TokenType::KwString))
+        {
+            fieldType = "string";
+        }
+        else
+        {
+            throw std::runtime_error(
+                "K++: tipo de campo no admitido en struct; "
+                "se esperaba 'int' o 'string'");
+        }
+
+        if (!check(TokenType::Identifier))
+        {
+            throw std::runtime_error(
+                "K++: se esperaba nombre del campo");
+        }
+
+        const std::string fieldName =
+            advance().text;
+
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después del campo");
+
+        declaration->fields.push_back(
+            StructField{
+                fieldType,
+                fieldName
+            });
+    }
+
+    // --------------------------------------------------------
+    // CIERRE DE LA ESTRUCTURA
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::RBrace,
+        "se esperaba '}' al cerrar la estructura");
+
+    // --------------------------------------------------------
+    // TERMINADOR DE LA DECLARACIÓN
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::Semicolon,
+        "se esperaba ';' después de la declaración struct");
+
+    return declaration;
+}
+
+
 // ============================================================
 // PARSE BLOCK
 // ============================================================
+
+std::unique_ptr<EnumDeclaration>
+Parser::parseEnum()
+{
+    expect(TokenType::KwEnum, "se esperaba 'enum'");
+
+    if (!check(TokenType::Identifier))
+    {
+        throw std::runtime_error(
+            "K++: se esperaba nombre de enum");
+    }
+
+    auto declaration = std::make_unique<EnumDeclaration>();
+    declaration->name = advance().text;
+
+    expect(TokenType::LBrace, "se esperaba '{' después del nombre de enum");
+
+    int nextValue = 0;
+
+    while (!check(TokenType::RBrace)
+           && !check(TokenType::EndOfFile))
+    {
+        if (!check(TokenType::Identifier))
+        {
+            throw std::runtime_error(
+                "K++: se esperaba nombre de enumerador");
+        }
+
+        EnumValue value;
+        value.name = advance().text;
+        value.value = nextValue;
+
+        if (match(TokenType::Assign))
+        {
+            if (!check(TokenType::Number))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba número después de '=' en enum");
+            }
+
+            value.value = std::stoi(advance().text);
+        }
+
+        nextValue = value.value + 1;
+
+        const std::string qualifiedName =
+            declaration->name + "::" + value.name;
+
+        if (enumConstants.count(qualifiedName) != 0)
+        {
+            throw std::runtime_error(
+                "K++: enumerador duplicado: " + qualifiedName);
+        }
+
+        enumConstants[qualifiedName] = value.value;
+        declaration->values.push_back(value);
+
+        if (!check(TokenType::RBrace))
+        {
+            expect(TokenType::Comma,
+                   "se esperaba ',' entre enumeradores");
+        }
+    }
+
+    expect(TokenType::RBrace, "se esperaba '}' al cerrar enum");
+    expect(TokenType::Semicolon,
+           "se esperaba ';' después de la declaración enum");
+
+    return declaration;
+}
+
 
 std::unique_ptr<Block>
 Parser::parseBlock()
@@ -312,8 +527,18 @@ Parser::parseStatement()
     // int x = 42;
     // int x = 10 + 20 * 3;
     // ========================================================
+    std::string variableType;
 
     if (match(TokenType::KwInt))
+    {
+        variableType = "int";
+    }
+    else if (match(TokenType::KwString))
+    {
+        variableType = "string";
+    }
+
+    if (!variableType.empty())
     {
         // ----------------------------------------------------
         // nombre
@@ -330,20 +555,16 @@ Parser::parseStatement()
 
 
         // ----------------------------------------------------
-        // =
+        // inicializador
         // ----------------------------------------------------
 
-        expect(
-            TokenType::Assign,
-            "se esperaba '='");
+        std::unique_ptr<Expression> initializer = nullptr;
 
-
-        // ----------------------------------------------------
-        // expresión inicial
-        // ----------------------------------------------------
-
-        auto initializer =
-            parseExpression();
+        if (match(TokenType::Assign))
+        {
+            initializer =
+                parseExpression();
+        }
 
 
         // ----------------------------------------------------
@@ -354,11 +575,12 @@ Parser::parseStatement()
             TokenType::Semicolon,
             "se esperaba ';'");
 
+
         return std::make_unique<VariableDeclaration>(
+            variableType,
             name,
             std::move(initializer));
     }
-
 
     // ========================================================
     // PRINT INTEGER
@@ -427,6 +649,7 @@ Parser::parseStatement()
     //     print("IF OK");
     // }
     // ========================================================
+
 
     if (match(TokenType::KwIf))
     {
@@ -550,14 +773,8 @@ Parser::parseStatement()
             TokenType::LParen,
             "se esperaba '(' después de print");
 
-        if (!check(TokenType::String))
-        {
-            throw std::runtime_error(
-                "K++: print() requiere una cadena");
-        }
-
-        std::string text =
-            advance().text;
+        std::unique_ptr<Expression> expression =
+            parseExpression();
 
         expect(
             TokenType::RParen,
@@ -568,7 +785,7 @@ Parser::parseStatement()
             "se esperaba ';'");
 
         return std::make_unique<PrintStatement>(
-            text);
+            std::move(expression));
     }
 
 
@@ -970,6 +1187,7 @@ Parser::parsePrimary()
     // 42
     // ========================================================
 
+
     if (check(TokenType::Number))
     {
         int value =
@@ -979,6 +1197,20 @@ Parser::parsePrimary()
             value);
     }
 
+    // ========================================================
+    // STRING
+    //
+    // "Hola"
+    // ========================================================
+
+    if (check(TokenType::String))
+    {
+        std::string value =
+            advance().text;
+
+        return std::make_unique<StringLiteral>(
+            value);
+    }
 
     // ========================================================
     // VARIABLE
@@ -1003,6 +1235,31 @@ Parser::parsePrimary()
     {
         std::string name =
             advance().text;
+
+        // ----------------------------------------------------
+        // ENUM CONSTANT: Color::Rojo
+        // ----------------------------------------------------
+
+        if (match(TokenType::ColonColon))
+        {
+            if (!check(TokenType::Identifier))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba nombre de enumerador después de '::'");
+            }
+
+            name += "::" + advance().text;
+
+            const auto it = enumConstants.find(name);
+
+            if (it == enumConstants.end())
+            {
+                throw std::runtime_error(
+                    "K++: enumerador no declarado: " + name);
+            }
+
+            return std::make_unique<IntegerLiteral>(it->second);
+        }
 
         // ----------------------------------------------------
         // FUNCTION CALL

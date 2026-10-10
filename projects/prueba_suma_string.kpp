@@ -1,0 +1,15 @@
+int main()
+{
+int a = 10;
+int b = 5;
+int resultado = a + b;
+
+
+print("Prueba de suma");
+print("Resultado:");
+print(resultado);
+
+return 0;
+
+
+}

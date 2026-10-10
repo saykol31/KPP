@@ -25,6 +25,9 @@ enum class TokenType
     // ============================================================
 
     KwInt,
+    KwString,
+    KwStruct,
+    KwEnum,
     KwReturn,
     KwPrint,
     KwIf,
@@ -87,7 +90,8 @@ enum class TokenType
     // ============================================================
 
     Comma,
-    Semicolon
+    Semicolon,
+    ColonColon
 };
 
 struct Token

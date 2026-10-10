@@ -1,0 +1,37 @@
+struct Persona
+{
+    int edad;
+    string nombre;
+};
+
+int main()
+{
+    Persona p;
+    Persona q;
+
+    p.edad = 25;
+    p.nombre = "Ana";
+
+    q.edad = 40;
+    q.nombre = "Luis";
+
+    print("PERSONA P");
+    print_int(p.edad);
+    print(p.nombre);
+
+    print("PERSONA Q");
+    print_int(q.edad);
+    print(q.nombre);
+
+    p.edad = 30;
+
+    print("DESPUES DE MODIFICAR P");
+    print_int(p.edad);
+    print(p.nombre);
+
+    print("COMPROBAR Q");
+    print_int(q.edad);
+    print(q.nombre);
+
+    return 0;
+}

@@ -1,0 +1,9 @@
+struct Test
+{
+    int value;
+};
+
+int main()
+{
+    return 0;
+}

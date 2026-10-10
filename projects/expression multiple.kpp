@@ -1,0 +1,17 @@
+int suma(int a, int b)
+{
+    return a + b;
+}
+
+int main()
+{
+    int a = 10;
+    int b = 20;
+    int c = 3;
+    int d = 4;
+
+    int resultado = suma(a + b, c * d);
+    print_int(resultado);
+
+    return 0;
+}

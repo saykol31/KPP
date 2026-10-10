@@ -1,0 +1,18 @@
+int factorial(int n)
+{
+if (n <= 1)
+{
+return 1;
+}
+else
+{
+return n * factorial(n - 1);
+}
+}
+
+int main()
+{
+print("L15 RECURSION");
+print_int(factorial(5));
+return 0;
+}

@@ -41,6 +41,15 @@ const char* tokenTypeName(TokenType type)
         case TokenType::KwInt:
             return "int";
 
+        case TokenType::KwString:
+            return "string";
+
+        case TokenType::KwStruct:
+            return "struct";
+
+        case TokenType::KwEnum:
+            return "enum";
+
         case TokenType::KwReturn:
             return "return";
 
@@ -149,6 +158,9 @@ const char* tokenTypeName(TokenType type)
 
         case TokenType::Semicolon:
             return ";";
+
+        case TokenType::ColonColon:
+            return "::";
     }
 
     return "Unknown";
@@ -249,6 +261,51 @@ Token Lexer::identifier()
             startLine,
             startColumn
         };
+    }
+
+
+    // --------------------------------------------------------
+    // KEYWORD: string
+    // --------------------------------------------------------
+
+    if (text == "string")
+    {
+        return {
+            TokenType::KwString,
+            text,
+            startLine,
+            startColumn
+        };
+    }
+
+    // --------------------------------------------------------
+    // KEYWORD: struct
+    // --------------------------------------------------------
+
+    if (text == "struct")
+    {
+        return {
+            TokenType::KwStruct,
+            text,
+            startLine,
+            startColumn
+        };
+    }
+
+    // --------------------------------------------------------
+    // KEYWORD: enum
+    // --------------------------------------------------------
+
+    if (text == "enum")
+    {
+        return {
+            TokenType::KwEnum,
+            text,
+            startLine,
+            startColumn
+
+        };
+
     }
 
     // --------------------------------------------------------
@@ -475,6 +532,28 @@ Lexer::tokenize()
         {
             tokens.push_back(
                 number());
+
+            continue;
+        }
+
+
+        // ====================================================
+        // ::
+        // ====================================================
+
+        if (c == ':' &&
+            position + 1 < source.size() &&
+            source[position + 1] == ':')
+        {
+            advance();
+            advance();
+
+            tokens.push_back({
+                TokenType::ColonColon,
+                "::",
+                tokenLine,
+                tokenColumn
+            });
 
             continue;
         }

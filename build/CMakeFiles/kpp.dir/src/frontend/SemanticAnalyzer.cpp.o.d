@@ -157,7 +157,8 @@ CMakeFiles/kpp.dir/src/frontend/SemanticAnalyzer.cpp.o: \
  /usr/include/c++/12/bits/enable_special_members.h \
  /usr/include/c++/12/bits/node_handle.h \
  /usr/include/c++/12/bits/unordered_map.h \
- /usr/include/c++/12/bits/erase_if.h /usr/include/c++/12/iostream \
+ /usr/include/c++/12/bits/erase_if.h /usr/include/c++/12/unordered_set \
+ /usr/include/c++/12/bits/unordered_set.h /usr/include/c++/12/iostream \
  /usr/include/c++/12/ostream /usr/include/c++/12/ios \
  /usr/include/c++/12/bits/ios_base.h \
  /usr/include/c++/12/bits/locale_classes.h \

@@ -1,0 +1,21 @@
+int main()
+{
+    print("L12 SCOPE");
+
+    int x = 10;
+
+    print("EXTERIOR ANTES");
+    print_int(x);
+
+    {
+        int x = 100;
+
+        print("INTERIOR");
+        print_int(x);
+    }
+
+    print("EXTERIOR DESPUES");
+    print_int(x);
+
+    return 0;
+}

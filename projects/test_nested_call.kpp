@@ -1,0 +1,20 @@
+int suma(int a, int b)
+{
+    int resultado = a + b;
+    return resultado;
+}
+
+int diferencia(int a, int b)
+{
+    int resultado = a - b;
+    return resultado;
+}
+
+int main()
+{
+    int resultado = diferencia(suma(4, 6), 3);
+
+    print_int(resultado);
+
+    return 0;
+}

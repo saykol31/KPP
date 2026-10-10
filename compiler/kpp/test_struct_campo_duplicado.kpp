@@ -1,0 +1,10 @@
+struct Persona
+{
+    int edad;
+    string edad;
+};
+
+int main()
+{
+    return 0;
+}
