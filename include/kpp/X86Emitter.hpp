@@ -55,6 +55,8 @@ public:
     // --------------------------------------------------------
 
     void emitAddEaxEbx();
+    void emitAndEaxEbx();
+    void emitOrEaxEbx();
     void emitSubEaxEbx();
     void emitMulEaxEbx();
 
@@ -88,6 +90,7 @@ public:
         std::uint32_t value);
 
     void emitPushEax();
+    void emitPushEbx();
     void emitPopEax();
     void emitPopEbx();
     void emitMovEdxEdi();

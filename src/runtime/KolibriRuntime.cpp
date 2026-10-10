@@ -479,6 +479,10 @@ KolibriRuntime::emitPrintInteger(
     const std::size_t loopJump =
         emitter.emitJneRel32Placeholder();
 
+    // Los números distintos de cero saltan el caso especial.
+    const std::size_t endZeroJump =
+        emitter.emitJmpRel32Placeholder();
+
     /*
      * Caso EAX == 0.
      */
@@ -487,6 +491,9 @@ KolibriRuntime::emitPrintInteger(
 
     emitter.emitDecEdi();
     emitter.emitMovEdiMem8Imm8('0');
+
+    const std::size_t endZeroLabel =
+        emitter.size();
 
     /*
      * Parcheamos los saltos.
@@ -498,6 +505,10 @@ KolibriRuntime::emitPrintInteger(
     emitter.patchRel32(
         loopJump,
         conversionLoop);
+
+    emitter.patchRel32(
+        endZeroJump,
+        endZeroLabel);
 
     /*
      * Syscall KolibriOS:

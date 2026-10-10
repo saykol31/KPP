@@ -1,0 +1,32 @@
+int clasificar(int x)
+{
+    if (x > 20)
+    {
+        return 3;
+    }
+    else if (x > 10)
+    {
+        return 2;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+int main()
+{
+    print("L10 IF ELSE");
+
+    print("CASO 25");
+    print_int(clasificar(25));
+
+    print("CASO 15");
+    print_int(clasificar(15));
+
+    print("CASO 5");
+    print_int(clasificar(5));
+
+    return 0;
+}
+EOF

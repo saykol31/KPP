@@ -433,6 +433,30 @@ void X86Emitter::emitAddEaxEbx()
 
 
 // ============================================================
+// AND EAX, EBX
+// 21 D8
+// ============================================================
+
+void X86Emitter::emitAndEaxEbx()
+{
+    machineCode.push_back(0x21);
+    machineCode.push_back(0xD8);
+}
+
+
+// ============================================================
+// OR EAX, EBX
+// 09 D8
+// ============================================================
+
+void X86Emitter::emitOrEaxEbx()
+{
+    machineCode.push_back(0x09);
+    machineCode.push_back(0xD8);
+}
+
+
+// ============================================================
 // SUB EAX, EBX
 //
 // 29 D8
@@ -614,8 +638,14 @@ void X86Emitter::emitPushEax()
     machineCode.push_back(0x50);
 }
 
-// POP EAX
-// 58
+// PUSH EBX
+// 53
+void X86Emitter::emitPushEbx()
+{
+    // PUSH EBX
+    machineCode.push_back(0x53);
+}
+
 void X86Emitter::emitPopEax()
 {
     machineCode.push_back(0x58);

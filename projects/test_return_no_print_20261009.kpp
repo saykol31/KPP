@@ -1,0 +1,10 @@
+int obtener_valor()
+{
+    return 30;
+}
+
+int main()
+{
+    int resultado = obtener_valor();
+    return resultado;
+}

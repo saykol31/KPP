@@ -1993,7 +1993,184 @@ X86Backend::generate(
             // El resultado queda en EAX.
             // ------------------------------------------------
 
-            else if (instruction.opcode ==
+
+            // KPP_LOGICAL_L09_PATCH
+          // AND / OR: admite operandos en registros o memoria.
+          else if (
+              instruction.opcode == IROpcode::LogicalAnd ||
+              instruction.opcode == IROpcode::LogicalOr)
+          {
+              const std::size_t comma = instruction.operand.find(",");
+
+              if (comma == std::string::npos)
+              {
+                  throw std::runtime_error(
+                      "K++ X86Backend: operador logico requiere dos operandos");
+              }
+
+              const std::string left =
+                  instruction.operand.substr(0, comma);
+              const std::string right =
+                  instruction.operand.substr(comma + 2);
+
+              if (!hasTemporary(left) || !hasTemporary(right))
+              {
+                  throw std::runtime_error(
+                      "K++ X86Backend: temporal inexistente en operador logico");
+              }
+
+              // Copiar las ubicaciones antes de modificar el mapa.
+              const auto leftLocation = temporaries.at(left);
+              const auto rightLocation = temporaries.at(right);
+
+              const bool rightEax =
+                  rightLocation.kind == TemporaryLocation::Kind::Register &&
+                  rightLocation.registerCode == 0;
+
+              // Si el derecho está en EAX, preservarlo antes de cargar
+              // el izquierdo. Después recuperaremos ambos en orden.
+            emitter.emitPushEbx();
+              if (rightEax)
+                  emitter.emitPushEax();
+
+              // Cargar el izquierdo en EAX.
+              if (leftLocation.kind == TemporaryLocation::Kind::Memory)
+              {
+                  const std::size_t patchOffset =
+                      emitter.emitMovEaxMem32Placeholder();
+
+                  temporaryReloadPatches.push_back({
+                      left, patchOffset, leftLocation.dataOffset
+                  });
+              }
+              else if (leftLocation.registerCode == 3)
+              {
+                  emitter.emitMovEaxEbx();
+              }
+              else if (leftLocation.registerCode != 0)
+              {
+                  throw std::runtime_error(
+                      "K++ X86Backend: registro izquierdo no soportado en AND/OR");
+              }
+
+              // Normalizar el izquierdo a 0 o 1.
+            emitter.emitCmpEaxImm32(0);
+            emitter.emitSetneAl();
+            emitter.emitMovzxEaxAl();
+
+            if (rightEax)
+            {
+                // El derecho original está guardado en la pila.
+                // Preservar el izquierdo normalizado en EBX y recuperar
+                // el derecho en EAX.
+                emitter.emitMovEbxEax();
+                emitter.emitPopEax();
+
+                emitter.emitCmpEaxImm32(0);
+                emitter.emitSetneAl();
+                emitter.emitMovzxEaxAl();
+            }
+            else
+            {
+                // Preservar el izquierdo mientras cargamos el derecho.
+                emitter.emitPushEax();
+
+                if (rightLocation.kind == TemporaryLocation::Kind::Memory)
+                {
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        right, patchOffset, rightLocation.dataOffset
+                    });
+                }
+                else if (rightLocation.registerCode == 3)
+                {
+                    emitter.emitMovEaxEbx();
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: ubicacion derecha no soportada en AND/OR");
+                }
+
+                emitter.emitCmpEaxImm32(0);
+                emitter.emitSetneAl();
+                emitter.emitMovzxEaxAl();
+
+                // Izquierdo normalizado a EBX; derecho normalizado a EAX.
+                emitter.emitPopEbx();
+            }
+
+            if (instruction.opcode == IROpcode::LogicalAnd)
+                  emitter.emitAndEaxEbx();
+              else
+                  emitter.emitOrEaxEbx();
+            emitter.emitPopEbx();
+
+              freeTemporary(left);
+              freeTemporary(right);
+              bindTemporaryToEax(instruction.result);
+          }
+
+          else if (instruction.opcode == IROpcode::LogicalNot)
+            {
+                const std::string operand = instruction.operand;
+
+                if (!hasTemporary(operand))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: NOT usa temporal inexistente: " +
+                        operand);
+                }
+
+                const auto it = temporaries.find(operand);
+                if (it == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: NOT usa temporal inexistente: " +
+                        operand);
+                }
+
+                if (it->second.kind == TemporaryLocation::Kind::Register &&
+                    it->second.registerCode == 0)
+                {
+                    emitter.emitCmpEaxImm32(0);
+                }
+                else if (
+                    it->second.kind == TemporaryLocation::Kind::Register &&
+                    it->second.registerCode == 3)
+                {
+                    emitter.emitMovEaxEbx();
+                    emitter.emitCmpEaxImm32(0);
+                }
+                else if (it->second.kind == TemporaryLocation::Kind::Memory)
+                {
+                    const std::size_t patchOffset =
+                        emitter.emitMovEaxMem32Placeholder();
+
+                    temporaryReloadPatches.push_back({
+                        operand,
+                        patchOffset,
+                        it->second.dataOffset
+                    });
+
+                    emitter.emitCmpEaxImm32(0);
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: ubicacion no soportada para NOT");
+                }
+
+                emitter.emitSeteAl();
+                emitter.emitMovzxEaxAl();
+
+                freeTemporary(operand);
+                bindTemporaryToEax(instruction.result);
+            }
+
+else if (instruction.opcode ==
                      IROpcode::Sub)
             {
                 const std::size_t comma =
@@ -2677,7 +2854,39 @@ X86Backend::generate(
             // mediante EAX.
             // ------------------------------------------------
 
+
+            // PRINT INTEGER
             else if (instruction.opcode ==
+                     IROpcode::PrintInteger)
+            {
+                if (!hasTemporary(instruction.operand)) {
+                    throw std::runtime_error(
+                        "PRINT_INT usa un temporal inexistente: " +
+                        instruction.operand);
+                }
+
+                const std::uint8_t reg =
+                    getTemporaryRegister(instruction.operand);
+
+                if (reg == 3) {
+                    emitter.emitMovEaxEbx();
+                } else if (reg != 0) {
+                    throw std::runtime_error(
+                        "PRINT_INT: registro temporal no soportado.");
+                }
+
+                const std::uint32_t y =
+                    40u + static_cast<std::uint32_t>(
+                        printIndex * 30u);
+
+                const std::size_t patch =
+                    runtime.emitPrintInteger(emitter, y);
+
+                integerBufferPatches.push_back(patch);
+                ++printIndex;
+            }
+
+else if (instruction.opcode ==
                      IROpcode::Call)
             {
                 if (instruction.name.empty())
