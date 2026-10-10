@@ -1,0 +1,17 @@
+struct Persona
+{
+    int edad;
+    string nombre;
+};
+
+struct Producto
+{
+    int codigo;
+    string nombre;
+};
+
+int main()
+{
+    print("L07 STRUCT");
+    return 0;
+}

@@ -1,0 +1,14 @@
+int obtener_valor()
+{
+    return 42;
+}
+
+int main()
+{
+    print("L04 FUNCIONES");
+
+    int resultado = obtener_valor();
+    print_int(resultado);
+
+    return 0;
+}

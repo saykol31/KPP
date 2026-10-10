@@ -1,0 +1,9 @@
+int main()
+{
+    print("L06 IMPRESION");
+    print("Hola K++");
+    print("Prueba de literales");
+    print("Fin de la prueba");
+
+    return 0;
+}

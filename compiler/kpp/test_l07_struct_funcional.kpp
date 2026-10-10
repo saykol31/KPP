@@ -1,0 +1,31 @@
+struct Persona
+{
+int edad;
+string nombre;
+};
+
+struct Producto
+{
+int codigo;
+string nombre;
+};
+
+int main()
+{
+print("L07 STRUCT");
+
+
+int edad = 25;
+string nombre = "Ana";
+int codigo = 100;
+
+print_int(edad);
+print(nombre);
+print_int(codigo);
+
+print("ESTRUCTURAS DECLARADAS");
+
+return 0;
+
+
+}

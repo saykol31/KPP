@@ -1,0 +1,12 @@
+int main()
+{
+    int a = 20;
+    int b = 6;
+
+    print("L03 ARITMETICA");
+    print_int(a + b);
+    print_int(a - b);
+
+
+    return 0;
+}
