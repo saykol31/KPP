@@ -1,0 +1,36 @@
+int main()
+{
+    print("L13 SCOPE CONTROL");
+
+    int x = 10;
+
+    if (1 > 0)
+    {
+        int x = 20;
+        print("IF INTERIOR");
+        print_int(x);
+    }
+    else
+    {
+        int x = 30;
+        print_int(x);
+    }
+
+    print("EXTERIOR DESPUES IF");
+    print_int(x);
+
+    int contador = 1;
+
+    while (contador > 0)
+    {
+        int x = 40;
+        print("WHILE INTERIOR");
+        print_int(x);
+        contador = contador - 1;
+    }
+
+    print("EXTERIOR DESPUES WHILE");
+    print_int(x);
+
+    return 0;
+}
