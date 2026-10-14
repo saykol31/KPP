@@ -355,7 +355,7 @@ KolibriRuntime::emitPrint(
     emitter.emitInt(0x40);
 
     // Avanzar el cursor vertical para el siguiente PRINT.
-    emitter.emitAddEbpImm32(20);
+    emitter.emitAddEbpImm32(10);
 
     return textPatch;
 }
@@ -388,7 +388,7 @@ KolibriRuntime::emitPrintFromEdx(
     emitter.emitInt(0x40);
 
     // Avanzar el cursor vertical.
-    emitter.emitAddEbpImm32(20);
+    emitter.emitAddEbpImm32(10);
 
     return 0;
 }
@@ -538,7 +538,7 @@ KolibriRuntime::emitPrintInteger(
     emitter.emitInt(0x40);
 
     // Avanzar el cursor vertical para el siguiente PRINT_INT.
-    emitter.emitAddEbpImm32(20);
+    emitter.emitAddEbpImm32(10);
 
     /*
      * Restaurar el resultado original.
