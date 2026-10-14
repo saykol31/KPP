@@ -161,6 +161,9 @@ const char* tokenTypeName(TokenType type)
 
         case TokenType::ColonColon:
             return "::";
+
+        case TokenType::Dot:
+            return ".";
     }
 
     return "Unknown";
@@ -976,6 +979,23 @@ Lexer::tokenize()
             continue;
         }
 
+        // ====================================================
+        // .
+        // ====================================================
+
+        if (c == '.')
+        {
+            advance();
+
+            tokens.push_back({
+                TokenType::Dot,
+                ".",
+                tokenLine,
+                tokenColumn
+            });
+
+            continue;
+        }
 
         // ====================================================
         // CARACTER DESCONOCIDO

@@ -80,6 +80,12 @@ private:
 
     int variableNameCounter = 0;
 
+    // Tipo de estructura -> nombre de campo -> tipo del campo.
+    std::unordered_map<
+        std::string,
+        std::unordered_map<std::string, std::string>
+    > structFields;
+
     void enterVariableScope()
     {
         variableScopes.emplace_back();

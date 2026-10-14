@@ -280,6 +280,18 @@ IRProgram IRGenerator::generate(
 {
     IRProgram ir;
 
+    structFields.clear();
+
+    for (const auto& structure : program.structs)
+    {
+        auto& fields = structFields[structure->name];
+
+        for (const auto& field : structure->fields)
+        {
+            fields.emplace(field.name, field.type);
+        }
+    }
+
     for (const auto& function :
          program.functions)
     {
@@ -436,6 +448,33 @@ void IRGenerator::generateStatement(
             "",
             0
         });
+
+        // Reservar almacenamiento independiente para cada campo.
+        const auto structureFields =
+            structFields.find(variableDeclaration->type);
+
+        if (structureFields != structFields.end())
+        {
+            for (const auto& field : structureFields->second)
+            {
+                const std::string fieldName =
+                    variableDeclaration->name + "." + field.first;
+
+                const std::string fieldMangledName =
+                    mangledName + "." + field.first;
+
+                variableScopes.back()[fieldName] =
+                    fieldMangledName;
+
+                function.instructions.push_back({
+                    IROpcode::Declare,
+                    fieldMangledName,
+                    "",
+                    "",
+                    0
+                });
+            }
+        }
 
         // ----------------------------------------------------
         // Inicializador opcional

@@ -614,6 +614,29 @@ Parser::parseStatement()
 
 
     // ========================================================
+    // DECLARACION DE TIPO PERSONALIZADO
+    //
+    // Persona p;
+    // ========================================================
+
+    if (check(TokenType::Identifier) &&
+        position + 1 < tokens.size() &&
+        tokens[position + 1].type == TokenType::Identifier)
+    {
+        std::string type = advance().text;
+        std::string name = advance().text;
+
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después de declaración de struct");
+
+        return std::make_unique<VariableDeclaration>(
+            type,
+            name,
+            nullptr);
+    }
+
+    // ========================================================
     // ASSIGNMENT
     //
     // x = x - 1;
@@ -623,6 +646,21 @@ Parser::parseStatement()
     {
         std::string name =
             advance().text;
+
+        // ----------------------------------------------------
+        // Acceso a campo: p.edad
+        // ----------------------------------------------------
+
+        if (match(TokenType::Dot))
+        {
+            if (!check(TokenType::Identifier))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba nombre de campo después de '.'");
+            }
+
+            name += "." + advance().text;
+        }
 
         expect(
             TokenType::Assign,
@@ -1299,6 +1337,21 @@ Parser::parsePrimary()
                 "se esperaba ')' después de los argumentos");
 
             return call;
+        }
+
+        // ----------------------------------------------------
+        // ACCESO A CAMPO: p.edad, p.nombre
+        // ----------------------------------------------------
+
+        if (match(TokenType::Dot))
+        {
+            if (!check(TokenType::Identifier))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba nombre de campo después de '.'");
+            }
+
+            name += "." + advance().text;
         }
 
         // ----------------------------------------------------

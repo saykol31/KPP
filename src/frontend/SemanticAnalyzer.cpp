@@ -52,6 +52,7 @@ bool SemanticAnalyzer::analyze(
     semanticErrors.clear();
     functionNames.clear();
     functionDeclarations.clear();
+    structFields.clear();
 
     // ========================================================
     // VALIDAR Y REGISTRAR DECLARACIONES STRUCT
@@ -102,6 +103,11 @@ bool SemanticAnalyzer::analyze(
 
                 continue;
             }
+
+            structFields[structure->name].emplace(
+                field.name,
+                field.type
+            );
 
             if (!fieldNames.insert(field.name).second)
             {
@@ -370,7 +376,22 @@ void SemanticAnalyzer::analyzeStatement(
         // Registrar variable
         // ----------------------------------------------------
 
-        scopes.back()[name] = "int";
+        const std::string& declaredType =
+            variableDeclaration->type;
+
+        if (declaredType != "int" &&
+            declaredType != "string" &&
+            structFields.find(declaredType) == structFields.end())
+        {
+            semanticErrors.push_back({
+                "tipo no declarado o no soportado '" +
+                declaredType + "' para la variable '" +
+                name + "'"
+            });
+            return;
+        }
+
+        scopes.back()[name] = declaredType;
 
         return;
     }
@@ -392,30 +413,48 @@ void SemanticAnalyzer::analyzeStatement(
         // La variable debe existir.
         // ----------------------------------------------------
 
-        bool variableFound = false;
+        const std::size_t dot = name.find('.');
+        const std::string baseName =
+            dot == std::string::npos
+                ? name
+                : name.substr(0, dot);
 
-        for (auto it = scopes.rbegin();
-             it != scopes.rend();
-             ++it)
-        {
-            if (it->find(name) != it->end())
-            {
-                variableFound = true;
-                break;
-            }
-        }
+        const std::string* baseType = lookupVariable(baseName);
 
-        if (!variableFound)
+        if (baseType == nullptr)
         {
             semanticErrors.push_back({
-                "la variable '" +
-                name +
+                "la variable '" + baseName +
                 "' no fue declarada en la función '" +
-                currentFunction +
-                "'"
+                currentFunction + "'"
             });
-
             return;
+        }
+
+        if (dot != std::string::npos)
+        {
+            const std::string fieldName = name.substr(dot + 1);
+            const auto structure = structFields.find(*baseType);
+
+            if (structure == structFields.end())
+            {
+                semanticErrors.push_back({
+                    "la variable '" + baseName +
+                    "' no es una estructura"
+                });
+                return;
+            }
+
+            if (structure->second.find(fieldName) ==
+                structure->second.end())
+            {
+                semanticErrors.push_back({
+                    "el campo '" + fieldName +
+                    "' no existe en la estructura '" +
+                    *baseType + "'"
+                });
+                return;
+            }
         }
 
         // ----------------------------------------------------
@@ -944,30 +983,58 @@ void SemanticAnalyzer::analyzeExpression(
         // Buscar variable
         // ----------------------------------------------------
 
-        const std::string* type =
-            lookupVariable(name);
+        const std::size_t dot = name.find('.');
+        const std::string baseName =
+            dot == std::string::npos
+                ? name
+                : name.substr(0, dot);
+
+        const std::string* type = lookupVariable(baseName);
 
         if (type == nullptr)
         {
             semanticErrors.push_back({
-                "Variable no declarada: " +
-                name
+                "Variable no declarada: " + baseName
             });
-
             return;
         }
 
-        // ----------------------------------------------------
-        // Actualmente todas nuestras variables son int
-        // ----------------------------------------------------
+        std::string valueType = *type;
 
-        if (*type != "int")
+        if (dot != std::string::npos)
+        {
+            const std::string fieldName = name.substr(dot + 1);
+            const auto structure = structFields.find(*type);
+
+            if (structure == structFields.end())
+            {
+                semanticErrors.push_back({
+                    "la variable '" + baseName +
+                    "' no es una estructura"
+                });
+                return;
+            }
+
+            const auto field = structure->second.find(fieldName);
+
+            if (field == structure->second.end())
+            {
+                semanticErrors.push_back({
+                    "el campo '" + fieldName +
+                    "' no existe en la estructura '" +
+                    *type + "'"
+                });
+                return;
+            }
+
+            valueType = field->second;
+        }
+
+        if (valueType != "int" && valueType != "string")
         {
             semanticErrors.push_back({
-                "tipo de variable no soportado: " +
-                name
+                "tipo de variable no soportado: " + name
             });
-
             return;
         }
 

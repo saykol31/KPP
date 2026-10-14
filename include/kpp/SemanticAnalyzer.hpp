@@ -91,6 +91,12 @@ private:
 
     std::vector<Scope> scopes;
 
+    // nombre de struct -> (nombre de campo -> tipo)
+    std::unordered_map<
+        std::string,
+        std::unordered_map<std::string, std::string>
+    > structFields;
+
     // --------------------------------------------------------
     // FUNCIONES
     //

@@ -91,7 +91,8 @@ enum class TokenType
 
     Comma,
     Semicolon,
-    ColonColon
+    ColonColon,
+    Dot
 };
 
 struct Token
