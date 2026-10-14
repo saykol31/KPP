@@ -2492,168 +2492,230 @@ else if (instruction.opcode ==
                 }
             }
 
+
             // ------------------------------------------------
             // MUL
             // ------------------------------------------------
-
-            else if (instruction.opcode ==
-                    IROpcode::Mul)
+            else if (instruction.opcode == IROpcode::Mul)
             {
-                /*
-                * MUL %1, %2 -> %3
-                *
-                * En esta primera versión del backend:
-                *
-                *     izquierda = EAX
-                *     derecha   = EBX
-                *
-                * Generamos:
-                *
-                *     IMUL EAX, EBX
-                *
-                * Resultado:
-                *
-                *     EAX = EAX * EBX
-                */
+                const std::size_t comma = instruction.operand.find(",");
+
+                if (comma == std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: MUL tiene operandos invalidos.");
+                }
 
                 const std::string left =
-                    instruction.operand.substr(
-                        0,
-                        instruction.operand.find(","));
-
+                    instruction.operand.substr(0, comma);
                 const std::string right =
-                    instruction.operand.substr(
-                        instruction.operand.find(",") + 2);
+                    instruction.operand.substr(comma + 2);
 
-
-                if (!hasTemporary(left))
+                if (!hasTemporary(left) || !hasTemporary(right))
                 {
                     throw std::runtime_error(
-                        "K++ X86Backend: MUL usa temporal izquierdo inexistente: " +
-                        left);
+                        "K++ X86Backend: MUL usa un temporal inexistente.");
                 }
 
+                // Guardar los temporales que ocupan EAX y EBX.
+                for (const std::uint8_t reg :
+                     {std::uint8_t{0}, std::uint8_t{3}})
+                {
+                    const std::string temporary = temporaryInRegister(reg);
 
-                if (!hasTemporary(right))
+                    if (!temporary.empty())
+                    {
+                        spillTemporary(
+                            temporary, data, temporarySpillPatches);
+                    }
+                }
+
+                const auto leftIt = temporaries.find(left);
+                const auto rightIt = temporaries.find(right);
+
+                if (leftIt == temporaries.end() ||
+                    rightIt == temporaries.end() ||
+                    leftIt->second.kind != TemporaryLocation::Kind::Memory ||
+                    rightIt->second.kind != TemporaryLocation::Kind::Memory)
                 {
                     throw std::runtime_error(
-                        "K++ X86Backend: MUL usa temporal derecho inexistente: " +
-                        right);
+                        "K++ X86Backend: no se pudieron preparar los operandos de MUL.");
                 }
 
+                const std::size_t leftPatch =
+                    emitter.emitMovEaxMem32Placeholder();
 
-                const std::uint8_t leftRegister =
-                    getTemporaryRegister(left);
+                temporaryReloadPatches.push_back({
+                    left, leftPatch, leftIt->second.dataOffset
+                });
 
-                const std::uint8_t rightRegister =
-                    getTemporaryRegister(right);
+                const std::size_t rightPatch =
+                    emitter.emitMovEbxMem32Placeholder();
 
+                temporaryReloadPatches.push_back({
+                    right, rightPatch, rightIt->second.dataOffset
+                });
 
-                if (leftRegister == 0 &&
-                    rightRegister == 3)
-                {
-                    /*
-                     * Caso normal:
-                     *
-                     *     izquierda = EAX
-                     *     derecha   = EBX
-                     */
-
-                    emitter.emitMulEaxEbx();
-                }
-                else if (leftRegister == 3 &&
-                         rightRegister == 0)
-                {
-                    /*
-                     * Tenemos:
-                     *
-                     *     izquierda = EBX
-                     *     derecha   = EAX
-                     *
-                     * Queremos:
-                     *
-                     *     izquierda = EAX
-                     *     derecha   = EBX
-                     *
-                     * Transformación:
-                     *
-                     *     PUSH EAX
-                     *     MOV  EAX, EBX
-                     *     POP  EBX
-                     */
-
-                    emitter.emitPushEax();
-                    emitter.emitMovEaxEbx();
-                    emitter.emitPopEbx();
-
-                    emitter.emitMulEaxEbx();
-                }
-                else
-                {
-                    throw std::runtime_error(
-                        "K++ X86Backend: MUL no puede preparar los operandos.");
-                }
-
-
-                /*
-                * MUL consume ambos operandos.
-                *
-                * Aunque las instrucciones x86 ya utilizaron
-                * físicamente EAX y EBX, el allocator todavía
-                * conserva sus asociaciones. Debemos liberarlas
-                * antes de registrar el nuevo resultado.
-                */
+                emitter.emitMulEaxEbx();
 
                 freeTemporary(left);
                 freeTemporary(right);
+                bindTemporaryToEax(instruction.result);
+            }
 
-                /*
-                * El resultado de MUL queda en EAX.
-                */
+            // ------------------------------------------------
+            // DIV
+            // ------------------------------------------------
+            else if (instruction.opcode == IROpcode::Div)
+            {
+                const std::size_t comma =
+                    instruction.operand.find(",");
 
-                bindTemporaryToEax(
-                    instruction.result);
-
-                // ========================================================
-                // DIAGNOSTICO TEMPORALES DESPUES DE MUL
-                // ========================================================
-
-                std::cerr << "[TEMP STATE AFTER MUL]" << '\n';
-
-                for (const auto& entry : temporaries)
+                if (comma == std::string::npos)
                 {
-                    const auto& name = entry.first;
-                    const auto& location = entry.second;
-
-                    std::cerr << "    "
-                              << name
-                              << " -> ";
-
-                    if (location.kind ==
-                        TemporaryLocation::Kind::Register)
-                    {
-                        if (location.registerCode == 0)
-                            std::cerr << "EAX";
-                        else if (location.registerCode == 3)
-                            std::cerr << "EBX";
-                        else
-                            std::cerr << "REG("
-                                      << static_cast<int>(
-                                             location.registerCode)
-                                      << ")";
-                    }
-                    else
-                    {
-                        std::cerr << "MEM["
-                                  << location.dataOffset
-                                  << "]";
-                    }
-
-                    std::cerr << '\n';
+                    throw std::runtime_error(
+                        "K++ X86Backend: DIV tiene operandos invalidos.");
                 }
 
+                const std::string left =
+                    instruction.operand.substr(0, comma);
+                const std::string right =
+                    instruction.operand.substr(comma + 2);
 
+                if (!hasTemporary(left) || !hasTemporary(right))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: DIV usa un temporal inexistente.");
+                }
+
+                // Guardar cualquier temporal que ocupe EAX o EBX.
+                for (const std::uint8_t reg :
+                     {std::uint8_t{0}, std::uint8_t{3}})
+                {
+                    const std::string temporary = temporaryInRegister(reg);
+
+                    if (!temporary.empty())
+                    {
+                        spillTemporary(
+                            temporary, data, temporarySpillPatches);
+                    }
+                }
+
+                const auto leftIt = temporaries.find(left);
+                const auto rightIt = temporaries.find(right);
+
+                if (leftIt == temporaries.end() ||
+                    rightIt == temporaries.end() ||
+                    leftIt->second.kind != TemporaryLocation::Kind::Memory ||
+                    rightIt->second.kind != TemporaryLocation::Kind::Memory)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: no se pudieron preparar los operandos de DIV.");
+                }
+
+                // EAX = operando izquierdo.
+                const std::size_t leftPatch =
+                    emitter.emitMovEaxMem32Placeholder();
+
+                temporaryReloadPatches.push_back({
+                    left, leftPatch, leftIt->second.dataOffset
+                });
+
+                // EBX = divisor.
+                const std::size_t rightPatch =
+                    emitter.emitMovEbxMem32Placeholder();
+
+                temporaryReloadPatches.push_back({
+                    right, rightPatch, rightIt->second.dataOffset
+                });
+
+                // División entera con signo:
+                // EDX:EAX / EBX -> cociente en EAX.
+                emitter.emitCdq();
+                emitter.emitIdivEbx();
+
+                freeTemporary(left);
+                freeTemporary(right);
+                bindTemporaryToEax(instruction.result);
             }
+
+
+            // ------------------------------------------------
+            // MOD
+            // ------------------------------------------------
+            else if (instruction.opcode == IROpcode::Mod)
+            {
+                const std::size_t comma =
+                    instruction.operand.find(",");
+
+                if (comma == std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: MOD tiene operandos invalidos.");
+                }
+
+                const std::string left =
+                    instruction.operand.substr(0, comma);
+                const std::string right =
+                    instruction.operand.substr(comma + 2);
+
+                if (!hasTemporary(left) || !hasTemporary(right))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: MOD usa un temporal inexistente.");
+                }
+
+                // Guardar cualquier temporal que ocupe EAX o EBX.
+                for (const std::uint8_t reg :
+                     {std::uint8_t{0}, std::uint8_t{3}})
+                {
+                    const std::string temporary = temporaryInRegister(reg);
+
+                    if (!temporary.empty())
+                    {
+                        spillTemporary(
+                            temporary, data, temporarySpillPatches);
+                    }
+                }
+
+                const auto leftIt = temporaries.find(left);
+                const auto rightIt = temporaries.find(right);
+
+                if (leftIt == temporaries.end() ||
+                    rightIt == temporaries.end() ||
+                    leftIt->second.kind != TemporaryLocation::Kind::Memory ||
+                    rightIt->second.kind != TemporaryLocation::Kind::Memory)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: no se pudieron preparar los operandos de MOD.");
+                }
+
+                // EAX = dividendo.
+                const std::size_t leftPatch =
+                    emitter.emitMovEaxMem32Placeholder();
+
+                temporaryReloadPatches.push_back({
+                    left, leftPatch, leftIt->second.dataOffset
+                });
+
+                // EBX = divisor.
+                const std::size_t rightPatch =
+                    emitter.emitMovEbxMem32Placeholder();
+
+                temporaryReloadPatches.push_back({
+                    right, rightPatch, rightIt->second.dataOffset
+                });
+
+                // IDIV deja el resto con signo en EDX.
+                emitter.emitCdq();
+                emitter.emitIdivEbx();
+                emitter.emitMovEaxEdx();
+
+                freeTemporary(left);
+                freeTemporary(right);
+                bindTemporaryToEax(instruction.result);
+            }
+
             // ------------------------------------------------
             // JUMP IF ZERO
             // ------------------------------------------------

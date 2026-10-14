@@ -1,12 +1,24 @@
 int main()
 {
-    int a = 20;
-    int b = 6;
+int a = 20;
+int b = 6;
 
-    print("L03 ARITMETICA");
-    print_int(a + b);
-    print_int(a - b);
+print("L03 ARITMETICA");
 
+print("SUMA: 20 + 6");
+print_int(a + b);
 
-    return 0;
+print("RESTA: 20 - 6");
+print_int(a - b);
+
+print("MULTIPLICACION: 20 * 6");
+print_int(a * b);
+
+print("DIVISION: 20 / 6");
+print_int(a / b);
+
+print("MODULO: 20 % 6");
+print_int(a % b);
+
+return 0;
 }

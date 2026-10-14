@@ -59,6 +59,9 @@ public:
     void emitOrEaxEbx();
     void emitSubEaxEbx();
     void emitMulEaxEbx();
+    void emitCdq();
+    void emitIdivEbx();
+    void emitMovEaxEdx();
 
     void emitMovEaxEbx();
     void emitMovEbxEax();

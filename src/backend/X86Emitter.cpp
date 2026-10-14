@@ -588,6 +588,30 @@ void X86Emitter::emitDivEcx()
     machineCode.push_back(0xF1);
 }
 
+
+void X86Emitter::emitCdq()
+{
+    // CDQ: extiende el signo de EAX hacia EDX:EAX.
+    // Opcode: 99
+    emitByte(0x99);
+}
+
+void X86Emitter::emitIdivEbx()
+{
+    // IDIV EBX: divide EDX:EAX entre EBX.
+    // Opcode: F7 FB
+    emitByte(0xF7);
+    emitByte(0xFB);
+}
+
+void X86Emitter::emitMovEaxEdx()
+{
+    // MOV EAX, EDX: copia el resto de la división a EAX.
+    // Opcode: 89 D0
+    emitByte(0x89);
+    emitByte(0xD0);
+}
+
 // ADD DL, IMM8
 // 80 C2 xx
 void X86Emitter::emitAddDlImm8(std::uint8_t value)
