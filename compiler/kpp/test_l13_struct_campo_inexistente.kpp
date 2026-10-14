@@ -1,0 +1,14 @@
+struct Persona
+{
+    int edad;
+    string nombre;
+};
+
+int main()
+{
+    Persona p;
+    p.edad = 25;
+    p.altura = 180;
+    print_int(p.altura);
+    return 0;
+}

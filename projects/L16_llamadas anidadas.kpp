@@ -1,0 +1,33 @@
+int suma(int a, int b)
+{
+    return a + b;
+}
+
+int doble(int x)
+{
+    return x + x;
+}
+
+int triple(int x)
+{
+    return x + doble(x);
+}
+
+int main()
+{
+    print("L16 NESTED CALLS");
+
+    print("suma(doble(5), doble(3)) ESPERA 16");
+    print_int(suma(doble(5), doble(3)));
+
+    print("doble(suma(2, 3)) ESPERA 10");
+    print_int(doble(suma(2, 3)));
+
+    print("suma(doble(doble(2)), 1) ESPERA 9");
+    print_int(suma(doble(doble(2)), 1));
+
+    print("triple(4) ESPERA 12");
+    print_int(triple(4));
+
+    return 0;
+}

@@ -2980,6 +2980,28 @@ else if (instruction.opcode ==
                 // Antes de CALL los normalizamos físicamente.
                 // ------------------------------------------------
 
+                // Preservar los temporales residentes en registros
+                // antes de preparar los argumentos de CALL.
+                {
+                    std::vector<std::string> liveRegisters;
+
+                    for (const auto& entry : temporaries)
+                    {
+                        if (entry.second.kind == TemporaryLocation::Kind::Register)
+                            liveRegisters.push_back(entry.first);
+                    }
+
+                    for (const auto& temporary : liveRegisters)
+                    {
+                        auto it = temporaries.find(temporary);
+                        if (it != temporaries.end() &&
+                            it->second.kind == TemporaryLocation::Kind::Register)
+                        {
+                            spillTemporary(temporary, data, temporarySpillPatches);
+                        }
+                    }
+                }
+
                 std::string left;
                 std::string right;
 
