@@ -313,6 +313,11 @@ IRFunction IRGenerator::generateFunction(
 
     labelCounter = 0;
 
+    // Cada función empieza con un ámbito raíz independiente.
+    variableScopes.clear();
+    variableNameCounter = 0;
+    enterVariableScope();
+
     // --------------------------------------------------------
     // FUNCTION BEGIN
     //
@@ -409,13 +414,24 @@ void IRGenerator::generateStatement(
         dynamic_cast<const VariableDeclaration*>(
             &statement))
     {
+        // Registrar una identidad única para esta declaración.
+        const std::string mangledName =
+            variableDeclaration->name + "@" +
+            std::to_string(variableNameCounter++);
+
+        if (variableScopes.empty())
+            enterVariableScope();
+
+        variableScopes.back()[variableDeclaration->name] =
+            mangledName;
+
         // ----------------------------------------------------
         // DECLARE
         // ----------------------------------------------------
 
         function.instructions.push_back({
             IROpcode::Declare,
-            variableDeclaration->name,
+            mangledName,
             "",
             "",
             0
@@ -480,7 +496,7 @@ void IRGenerator::generateStatement(
 
             function.instructions.push_back({
                 IROpcode::Store,
-                variableDeclaration->name,
+                mangledName,
                 temporary,
                 "",
                 0
@@ -500,7 +516,7 @@ void IRGenerator::generateStatement(
 
         function.instructions.push_back({
             IROpcode::Store,
-            variableDeclaration->name,
+            mangledName,
             temporary,
             "",
             0
@@ -557,7 +573,7 @@ void IRGenerator::generateStatement(
 
         function.instructions.push_back({
             IROpcode::Store,
-            assignmentStatement->name,
+            resolveVariableName(assignmentStatement->name),
             temporary,
             "",
             0
@@ -584,6 +600,8 @@ void IRGenerator::generateStatement(
     if (auto* block =
             dynamic_cast<const Block*>(&statement))
     {
+        enterVariableScope();
+
         for (const auto& nestedStatement :
              block->statements)
         {
@@ -592,6 +610,7 @@ void IRGenerator::generateStatement(
                 function);
         }
 
+        leaveVariableScope();
         return;
     }
 
@@ -687,6 +706,8 @@ void IRGenerator::generateStatement(
                 "K++ IR: if sin bloque");
         }
 
+        enterVariableScope();
+
         for (const auto& nestedStatement :
              ifStatement->thenBlock->statements)
         {
@@ -694,6 +715,8 @@ void IRGenerator::generateStatement(
                 *nestedStatement,
                 function);
         }
+
+        leaveVariableScope();
 
         // ----------------------------------------------------
         // Si existe ELSE, saltar el bloque ELSE
@@ -726,6 +749,8 @@ void IRGenerator::generateStatement(
             // Generar bloque ELSE
             // ------------------------------------------------
 
+            enterVariableScope();
+
             for (const auto& nestedStatement :
                  ifStatement->elseBlock->statements)
             {
@@ -733,6 +758,8 @@ void IRGenerator::generateStatement(
                     *nestedStatement,
                     function);
             }
+
+            leaveVariableScope();
         }
 
         // ----------------------------------------------------
@@ -831,6 +858,8 @@ void IRGenerator::generateStatement(
         // Generar cuerpo
         // ----------------------------------------------------
 
+        enterVariableScope();
+
         for (const auto& nestedStatement :
              whileStatement->body->statements)
         {
@@ -838,6 +867,8 @@ void IRGenerator::generateStatement(
                 *nestedStatement,
                 function);
         }
+
+        leaveVariableScope();
 
         // ----------------------------------------------------
         // Volver al inicio
@@ -1189,7 +1220,7 @@ std::string IRGenerator::generateExpression(
 
         function.instructions.push_back({
             IROpcode::Load,
-            variable->name,
+            resolveVariableName(variable->name),
             "",
             temporary,
             0

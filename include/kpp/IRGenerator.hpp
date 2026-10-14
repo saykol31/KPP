@@ -4,6 +4,8 @@
 #include "IR.hpp"
 
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace kpp {
 
@@ -67,6 +69,43 @@ private:
     // ========================================================
 
     std::string createLabel();
+
+    // ========================================================
+    // ÁMBITOS DE VARIABLES
+    // Cada declaración local recibe un nombre IR único.
+    // ========================================================
+
+    std::vector<std::unordered_map<std::string, std::string>>
+        variableScopes;
+
+    int variableNameCounter = 0;
+
+    void enterVariableScope()
+    {
+        variableScopes.emplace_back();
+    }
+
+    void leaveVariableScope()
+    {
+        if (!variableScopes.empty())
+            variableScopes.pop_back();
+    }
+
+    std::string resolveVariableName(
+        const std::string& name) const
+    {
+        for (auto it = variableScopes.rbegin();
+             it != variableScopes.rend(); ++it)
+        {
+            auto found = it->find(name);
+            if (found != it->end())
+                return found->second;
+        }
+
+        // Parámetros y nombres administrados por el backend
+        // conservan su nombre original si no están registrados.
+        return name;
+    }
 
     // ========================================================
     // CONTADOR DE TEMPORALES
