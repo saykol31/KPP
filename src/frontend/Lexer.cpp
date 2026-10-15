@@ -139,13 +139,16 @@ const char* tokenTypeName(TokenType type)
 
         case TokenType::LParen:
             return "(";
-
         case TokenType::RParen:
             return ")";
 
+        case TokenType::LBracket:
+            return "[";
+        case TokenType::RBracket:
+            return "]";
+
         case TokenType::LBrace:
             return "{";
-
         case TokenType::RBrace:
             return "}";
 
@@ -903,7 +906,41 @@ Lexer::tokenize()
             continue;
         }
 
+        // ====================================================
+        // [
+        // ====================================================
 
+        if (c == '[')
+        {
+            advance();
+
+            tokens.push_back({
+                TokenType::LBracket,
+                "[",
+                tokenLine,
+                tokenColumn
+            });
+
+            continue;
+        }
+
+        // ====================================================
+        // ]
+        // ====================================================
+
+        if (c == ']')
+        {
+            advance();
+
+            tokens.push_back({
+                TokenType::RBracket,
+                "]",
+                tokenLine,
+                tokenColumn
+            });
+
+            continue;
+        }
         // ====================================================
         // {
         // ====================================================

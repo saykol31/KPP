@@ -81,6 +81,8 @@ enum class TokenType
 
     LParen,
     RParen,
+    LBracket,
+    RBracket,
 
     LBrace,
     RBrace,

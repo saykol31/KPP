@@ -63,6 +63,11 @@ private:
     void analyzeExpression(
         const Expression& expression);
 
+    // Inferir el tipo de una expresión. Cadena vacía si no se puede
+    // determinar (por ejemplo, porque ya existe un error semántico).
+    std::string inferExpressionType(
+        const Expression& expression) const;
+
     // --------------------------------------------------------
     // Registrar error
     // --------------------------------------------------------
@@ -91,6 +96,15 @@ private:
 
     std::vector<Scope> scopes;
 
+    // Tamaño de cada array por ámbito.
+    // 0 = variable normal; positivo = array.
+    using ArrayScope =
+        std::unordered_map<std::string, int>;
+
+    std::vector<ArrayScope> arrayScopes;
+
+    int lookupArraySize(
+        const std::string& name) const;
     // nombre de struct -> (nombre de campo -> tipo)
     std::unordered_map<
         std::string,

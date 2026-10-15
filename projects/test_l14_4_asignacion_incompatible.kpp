@@ -1,0 +1,6 @@
+int main()
+{
+    int numero = 10;
+    numero = "hola";
+    return 0;
+}

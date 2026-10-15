@@ -34,6 +34,7 @@ public:
 
     std::size_t emitMovEaxMem32Placeholder();
 
+
     std::size_t emitMovEbxMem32Placeholder();
 
     void emitMovMemEax32(
@@ -49,6 +50,16 @@ public:
     void emitMovRegImm32(
         std::uint8_t opcode,
         std::uint32_t value);
+
+    // Acceso a memoria mediante la dirección guardada en EDX.
+    void emitMovEaxEdxMem32();
+    void emitMovEbxEdxMem32();
+    void emitMovEdxEaxMem32();
+    void emitMovEdxEbxMem32();
+    void emitMovMemEdxEax32();
+    void emitMovMemEdxEbx32();
+    std::size_t emitLeaEdxEaxScaled4Placeholder();
+    std::size_t emitLeaEdxEbxScaled4Placeholder();
 
     // --------------------------------------------------------
     // ARITHMETIC
@@ -68,6 +79,7 @@ public:
     void emitMovEbxEbp();
     void emitMovEdxEax();
     void emitMovEdxEbx();
+
     void emitAddEbpImm32(std::uint32_t value);
 
 

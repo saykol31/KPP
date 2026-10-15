@@ -9,9 +9,11 @@ namespace kpp {
 // SCOPES
 // ============================================================
 
+
 void SemanticAnalyzer::enterScope()
 {
     scopes.emplace_back();
+    arrayScopes.emplace_back();
 }
 
 void SemanticAnalyzer::leaveScope()
@@ -20,7 +22,13 @@ void SemanticAnalyzer::leaveScope()
     {
         scopes.pop_back();
     }
+
+    if (!arrayScopes.empty())
+    {
+        arrayScopes.pop_back();
+    }
 }
+
 
 const std::string*
 SemanticAnalyzer::lookupVariable(
@@ -40,6 +48,25 @@ SemanticAnalyzer::lookupVariable(
     }
 
     return nullptr;
+}
+
+
+int SemanticAnalyzer::lookupArraySize(
+    const std::string& name) const
+{
+    for (auto it = arrayScopes.rbegin();
+         it != arrayScopes.rend();
+         ++it)
+    {
+        auto array = it->find(name);
+
+        if (array != it->end())
+        {
+            return array->second;
+        }
+    }
+
+    return 0;
 }
 
 // ============================================================
@@ -354,6 +381,27 @@ void SemanticAnalyzer::analyzeStatement(
             return;
         }
 
+        if (variableDeclaration->arraySize > 0)
+        {
+            if (variableDeclaration->type != "int")
+            {
+                semanticErrors.push_back({
+                    "por ahora, los arrays solo admiten elementos int: '" +
+                    name + "'"
+                });
+                return;
+            }
+
+            if (variableDeclaration->initializer)
+            {
+                semanticErrors.push_back({
+                    "por ahora, los arrays no admiten inicializador: '" +
+                    name + "'"
+                });
+                return;
+            }
+        }
+
         // ----------------------------------------------------
         // Inicializador opcional
         //
@@ -373,7 +421,7 @@ void SemanticAnalyzer::analyzeStatement(
         }
 
         // ----------------------------------------------------
-        // Registrar variable
+        // Validar tipo declarado e inicializador.
         // ----------------------------------------------------
 
         const std::string& declaredType =
@@ -391,7 +439,25 @@ void SemanticAnalyzer::analyzeStatement(
             return;
         }
 
+        if (variableDeclaration->initializer)
+        {
+            const std::string initializerType =
+                inferExpressionType(*variableDeclaration->initializer);
+
+            if (!initializerType.empty() &&
+                initializerType != declaredType)
+            {
+                semanticErrors.push_back({
+                    "tipo incompatible en inicializador de '" + name +
+                    "': se esperaba '" + declaredType +
+                    "' y se obtuvo '" + initializerType + "'"
+                });
+            }
+        }
+
         scopes.back()[name] = declaredType;
+        arrayScopes.back()[name] =
+            variableDeclaration->arraySize;
 
         return;
     }
@@ -431,31 +497,72 @@ void SemanticAnalyzer::analyzeStatement(
             return;
         }
 
-        if (dot != std::string::npos)
-        {
-            const std::string fieldName = name.substr(dot + 1);
-            const auto structure = structFields.find(*baseType);
+        // ----------------------------------------------------
+        // ARRAY ASSIGNMENT: valores[indice] = expresion
+        // ----------------------------------------------------
 
-            if (structure == structFields.end())
+
+        if (assignmentStatement->index)
+        {
+            if (dot != std::string::npos)
             {
                 semanticErrors.push_back({
-                    "la variable '" + baseName +
-                    "' no es una estructura"
+                    "no se admite combinar acceso a campos e índices de array"
                 });
                 return;
             }
 
-            if (structure->second.find(fieldName) ==
-                structure->second.end())
+            const int arraySize =
+                lookupArraySize(baseName);
+
+            if (arraySize <= 0)
             {
                 semanticErrors.push_back({
-                    "el campo '" + fieldName +
-                    "' no existe en la estructura '" +
-                    *baseType + "'"
+                    "la variable '" + baseName +
+                    "' no es un array"
+                });
+                return;
+            }
+
+            if (const auto* literal =
+                    dynamic_cast<const IntegerLiteral*>(
+                        assignmentStatement->index.get()))
+            {
+                if (literal->value < 0 ||
+                    literal->value >= arraySize)
+                {
+                    semanticErrors.push_back({
+                        "índice fuera de límites para el array '" +
+                        baseName + "'"
+                    });
+                    return;
+                }
+            }
+
+            if (*baseType != "int")
+            {
+                semanticErrors.push_back({
+                    "los arrays solo admiten elementos int: '" +
+                    baseName + "'"
+                });
+                return;
+            }
+
+            analyzeExpression(*assignmentStatement->index);
+
+            const std::string indexType =
+                inferExpressionType(*assignmentStatement->index);
+
+            if (indexType != "int")
+            {
+                semanticErrors.push_back({
+                    "el índice del array '" + baseName +
+                    "' debe ser de tipo int"
                 });
                 return;
             }
         }
+
 
         // ----------------------------------------------------
         // La asignación debe tener una expresión.
@@ -473,11 +580,39 @@ void SemanticAnalyzer::analyzeStatement(
         }
 
         // ----------------------------------------------------
-        // Analizar la expresión.
+        // Analizar la expresión y comprobar compatibilidad.
         // ----------------------------------------------------
 
         analyzeExpression(
             *assignmentStatement->expression);
+
+        std::string targetType = *baseType;
+
+        if (dot != std::string::npos)
+        {
+            const std::string fieldName = name.substr(dot + 1);
+            const auto structure = structFields.find(*baseType);
+
+            if (structure != structFields.end())
+            {
+                const auto field = structure->second.find(fieldName);
+                if (field != structure->second.end())
+                    targetType = field->second;
+            }
+        }
+
+        const std::string expressionType =
+            inferExpressionType(*assignmentStatement->expression);
+
+        if (!expressionType.empty() &&
+            expressionType != targetType)
+        {
+            semanticErrors.push_back({
+                "tipo incompatible en asignación a '" + name +
+                "': se esperaba '" + targetType +
+                "' y se obtuvo '" + expressionType + "'"
+            });
+        }
 
         return;
     }
@@ -782,6 +917,96 @@ void SemanticAnalyzer::analyzeStatement(
 // ANALIZAR EXPRESIÓN
 // ============================================================
 
+std::string SemanticAnalyzer::inferExpressionType(
+    const Expression& expression) const
+{
+    if (dynamic_cast<const IntegerLiteral*>(&expression))
+        return "int";
+
+    if (dynamic_cast<const StringLiteral*>(&expression))
+        return "string";
+
+    if (const auto* variable =
+            dynamic_cast<const VariableExpression*>(&expression))
+    {
+        const std::string& name = variable->name;
+        const std::size_t dot = name.find('.');
+        const std::string baseName =
+            dot == std::string::npos ? name : name.substr(0, dot);
+
+        const std::string* type = lookupVariable(baseName);
+        if (type == nullptr)
+            return "";
+
+        if (dot == std::string::npos)
+            return *type;
+
+        const auto structure = structFields.find(*type);
+        if (structure == structFields.end())
+            return "";
+
+        const std::string fieldName = name.substr(dot + 1);
+        const auto field = structure->second.find(fieldName);
+        return field == structure->second.end() ? "" : field->second;
+    }
+
+    if (const auto* arrayAccess =
+            dynamic_cast<const ArrayAccessExpression*>(&expression))
+    {
+        const std::string* type =
+            lookupVariable(arrayAccess->name);
+
+        if (type == nullptr)
+            return "";
+
+        if (*type != "int" || !arrayAccess->index)
+            return "";
+
+        const std::string indexType =
+            inferExpressionType(*arrayAccess->index);
+
+        if (indexType != "int")
+            return "";
+
+        return "int";
+    }
+
+    if (const auto* call =
+            dynamic_cast<const CallExpression*>(&expression))
+    {
+        const auto function = functionDeclarations.find(call->callee);
+        if (function == functionDeclarations.end() ||
+            function->second == nullptr)
+            return "";
+
+        return function->second->returnType;
+    }
+
+    if (const auto* binary =
+            dynamic_cast<const BinaryExpression*>(&expression))
+    {
+        if (!binary->left || !binary->right)
+            return "";
+
+        const std::string leftType =
+            inferExpressionType(*binary->left);
+        const std::string rightType =
+            inferExpressionType(*binary->right);
+
+        if (leftType.empty() || rightType.empty())
+            return "";
+
+        // Las expresiones binarias existentes producen int, pero
+        // solo si ambos operandos son int.
+        if (leftType == "int" && rightType == "int")
+            return "int";
+
+        return "<tipo-incompatible>";
+    }
+
+    return "";
+}
+
 void SemanticAnalyzer::analyzeExpression(
     const Expression& expression)
 {
@@ -803,6 +1028,95 @@ void SemanticAnalyzer::analyzeExpression(
     {
         return;
 }
+
+
+    // ========================================================
+    // ARRAY ACCESS
+    // valores[indice]
+    // ========================================================
+
+    if (const auto* arrayAccess =
+            dynamic_cast<const ArrayAccessExpression*>(&expression))
+    {
+        const std::string* type =
+            lookupVariable(arrayAccess->name);
+
+        if (type == nullptr)
+        {
+            semanticErrors.push_back({
+                "array no declarado: '" +
+                arrayAccess->name + "'"
+            });
+            return;
+        }
+
+        const int arraySize =
+            lookupArraySize(arrayAccess->name);
+
+        if (arraySize <= 0)
+        {
+            semanticErrors.push_back({
+                "la variable '" + arrayAccess->name +
+                "' no es un array"
+            });
+            return;
+        }
+
+        if (*type != "int")
+        {
+            semanticErrors.push_back({
+                "los arrays solo admiten elementos int: '" +
+                arrayAccess->name + "'"
+            });
+            return;
+        }
+
+        if (!arrayAccess->index)
+        {
+            semanticErrors.push_back({
+                "falta el índice del array '" +
+                arrayAccess->name + "'"
+            });
+            return;
+        }
+
+        // Comprobar límites cuando el índice es constante.
+        if (const auto* literal =
+                dynamic_cast<const IntegerLiteral*>(
+                    arrayAccess->index.get()))
+        {
+            if (literal->value < 0 ||
+                literal->value >= arraySize)
+            {
+                semanticErrors.push_back({
+                    "índice fuera de límites para el array '" +
+                    arrayAccess->name + "'"
+                });
+                return;
+            }
+        }
+
+        // Analizar la expresión del índice.
+        analyzeExpression(*arrayAccess->index);
+
+        const std::string indexType =
+            inferExpressionType(*arrayAccess->index);
+
+        if (indexType != "int")
+        {
+            semanticErrors.push_back({
+                "el índice del array '" +
+                arrayAccess->name +
+                "' debe ser de tipo int"
+            });
+            return;
+        }
+
+        return;
+    }
+
+
+
     // ========================================================
     // CALL EXPRESSION
     //

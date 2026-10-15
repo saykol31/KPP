@@ -27,7 +27,10 @@ fi
 # Solo pruebas conocidas que deben fallar.
 # Las rutas son relativas a la raíz del repositorio.
 NEGATIVOS=(
-    "projects/test_l14_errores.kpp"
+    "projects/test_l14_1_error_sintactico.kpp"
+    "projects/test_l14_2_variable_no_declarada.kpp"
+    "projects/test_l14_3_tipos_incompatibles.kpp"
+    "projects/test_l14_4_asignacion_incompatible.kpp"
     "projects/test_enum_invalido.kpp"
     "projects/test_struct_duplicado.kpp"
     "projects/test_struct_campo_duplicado.kpp"
@@ -35,11 +38,6 @@ NEGATIVOS=(
     "projects/function_parameters_bad_extra.kpp"
     "projects/test_l13_struct_campo_inexistente.kpp"
 
-    "compiler/kpp/test_enum_invalido.kpp"
-    "compiler/kpp/test_l13_struct_campo_inexistente.kpp"
-    "compiler/kpp/test_l14_errores.kpp"
-    "compiler/kpp/test_struct_campo_duplicado.kpp"
-    "compiler/kpp/test_struct_duplicado.kpp"
 )
 
 declare -A ES_NEGATIVO=()

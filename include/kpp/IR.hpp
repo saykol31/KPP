@@ -40,6 +40,10 @@ enum class IROpcode
     Store,
     Load,
 
+    // Acceso a elementos de arrays.
+    ArrayLoad,
+    ArrayStore,
+
     // ========================================================
     // ARITMÉTICA BÁSICA
     // ========================================================

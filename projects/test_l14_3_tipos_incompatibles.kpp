@@ -1,0 +1,6 @@
+int main()
+{
+    int numero = "hola";
+    print_int(numero);
+    return 0;
+}

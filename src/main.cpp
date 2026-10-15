@@ -707,6 +707,42 @@ int main(int argc, char** argv)
 
 
                     // ========================================================
+                    // ARRAY STORE
+                    // ========================================================
+
+                    case kpp::IROpcode::ArrayStore:
+
+                        std::cout
+                            << "ARRAY_STORE "
+                            << instruction.name
+                            << "["
+                            << instruction.operand
+                            << "] <- "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    // ========================================================
+                    // ARRAY LOAD
+                    // ========================================================
+
+                    case kpp::IROpcode::ArrayLoad:
+
+                        std::cout
+                            << "ARRAY_LOAD "
+                            << instruction.name
+                            << "["
+                            << instruction.operand
+                            << "] -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    // ========================================================
                     // ARITHMETIC
                     // ========================================================
 

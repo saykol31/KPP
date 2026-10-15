@@ -554,6 +554,29 @@ Parser::parseStatement()
             advance().text;
 
 
+        int arraySize = 0;
+
+        if (match(TokenType::LBracket))
+        {
+            if (!check(TokenType::Number))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba el tamaño del array");
+            }
+
+            arraySize = std::stoi(advance().text);
+
+            if (arraySize <= 0)
+            {
+                throw std::runtime_error(
+                    "K++: el tamaño del array debe ser positivo");
+            }
+
+            expect(
+                TokenType::RBracket,
+                "se esperaba ']' después del tamaño del array");
+        }
+
         // ----------------------------------------------------
         // inicializador
         // ----------------------------------------------------
@@ -579,7 +602,8 @@ Parser::parseStatement()
         return std::make_unique<VariableDeclaration>(
             variableType,
             name,
-            std::move(initializer));
+            std::move(initializer),
+            arraySize);
     }
 
     // ========================================================
@@ -647,6 +671,17 @@ Parser::parseStatement()
         std::string name =
             advance().text;
 
+        std::unique_ptr<Expression> index = nullptr;
+
+        if (match(TokenType::LBracket))
+        {
+            index = parseExpression();
+
+            expect(
+                TokenType::RBracket,
+                "se esperaba ']' después del índice del array");
+        }
+
         // ----------------------------------------------------
         // Acceso a campo: p.edad
         // ----------------------------------------------------
@@ -675,7 +710,8 @@ Parser::parseStatement()
 
         return std::make_unique<AssignmentStatement>(
             name,
-            std::move(expression));
+            std::move(expression),
+            std::move(index));
     }
 
 
@@ -1299,6 +1335,22 @@ Parser::parsePrimary()
             return std::make_unique<IntegerLiteral>(it->second);
         }
 
+        // ----------------------------------------------------
+        // ARRAY ACCESS: valores[0]
+        // ----------------------------------------------------
+
+        if (match(TokenType::LBracket))
+        {
+            auto index = parseExpression();
+
+            expect(
+                TokenType::RBracket,
+                "se esperaba ']' después del índice del array");
+
+            return std::make_unique<ArrayAccessExpression>(
+                name,
+                std::move(index));
+        }
         // ----------------------------------------------------
         // FUNCTION CALL
         // ----------------------------------------------------

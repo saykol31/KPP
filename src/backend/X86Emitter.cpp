@@ -396,6 +396,64 @@ std::size_t X86Emitter::emitMovMemEbx32Placeholder()
 }
 
 
+ // ============================================================
+ // MOV EAX, [EDX] / MOV EBX, [EDX]
+ // ============================================================
+
+void X86Emitter::emitMovEaxEdxMem32()
+{
+    machineCode.push_back(0x8B);
+    machineCode.push_back(0x02); // MOV EAX, [EDX]
+}
+
+void X86Emitter::emitMovEbxEdxMem32()
+{
+    machineCode.push_back(0x8B);
+    machineCode.push_back(0x1A); // MOV EBX, [EDX]
+}
+
+// ============================================================
+// MOV [EDX], EAX / MOV [EDX], EBX
+// ============================================================
+
+void X86Emitter::emitMovMemEdxEax32()
+{
+    machineCode.push_back(0x89);
+    machineCode.push_back(0x02); // MOV [EDX], EAX
+}
+
+void X86Emitter::emitMovMemEdxEbx32()
+{
+    machineCode.push_back(0x89);
+    machineCode.push_back(0x1A); // MOV [EDX], EBX
+}
+
+// ============================================================
+// LEA EDX, [EAX*4 + disp32]
+// ============================================================
+
+std::size_t X86Emitter::emitLeaEdxEaxScaled4Placeholder()
+{
+    machineCode.push_back(0x8D);
+    machineCode.push_back(0x14);
+    machineCode.push_back(0x85);
+
+    return emitImm32Placeholder();
+}
+
+// ============================================================
+// LEA EDX, [EBX*4 + disp32]
+// ============================================================
+
+std::size_t X86Emitter::emitLeaEdxEbxScaled4Placeholder()
+{
+    machineCode.push_back(0x8D);
+    machineCode.push_back(0x14);
+    machineCode.push_back(0x9D);
+
+    return emitImm32Placeholder();
+}
+
 // ============================================================
 // MOV REG, IMM32
 // ============================================================

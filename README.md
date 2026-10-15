@@ -130,11 +130,9 @@ confirmarse mediante pruebas reproducibles antes de considerarlo
 estable.
 
 La documentación de desarrollo registra que variables, asignaciones,
-`LOAD`/`STORE`, `return`, comparaciones, `if`/`else` y `while` han
-avanzado hasta completarse en sus respectivas fases. Las llamadas a
-funciones y los parámetros tienen una base funcional, pero las
-expresiones anidadas, la presión de registros y la preservación completa
-de temporales requieren validación específica.
+`LOAD`/`STORE`, `return`, comparaciones, `if`/`else`, `while`, llamadas
+anidadas y preservación de temporales entre llamadas han avanzado hasta
+verificarse en KolibriOS en sus respectivas fases.
 
 ------------------------------------------------------------------------
 
@@ -491,9 +489,9 @@ desarrollo. Los estados deben leerse junto con la tabla de pruebas:
   Operadores lógicos                  Cobertura por confirmar en la suite
                                       completa
 
-  `struct`                            Declaración reconocida en pruebas
-                                      anteriores; acceso a campos
-                                      incompleto
+  `struct`                            Declaración y acceso a campos
+                                      (`p.edad`) verificados en
+                                      KolibriOS (2026-10-14)
 
   `enum`                              Hay pruebas específicas; consolidar
                                       ejecución e integración
@@ -613,17 +611,18 @@ El documento de desarrollo marca el ABI de funciones como estable para
 los casos ya implementados, pero mantiene pendiente la cobertura
 avanzada de composición de expresiones y presión de registros.
 
-### Casos avanzados pendientes
+### Casos avanzados
 
 ``` cpp
 suma(2, 3);
 suma(suma(1, 2), 4);
 ```
 
-Estos ejemplos ilustran llamadas compuestas que deben formar parte de
-las pruebas futuras. La suite debe verificar llamadas dentro de
-expresiones, llamadas como argumentos, resultados temporales entre
-llamadas y composición profunda.
+Estos ejemplos ya forman parte de la suite
+(`projects/test_l16_nested_calls_audit_20261014.kpp`) y se verifican de
+extremo a extremo en KolibriOS: llamadas dentro de expresiones, llamadas
+como argumentos, resultados temporales entre llamadas y composición
+profunda.
 
 ------------------------------------------------------------------------
 
@@ -642,9 +641,11 @@ pruebas confirmadas y pendientes.
   L02       PASS          Variables e               Declarada en Stage 0;
                           inicializadores
 
-  L03       FAIL          Operaciones aritméticas   Declarada en Stage 0;
-                                                      + y - funcionan;
-                                                      faltan *, / y %
+  L03       PASS          Operaciones aritméticas   `/` y `%` implementados en
+                          (+, -, *, /, %)           el backend x86
+                                                    (2026-10-14); `^`
+                                                    excluido del bootstrap
+                                                    por decisión de diseño
 
 
   L04       PASS          Funciones y retornos       Declarada en Stage 0;
@@ -669,12 +670,17 @@ pruebas confirmadas y pendientes.
 
   L11       PASS             `while`                 Declarada en Stage 0;
 
-  L12       FAIL
-            : shadowing                              Variables locales; se registra
-                                                     alcance de bloques
-                                                     un fallo de *shadowing*
+  L12       PASS          Shadowing y               Cerrado (2026-10-14):
+                          alcance de bloques        renombrado en el IR
+                                                    (`x` → `x@0`, `x@1`);
+                                                    verificado en KolibriOS
 
-  L13       Bloqueada:      `Campos de struct`       . no reconocido por el lexer
+  L13       PASS          Campos de `struct`       Token `.` en el lexer;
+                          (`p.edad`)                acceso, asignación e
+                                                    independencia entre
+                                                    instancias verificados
+                                                    en KolibriOS
+                                                    (2026-10-14)
 
 
 
@@ -684,9 +690,8 @@ pruebas confirmadas y pendientes.
   L15       Pendiente     Recursión               Pendiente de confirmar
                                                   ejecución
 
-  L16        FAIL         Llamadas anidadas       Análisis semántico  PASS
-                                                  Generación de IR    PASS
-                                                  Backend x86         FAIL
+  L16        PASS         Llamadas anidadas       Backend verificado en
+                                                  KolibriOS (2026-10-14)
 
   -----------------------------------------------------------------------
 
@@ -697,17 +702,17 @@ pruebas confirmadas y pendientes.
   Declaración de `struct`             PASS en pruebas anteriores del frontend
   Rechazo de campos duplicados        PASS
   Rechazo de estructuras duplicadas   PASS
-  Token `.` en el lexer               FAIL confirmado
-  Acceso `p.edad`                     Pendiente
-  Asignación y lectura de campos      Pendiente
-  Independencia entre variables       Pendiente
-  Rechazo de campos inexistentes      Pendiente
-  Rechazo de tipos incompatibles      Pendiente
+  Token `.` en el lexer               PASS
+  Acceso `p.edad`                     PASS
+  Asignación y lectura de campos      PASS
+  Independencia entre variables       PASS
+  Rechazo de campos inexistentes      PASS
+  Rechazo de tipos incompatibles      PASS
 
-El fallo del token `.` impide considerar completo el acceso a campos. La
-declaración de estructuras y la validación de nombres duplicados no
-demuestran, por sí solas, que los miembros funcionen de extremo a
-extremo.
+El acceso a campos se verifica de extremo a extremo en KolibriOS
+(2026-10-14): dos instancias independientes, mutación de una sin afectar
+a la otra. Implementación por *lowering* en el IR (`p.edad` →
+`p@0.edad`); el backend no requirió cambios.
 
 ### Requisitos mínimos de Stage 0
 
@@ -742,22 +747,31 @@ de la existencia de un archivo de prueba o de un binario antiguo.
 Según el registro disponible, las áreas que requieren atención especial
 son:
 
--   **Shadowing y scopes:** L12 registra un fallo que debe resolverse y
-    cubrirse con pruebas.
--   **Acceso a campos de `struct`:** el token `.` tiene un fallo
-    confirmado; acceso, asignación y validaciones siguen pendientes.
 -   **Tipos:** no debe afirmarse que `void`, `bool`, `float`, `double` u
     otros tipos están plenamente implementados.
--   **Expresiones con llamadas:** faltan pruebas avanzadas de llamadas
-    anidadas y composición.
--   **Preservación de registros:** se debe probar la vida de temporales
-    antes, durante y después de llamadas.
 -   **Runtime e I/O:** la cobertura documentada no equivale a un runtime
     completo.
 -   **Self-hosting:** el compilador aún necesita más capacidades del
     lenguaje y una cadena de bootstrap reproducible.
 -   **Targets adicionales:** ARM64, Linux, Windows y bare metal son
     líneas futuras, no targets que este README declare ya funcionales.
+
+### Limitación conocida: funciones con más de dos parámetros
+
+**Estado:** pendiente de implementación.
+
+La convención de llamada actual del backend x86 admite como máximo dos parámetros enteros, asignados a `EAX` y `EBX`. Las funciones con más de dos parámetros pueden superar el análisis semántico y generar IR válido, pero la generación de código máquina las rechaza.
+
+**Prueba de referencia:** `projects/resión de registros y valores intermedios.kpp`
+
+**Mensaje actual:** `K++ X86Backend: más de 2 parámetros no soportados todavía`
+
+**Posible solución futura:** implementar paso de argumentos por pila, acceso a parámetros desde el cuerpo de la función y limpieza de la pila por el llamador.
+
+Esta limitación es una funcionalidad pendiente, no un defecto de la prueba ni del frontend.
+El script ya clasifica 84 pruebas positivas y 12 negativas correctamente. El único caso pendiente es esta prueba de cuatro parámetros.
+
+No la marques como PASS ni la elimines: si la excluimos sin control, podríamos dejar de detectar cuándo el backend cambia de comportamiento.
 
 ------------------------------------------------------------------------
 
@@ -938,7 +952,7 @@ implementados.
 -   Presión de registros.
 -   Temporales en memoria.
 
-**Estado:** pendiente.
+**Estado:** implementado y verificado en KolibriOS (2026-10-14).
 
 #### Fase 4.4: composición de llamadas
 
@@ -949,7 +963,7 @@ implementados.
 -   Llamadas anidadas y composición profunda.
 -   Gestión de resultados temporales entre llamadas.
 
-**Estado:** pendiente.
+**Estado:** implementado y verificado en KolibriOS (2026-10-14).
 
 #### Fase 4.5: valores de retorno
 

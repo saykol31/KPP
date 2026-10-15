@@ -155,7 +155,8 @@ private:
     void resetVariables();
 
     std::size_t allocateVariableData(
-        std::vector<std::uint8_t>& data);
+        std::vector<std::uint8_t>& data,
+        std::size_t elementCount = 1);
 
     void declareVariable(
         const std::string& name,

@@ -1,0 +1,9 @@
+int main()
+{
+    int valores[4];
+    int i;
+    i = 2;
+    valores[i] = 77;
+    print_int(valores[i]);
+    return 0;
+}

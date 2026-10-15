@@ -354,13 +354,14 @@ namespace kpp {
 
     std::size_t
     X86Backend::allocateVariableData(
-        std::vector<std::uint8_t>& data)
+        std::vector<std::uint8_t>& data,
+        std::size_t elementCount)
     {
         const std::size_t offset =
             data.size();
 
         data.resize(
-            data.size() + 4,
+            data.size() + elementCount * 4,
             0);
 
         return offset;
@@ -954,7 +955,12 @@ X86Backend::generate(
                 IROpcode::Declare)
             {
                 const std::size_t offset =
-                    allocateVariableData(data);
+                    allocateVariableData(
+                        data,
+                        instruction.value > 0
+                            ? static_cast<std::size_t>(
+                                  instruction.value)
+                            : 1);
 
                 declareVariable(
                     instruction.name,
@@ -1051,14 +1057,159 @@ X86Backend::generate(
                     instruction.operand);
             }
 
+            // ------------------------------------------------
+            // ARRAY STORE
+            // ------------------------------------------------
+            else if (instruction.opcode == IROpcode::ArrayStore)
+            {
+                if (variables.find(instruction.name) == variables.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: ARRAY_STORE de array no declarado: " +
+                        instruction.name);
+                }
+
+                if (!hasTemporary(instruction.operand) ||
+                    !hasTemporary(instruction.result))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: temporal inexistente en ARRAY_STORE.");
+                }
+
+                const auto indexLoc = temporaries.at(instruction.operand);
+                const auto valueLoc = temporaries.at(instruction.result);
+
+                // Preservar ambos registros mientras calculamos la dirección.
+                emitter.emitPushEax();
+                emitter.emitPushEbx();
+
+                if (indexLoc.kind == TemporaryLocation::Kind::Memory)
+                {
+                    const auto patch = emitter.emitMovEaxMem32Placeholder();
+                    temporaryReloadPatches.push_back({
+                        instruction.operand, patch, indexLoc.dataOffset
+                    });
+                }
+                else if (indexLoc.registerCode == 3)
+                {
+                    emitter.emitMovEaxEbx();
+                }
+                else if (indexLoc.registerCode != 0)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: registro de índice no soportado.");
+                }
+
+                const auto addressPatch =
+                    emitter.emitLeaEdxEaxScaled4Placeholder();
+
+                variableLoadPatches.push_back({
+                    currentFunctionName, instruction.name, addressPatch
+                });
+
+                // La dirección queda en EDX; restaurar los registros originales.
+                emitter.emitPopEbx();
+                emitter.emitPopEax();
+
+                if (valueLoc.kind == TemporaryLocation::Kind::Memory)
+                {
+                    const auto patch = emitter.emitMovEaxMem32Placeholder();
+                    temporaryReloadPatches.push_back({
+                        instruction.result, patch, valueLoc.dataOffset
+                    });
+                    emitter.emitMovMemEdxEax32();
+                }
+                else if (valueLoc.registerCode == 0)
+                {
+                    emitter.emitMovMemEdxEax32();
+                }
+                else if (valueLoc.registerCode == 3)
+                {
+                    emitter.emitMovMemEdxEbx32();
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: registro de valor no soportado.");
+                }
+
+                freeTemporary(instruction.operand);
+                freeTemporary(instruction.result);
+            }
 
             // ------------------------------------------------
+            // ARRAY LOAD
+            // ------------------------------------------------
+            else if (instruction.opcode == IROpcode::ArrayLoad)
+            {
+                if (variables.find(instruction.name) == variables.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: ARRAY_LOAD de array no declarado: " +
+                        instruction.name);
+                }
+
+                if (!hasTemporary(instruction.operand))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: temporal de índice inexistente en ARRAY_LOAD.");
+                }
+
+                const auto indexLoc = temporaries.at(instruction.operand);
+
+                emitter.emitPushEax();
+                emitter.emitPushEbx();
+
+                if (indexLoc.kind == TemporaryLocation::Kind::Memory)
+                {
+                    const auto patch = emitter.emitMovEaxMem32Placeholder();
+                    temporaryReloadPatches.push_back({
+                        instruction.operand, patch, indexLoc.dataOffset
+                    });
+                }
+                else if (indexLoc.registerCode == 3)
+                {
+                    emitter.emitMovEaxEbx();
+                }
+                else if (indexLoc.registerCode != 0)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: registro de índice no soportado.");
+                }
+
+                const auto addressPatch =
+                    emitter.emitLeaEdxEaxScaled4Placeholder();
+
+                variableLoadPatches.push_back({
+                    currentFunctionName, instruction.name, addressPatch
+                });
+
+                emitter.emitPopEbx();
+                emitter.emitPopEax();
+
+                // El asignador puede hacer spill; EDX conserva la dirección.
+                const auto resultReg = allocateRegisterForTemporary(
+                    instruction.result, data, temporarySpillPatches);
+
+                if (resultReg == 0)
+                {
+                    emitter.emitMovEaxEdxMem32();
+                }
+                else if (resultReg == 3)
+                {
+                    emitter.emitMovEbxEdxMem32();
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: registro de resultado no soportado.");
+                }
+
+                freeTemporary(instruction.operand);
+            }
             // LOAD
             // ------------------------------------------------
 
-            // ------------------------------------------------
-            // LOAD
-            // ------------------------------------------------
 
             else if (instruction.opcode ==
                      IROpcode::Load)

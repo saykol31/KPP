@@ -1,0 +1,9 @@
+int main()
+{
+    int valores[4];
+    valores[0] = 20;
+    valores[1] = 30;
+    valores[2] = valores[0] + valores[1];
+    print_int(valores[2]);
+    return 0;
+}

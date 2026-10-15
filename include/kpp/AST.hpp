@@ -59,6 +59,21 @@ struct VariableExpression : Expression
     }
 };
 
+
+struct ArrayAccessExpression : Expression
+{
+    std::string name;
+    std::unique_ptr<Expression> index;
+
+    ArrayAccessExpression(
+        const std::string& name,
+        std::unique_ptr<Expression> index)
+        : name(name),
+          index(std::move(index))
+    {
+    }
+};
+
 // ============================================================
 // CALL EXPRESSION
 //
@@ -154,24 +169,29 @@ struct PrintIntegerStatement : Statement
 // VARIABLE DECLARATION
 // ============================================================
 
+
 struct VariableDeclaration : Statement
 {
     std::string type;
     std::string name;
+
+    // 0 = variable normal; positivo = tamaño del array
+    int arraySize = 0;
 
     std::unique_ptr<Expression> initializer;
 
     VariableDeclaration(
         const std::string& type,
         const std::string& name,
-        std::unique_ptr<Expression> initializer)
+        std::unique_ptr<Expression> initializer,
+        int arraySize = 0)
         : type(type),
           name(name),
+          arraySize(arraySize),
           initializer(std::move(initializer))
     {
     }
 };
-
 // ============================================================
 // ASSIGNMENT
 // ============================================================
@@ -179,14 +199,16 @@ struct VariableDeclaration : Statement
 struct AssignmentStatement : Statement
 {
     std::string name;
-
     std::unique_ptr<Expression> expression;
+    std::unique_ptr<Expression> index;
 
     AssignmentStatement(
         const std::string& name,
-        std::unique_ptr<Expression> expression)
+        std::unique_ptr<Expression> expression,
+        std::unique_ptr<Expression> index = nullptr)
         : name(name),
-          expression(std::move(expression))
+          expression(std::move(expression)),
+          index(std::move(index))
     {
     }
 };

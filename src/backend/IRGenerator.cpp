@@ -51,6 +51,12 @@ const char* irOpcodeName(IROpcode opcode)
         case IROpcode::Load:
             return "LOAD";
 
+        case IROpcode::ArrayLoad:
+            return "ARRAY_LOAD";
+
+        case IROpcode::ArrayStore:
+            return "ARRAY_STORE";
+
         // ====================================================
         // ARITMÉTICA BÁSICA
         // ====================================================
@@ -446,7 +452,7 @@ void IRGenerator::generateStatement(
             mangledName,
             "",
             "",
-            0
+            variableDeclaration->arraySize
         });
 
         // Reservar almacenamiento independiente para cada campo.
@@ -601,14 +607,36 @@ void IRGenerator::generateStatement(
         // x = a + b * 3;
         // ----------------------------------------------------
 
+        // Si hay índice, generar una asignación a un elemento
+        // del array. Primero se evalúa el índice y después el valor.
+        if (assignmentStatement->index)
+        {
+            std::string indexTemporary =
+                generateExpression(
+                    *assignmentStatement->index,
+                    function);
+
+            std::string valueTemporary =
+                generateExpression(
+                    *assignmentStatement->expression,
+                    function);
+
+            function.instructions.push_back({
+                IROpcode::ArrayStore,
+                resolveVariableName(assignmentStatement->name),
+                indexTemporary,
+                valueTemporary,
+                0
+            });
+
+            return;
+        }
+
+        // Asignación normal a una variable.
         std::string temporary =
             generateExpression(
                 *assignmentStatement->expression,
                 function);
-
-        // ----------------------------------------------------
-        // STORE
-        // ----------------------------------------------------
 
         function.instructions.push_back({
             IROpcode::Store,
@@ -1261,6 +1289,43 @@ std::string IRGenerator::generateExpression(
             IROpcode::Load,
             resolveVariableName(variable->name),
             "",
+            temporary,
+            0
+        });
+
+        return temporary;
+    }
+
+    // ========================================================
+    // ARRAY ACCESS
+    //
+    // valores[indice]
+    //
+    // ARRAY_LOAD valores, indice -> temporal
+    // ========================================================
+
+    if (auto* arrayAccess =
+            dynamic_cast<const ArrayAccessExpression*>(
+                &expression))
+    {
+        if (!arrayAccess->index)
+        {
+            throw std::runtime_error(
+                "K++ IR: acceso a array sin índice");
+        }
+
+        std::string indexTemporary =
+            generateExpression(
+                *arrayAccess->index,
+                function);
+
+        std::string temporary =
+            createTemporary();
+
+        function.instructions.push_back({
+            IROpcode::ArrayLoad,
+            resolveVariableName(arrayAccess->name),
+            indexTemporary,
             temporary,
             0
         });
