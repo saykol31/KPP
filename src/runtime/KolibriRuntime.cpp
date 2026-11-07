@@ -235,12 +235,12 @@ KolibriRuntime::emitGraphicsRuntime(
     // HEIGHT = 220
     emitter.emitMovRegImm32(
         0xB9,
-        (100u << 16) + 220u);
+        (100u << 16) + 500u); // altura de 46 lineas
 
     // Work area color
     emitter.emitMovRegImm32(
         0xBA,
-        0x14FFFFFF);
+        0x14000000u);
 
     // Title color
     emitter.emitMovRegImm32(
@@ -338,7 +338,7 @@ KolibriRuntime::emitPrint(
     // Text color
     emitter.emitMovRegImm32(
         0xB9,
-        0x80000000);
+        0x80FFFFFFu);
 
     // EDX = string
     emitter.emitByte(0xBA);
@@ -375,7 +375,7 @@ KolibriRuntime::emitPrintFromEdx(
     // Text color
     emitter.emitMovRegImm32(
         0xB9,
-        0x80000000);
+        0x80FFFFFFu);
 
     // EDX ya contiene la dirección del string.
 
@@ -529,7 +529,7 @@ KolibriRuntime::emitPrintInteger(
 
     emitter.emitMovRegImm32(
         0xB9,
-        0x80000000u);
+        0x80FFFFFFu);
 
     emitter.emitMovRegImm32(
         0xBE,
