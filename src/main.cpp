@@ -1417,59 +1417,6 @@ int main(int argc, char** argv)
         std::cout
             << "\n✔ K++ IR generada correctamente\n";
 
-        bool containsFileRead = false;
-        bool containsFileWrite = false;
-
-        for (const auto& function : ir.functions)
-        {
-            for (const auto& instruction :
-                 function.instructions)
-            {
-                if (instruction.opcode ==
-                    kpp::IROpcode::FileRead)
-                {
-                    containsFileRead = true;
-                }
-
-                if (instruction.opcode ==
-                    kpp::IROpcode::FileWrite)
-                {
-                    containsFileWrite = true;
-                }
-            }
-        }
-
-        // FILE_READ y FILE_WRITE están representados
-        // en el frontend y el IR, pero todavía no cuentan
-        // con implementación de ejecución en el backend x86.
-        //
-        // No se debe generar código máquina ficticio.
-        if (containsFileRead || containsFileWrite)
-        {
-            std::cout
-                << "\nK++ BACKEND OMITIDO\n"
-                << "===================\n";
-
-            if (containsFileRead)
-            {
-                std::cout
-                    << "FILE_READ está representado en IR, "
-                    << "pero su ejecución x86 todavía "
-                    << "no está implementada.\n";
-            }
-
-            if (containsFileWrite)
-            {
-                std::cout
-                    << "FILE_WRITE está representado en IR, "
-                    << "pero su ejecución x86 todavía "
-                    << "no está implementada.\n";
-            }
-
-            return 2;
-        }
-
-
         // ========================================================
         // X86 BACKEND
         // ========================================================
