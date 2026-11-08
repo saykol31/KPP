@@ -71,24 +71,20 @@ namespace kpp {
     }
 
 
-    std::size_t
+    std::int32_t
     X86Backend::allocateTemporarySpill(
         std::vector<std::uint8_t>& data)
     {
-        const std::size_t offset =
-            data.size();
-
-        data.resize(
-            data.size() + 4,
-            0);
-
-        return offset;
+        // Los spills ya no ocupan DATA.
+        // Cada temporal recibe un slot en el marco EBP activo.
+        (void)data;
+        return allocateFrameSlot();
     }
 
 
     void X86Backend::bindTemporaryToMemory(
         const std::string& temporary,
-        std::size_t dataOffset)
+        std::int32_t dataOffset)
     {
         temporaries[temporary] = {
             TemporaryLocation::Kind::Memory,
@@ -132,7 +128,7 @@ namespace kpp {
         const std::uint8_t registerCode =
             it->second.registerCode;
 
-        const std::size_t dataOffset =
+        const std::int32_t dataOffset =
             allocateTemporarySpill(data);
 
         std::size_t patchOffset = 0;
@@ -142,16 +138,18 @@ namespace kpp {
             /*
             * MOV [direccion], EAX
             */
-            patchOffset =
-                emitter.emitMovMemEax32Placeholder();
+            // MOV [EBP + displacement], EAX
+            patchOffset = emitter.size() + 2;
+            emitter.emitMovEbpRelativeEax(0);
         }
         else if (registerCode == 3)
         {
             /*
             * MOV [direccion], EBX
             */
-            patchOffset =
-                emitter.emitMovMemEbx32Placeholder();
+            // MOV [EBP + displacement], EBX
+            patchOffset = emitter.size() + 2;
+            emitter.emitMovEbpRelativeEbx(0);
         }
         else
         {
@@ -316,20 +314,20 @@ namespace kpp {
                 temporary);
         }
 
-        const std::size_t dataOffset =
+        const std::int32_t dataOffset =
             it->second.dataOffset;
 
         /*
          * Generamos:
          *
-         *     MOV EAX, [00000000]
+         *     MOV EAX, [EBP + displacement]
          *
-         * La dirección absoluta se resolverá
-         * posteriormente mediante dataBase.
+         * El displacement negativo se parcheará al final
+         * de generate(), sin utilizar dataBase.
          */
 
         const std::size_t patchOffset =
-            emitter.emitMovEaxMem32Placeholder();
+            emitMovEaxFramePlaceholder();
 
         patches.push_back({
             temporary,
@@ -384,6 +382,61 @@ namespace kpp {
     }
 
 
+
+
+// ============================================================
+// K++ REBANADA 2 — MARCOS Y TEMPORALES EBP-RELATIVE
+// ============================================================
+
+std::int32_t X86Backend::allocateFrameSlot()
+{
+    if (!frameActive)
+    {
+        throw std::runtime_error(
+            "K++ X86Backend: intento de reservar un slot "
+            "sin un marco EBP activo.");
+    }
+
+    if (frameSlots >= 0x1FFFFFFF)
+    {
+        throw std::runtime_error(
+            "K++ X86Backend: marco de pila demasiado grande.");
+    }
+
+    ++frameSlots;
+
+    return -static_cast<std::int32_t>(frameSlots * 4);
+}
+
+
+std::size_t X86Backend::emitMovEaxFramePlaceholder()
+{
+    if (!frameActive)
+    {
+        throw std::runtime_error(
+            "K++ X86Backend: reload EAX fuera de un marco activo.");
+    }
+
+    // 8B 85 disp32
+    const std::size_t patchOffset = emitter.size() + 2;
+    emitter.emitMovEaxEbpRelative(0);
+    return patchOffset;
+}
+
+
+std::size_t X86Backend::emitMovEbxFramePlaceholder()
+{
+    if (!frameActive)
+    {
+        throw std::runtime_error(
+            "K++ X86Backend: reload EBX fuera de un marco activo.");
+    }
+
+    // 8B 9D disp32
+    const std::size_t patchOffset = emitter.size() + 2;
+    emitter.emitMovEbxEbpRelative(0);
+    return patchOffset;
+}
 
 
 // ============================================================
@@ -563,29 +616,19 @@ X86Backend::generate(
 
     std::string currentFunctionName;
 
-    // KPP_STACK_FRAME_REBANADA1
-    bool frameActive = false;
+    // REBANADA 2:
+    // frameActive y frameSlots son miembros de X86Backend.
+    // allocateFrameSlot() es compartido por variables locales
+    // y temporales derramados.
     std::size_t frameSizePatch = 0;
-    std::size_t frameSlots = 0;
 
-    // Reserva un slot de cuatro bytes en el marco actual.
-    // Devuelve -4, -8, -12, -16...
-    const auto allocateFrameSlot = [&frameSlots]() -> std::int32_t
-    {
-        if (frameSlots >= 0x1FFFFFFF)
-        {
-            throw std::runtime_error(
-                "K++ X86Backend: marco de pila demasiado grande.");
-        }
+    frameActive = false;
+    frameSlots = 0;
 
-        ++frameSlots;
-
-        return -static_cast<std::int32_t>(
-            frameSlots * 4);
-    };
-
-    // Cierra una función normal cuando termina su cuerpo IR.
-    // El retorno implícito cubre caminos que no ejecutaron RETURN.
+    // Finaliza el marco de la función actual.
+    //
+    // Las funciones normales retornan mediante RET.
+    // main restaura EBP/ESP y salta al event loop de KolibriOS.
     const auto finishCurrentFunctionFrame = [&]()
     {
         if (!frameActive)
@@ -598,7 +641,18 @@ X86Backend::generate(
 
         emitter.emitMovEspEbp();
         emitter.emitPopEbp();
-        emitter.emitRet();
+
+        if (currentFunctionName == "main")
+        {
+            emitter.emitByte(0xE9);
+
+            returnEventLoopPatches.push_back(
+                emitter.emitRel32Placeholder());
+        }
+        else
+        {
+            emitter.emitRet();
+        }
 
         const std::size_t frameBytes =
             frameSlots * 4;
@@ -700,24 +754,22 @@ X86Backend::generate(
                 // El runtime debe entrar exactamente aquí.
                 // ------------------------------------------------
 
+                // Todas las funciones, incluido main, tienen marco.
+                // mainBody apunta al comienzo exacto de su prólogo.
                 if (instruction.name == "main")
                 {
-                    mainBody =
-                        emitter.size();
+                    mainBody = emitter.size();
                 }
-                else
-                {
-                    // Cada función normal obtiene su propio marco.
-                    emitter.emitPushEbp();
-                    emitter.emitMovEbpEsp();
 
-                    frameSlots = 0;
+                emitter.emitPushEbp();
+                emitter.emitMovEbpEsp();
 
-                    frameSizePatch =
-                        emitter.emitSubEspImm32Placeholder();
+                frameSlots = 0;
 
-                    frameActive = true;
-                }
+                frameSizePatch =
+                    emitter.emitSubEspImm32Placeholder();
+
+                frameActive = true;
 
                 // ------------------------------------------------
                 // Cada función tiene su propio estado local.
@@ -1204,7 +1256,7 @@ X86Backend::generate(
 
                 if (indexLoc.kind == TemporaryLocation::Kind::Memory)
                 {
-                    const auto patch = emitter.emitMovEaxMem32Placeholder();
+                    const auto patch = emitMovEaxFramePlaceholder();
                     temporaryReloadPatches.push_back({
                         instruction.operand, patch, indexLoc.dataOffset
                     });
@@ -1232,7 +1284,7 @@ X86Backend::generate(
 
                 if (valueLoc.kind == TemporaryLocation::Kind::Memory)
                 {
-                    const auto patch = emitter.emitMovEaxMem32Placeholder();
+                    const auto patch = emitMovEaxFramePlaceholder();
                     temporaryReloadPatches.push_back({
                         instruction.result, patch, valueLoc.dataOffset
                     });
@@ -1281,7 +1333,7 @@ X86Backend::generate(
 
                 if (indexLoc.kind == TemporaryLocation::Kind::Memory)
                 {
-                    const auto patch = emitter.emitMovEaxMem32Placeholder();
+                    const auto patch = emitMovEaxFramePlaceholder();
                     temporaryReloadPatches.push_back({
                         instruction.operand, patch, indexLoc.dataOffset
                     });
@@ -1415,7 +1467,7 @@ X86Backend::generate(
                 }
                 else if (registerCode == 0)
                 {
-                    // LOAD desde DATA.
+                    // LOAD desde DATA: permanece absoluto.
                     const std::size_t patchOffset =
                         emitter.emitMovEaxMem32Placeholder();
 
@@ -1427,7 +1479,7 @@ X86Backend::generate(
                 }
                 else if (registerCode == 3)
                 {
-                    // LOAD desde DATA.
+                    // LOAD desde DATA: permanece absoluto.
                     const std::size_t patchOffset =
                         emitter.emitMovEbxMem32Placeholder();
 
@@ -1694,7 +1746,7 @@ X86Backend::generate(
                      * posteriormente mediante dataBase.
                      */
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         left,
@@ -1999,7 +2051,7 @@ X86Backend::generate(
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         left,
@@ -2226,7 +2278,7 @@ X86Backend::generate(
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         left,
@@ -2320,7 +2372,7 @@ X86Backend::generate(
               if (leftLocation.kind == TemporaryLocation::Kind::Memory)
               {
                   const std::size_t patchOffset =
-                      emitter.emitMovEaxMem32Placeholder();
+                      emitMovEaxFramePlaceholder();
 
                   temporaryReloadPatches.push_back({
                       left, patchOffset, leftLocation.dataOffset
@@ -2361,7 +2413,7 @@ X86Backend::generate(
                 if (rightLocation.kind == TemporaryLocation::Kind::Memory)
                 {
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         right, patchOffset, rightLocation.dataOffset
@@ -2430,7 +2482,7 @@ X86Backend::generate(
                 else if (it->second.kind == TemporaryLocation::Kind::Memory)
                 {
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         operand,
@@ -2592,7 +2644,7 @@ else if (instruction.opcode ==
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         left,
@@ -2649,7 +2701,7 @@ else if (instruction.opcode ==
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         right,
@@ -2695,7 +2747,7 @@ else if (instruction.opcode ==
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         left,
@@ -2745,7 +2797,7 @@ else if (instruction.opcode ==
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
-                        emitter.emitMovEaxMem32Placeholder();
+                        emitMovEaxFramePlaceholder();
 
                     temporaryReloadPatches.push_back({
                         right,
@@ -2826,14 +2878,14 @@ else if (instruction.opcode ==
                 }
 
                 const std::size_t leftPatch =
-                    emitter.emitMovEaxMem32Placeholder();
+                    emitMovEaxFramePlaceholder();
 
                 temporaryReloadPatches.push_back({
                     left, leftPatch, leftIt->second.dataOffset
                 });
 
                 const std::size_t rightPatch =
-                    emitter.emitMovEbxMem32Placeholder();
+                    emitMovEbxFramePlaceholder();
 
                 temporaryReloadPatches.push_back({
                     right, rightPatch, rightIt->second.dataOffset
@@ -2898,7 +2950,7 @@ else if (instruction.opcode ==
 
                 // EAX = operando izquierdo.
                 const std::size_t leftPatch =
-                    emitter.emitMovEaxMem32Placeholder();
+                    emitMovEaxFramePlaceholder();
 
                 temporaryReloadPatches.push_back({
                     left, leftPatch, leftIt->second.dataOffset
@@ -2906,7 +2958,7 @@ else if (instruction.opcode ==
 
                 // EBX = divisor.
                 const std::size_t rightPatch =
-                    emitter.emitMovEbxMem32Placeholder();
+                    emitMovEbxFramePlaceholder();
 
                 temporaryReloadPatches.push_back({
                     right, rightPatch, rightIt->second.dataOffset
@@ -2975,7 +3027,7 @@ else if (instruction.opcode ==
 
                 // EAX = dividendo.
                 const std::size_t leftPatch =
-                    emitter.emitMovEaxMem32Placeholder();
+                    emitMovEaxFramePlaceholder();
 
                 temporaryReloadPatches.push_back({
                     left, leftPatch, leftIt->second.dataOffset
@@ -2983,7 +3035,7 @@ else if (instruction.opcode ==
 
                 // EBX = divisor.
                 const std::size_t rightPatch =
-                    emitter.emitMovEbxMem32Placeholder();
+                    emitMovEbxFramePlaceholder();
 
                 temporaryReloadPatches.push_back({
                     right, rightPatch, rightIt->second.dataOffset
@@ -3369,10 +3421,10 @@ else if (instruction.opcode ==
 
                     auto emitLoadMemoryToEax =
                         [&](const std::string& temporary,
-                            std::size_t dataOffset)
+                            std::int32_t dataOffset)
                     {
                         const std::size_t reloadPatchOffset =
-                            emitter.emitMovEaxMem32Placeholder();
+                            emitMovEaxFramePlaceholder();
 
                         temporaryReloadPatches.push_back({
                             temporary,
@@ -3742,6 +3794,13 @@ else if (instruction.opcode ==
                 }
                 else
                 {
+                    // main también debe abandonar su marco EBP.
+                    if (frameActive)
+                    {
+                        emitter.emitMovEspEbp();
+                        emitter.emitPopEbp();
+                    }
+
                     emitter.emitByte(0xE9);
 
                     returnEventLoopPatches.push_back(
@@ -4038,15 +4097,12 @@ std::vector<std::size_t>
     for (const auto& patch :
         temporarySpillPatches)
     {
-        const std::uint32_t
-            temporaryAddress =
-                dataBase +
-                static_cast<std::uint32_t>(
-                    patch.dataOffset);
-
+        // El valor es un displacement firmado respecto a EBP.
+        // La conversión a uint32_t conserva sus bits en complemento
+        // a dos para escribir el disp32 de la instrucción x86.
         emitter.patch32(
             patch.patchOffset,
-            temporaryAddress);
+            static_cast<std::uint32_t>(patch.dataOffset));
     }
 
 
@@ -4055,30 +4111,17 @@ std::vector<std::size_t>
     // ========================================================
 
     /*
-     * Cada reload generó previamente:
-     *
-     *     MOV EAX, [00000000]
-     *
-     * Ahora resolvemos la dirección absoluta del
-     * temporal almacenado en memoria.
-     *
-     * Dirección:
-     *
-     *     dataBase + temporary.dataOffset
+     * Cada reload lee el temporal desde su slot EBP-relative.
+     * Aquí se escribe el displacement negativo del marco.
      */
 
     for (const auto& patch :
         temporaryReloadPatches)
     {
-        const std::uint32_t
-            temporaryAddress =
-                dataBase +
-                static_cast<std::uint32_t>(
-                    patch.dataOffset);
-
+        // El reload lee desde [EBP + displacement].
         emitter.patch32(
             patch.patchOffset,
-            temporaryAddress);
+            static_cast<std::uint32_t>(patch.dataOffset));
     }
 
 

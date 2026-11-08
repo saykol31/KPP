@@ -37,9 +37,9 @@ private:
         // EBX = 3
         std::uint8_t registerCode = 0;
 
-        // Offset dentro del área de datos cuando
-        // el temporal está almacenado en memoria.
-        std::size_t dataOffset = 0;
+        // Desplazamiento EBP-relative del slot del temporal.
+        // Valores negativos: -4, -8, -12, ...
+        std::int32_t dataOffset = 0;
     };
 
 
@@ -77,14 +77,14 @@ private:
     {
         std::string temporary;
         std::size_t patchOffset;
-        std::size_t dataOffset;
+        std::int32_t dataOffset;
     };
 
     struct TemporaryReloadPatch
     {
         std::string temporary;
         std::size_t patchOffset;
-        std::size_t dataOffset;
+        std::int32_t dataOffset;
     };
 
     struct StringConstPatch
@@ -157,6 +157,18 @@ private:
 
     X86Emitter emitter;
 
+    // Estado del marco EBP de la función actualmente generada.
+    bool frameActive = false;
+    std::size_t frameSlots = 0;
+
+    // Reserva un slot de cuatro bytes en el marco activo.
+    // Devuelve desplazamientos negativos: -4, -8, -12...
+    std::int32_t allocateFrameSlot();
+
+    // Emisión de accesos a temporales derramados en el marco EBP.
+    std::size_t emitMovEaxFramePlaceholder();
+    std::size_t emitMovEbxFramePlaceholder();
+
     void generateFunction(
         const IRFunction& function);
 
@@ -187,7 +199,7 @@ private:
     std::string temporaryInRegister(
         std::uint8_t registerCode) const;
 
-    std::size_t allocateTemporarySpill(
+    std::int32_t allocateTemporarySpill(
         std::vector<std::uint8_t>& data);
 
 
@@ -202,7 +214,7 @@ private:
 
     void bindTemporaryToMemory(
         const std::string& temporary,
-        std::size_t dataOffset);
+        std::int32_t dataOffset);
 
     std::uint8_t allocateRegisterForTemporary(
         const std::string& temporary,
