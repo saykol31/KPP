@@ -1,0 +1,42 @@
+int main()
+{
+    int buffer[5];
+
+    buffer[0] = 72;
+    buffer[1] = 79;
+    buffer[2] = 76;
+    buffer[3] = 65;
+    buffer[4] = 10;
+
+    int write_result = file_write("PRUEBA.TXT", buffer, 5);
+
+    if (write_result != 0)
+    {
+        print_int(write_result);
+        return 1;
+    }
+
+    int i = 0;
+    while (i < 5)
+    {
+        buffer[i] = 0;
+        i = i + 1;
+    }
+
+    int count = file_read("PRUEBA.TXT", buffer);
+
+    if (count < 0)
+    {
+        print_int(count);
+        return 2;
+    }
+
+    print_int(count);
+    print_int(buffer[0]);
+    print_int(buffer[1]);
+    print_int(buffer[2]);
+    print_int(buffer[3]);
+    print_int(buffer[4]);
+
+    return 0;
+}

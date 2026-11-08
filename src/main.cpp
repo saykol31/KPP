@@ -530,8 +530,24 @@ int main(int argc, char** argv)
 
         kpp::SemanticAnalyzer analyzer;
 
-        if (!analyzer.analyze(*program))
+        const bool semanticOk =
+            analyzer.analyze(*program);
+
+        bool onlyFileWriteErrors =
+            !semanticOk && !analyzer.errors().empty();
+
+        if (!semanticOk)
         {
+            for (const auto& error :
+                 analyzer.errors())
+            {
+                if (error.message !=
+                    "función no declarada: file_write")
+                {
+                    onlyFileWriteErrors = false;
+                }
+            }
+
             std::cout
                 << "\n✘ Errores semánticos:\n\n";
 
@@ -544,26 +560,40 @@ int main(int argc, char** argv)
                     << '\n';
             }
 
-            return 1;
+            if (!onlyFileWriteErrors)
+                return 1;
+
+            std::cout
+                << "\n⚠ Se continúa únicamente para "
+                << "inspeccionar el IR de esta fase.\n";
         }
 
-        std::cout
-            << "✔ Programa semánticamente válido\n";
+        if (semanticOk)
+        {
+            std::cout
+                << "✔ Programa semánticamente válido\n";
 
-        std::cout
-            << "✔ main() encontrada\n";
+            std::cout
+                << "✔ main() encontrada\n";
 
-        std::cout
-            << "✔ Tipos válidos\n";
+            std::cout
+                << "✔ Tipos válidos\n";
 
-        std::cout
-            << "✔ Expresiones válidas\n";
+            std::cout
+                << "✔ Expresiones válidas\n";
 
-        std::cout
-            << "✔ Sentencias válidas\n";
+            std::cout
+                << "✔ Sentencias válidas\n";
 
-        std::cout
-            << "\n✔ K++ frontend OK\n";
+            std::cout
+                << "\n✔ K++ frontend OK\n";
+        }
+        else
+        {
+            std::cout
+                << "⚠ K++ frontend: diagnóstico pendiente "
+                << "de file_write\n";
+        }
 
         // ========================================================
         // K++ IR
@@ -736,6 +766,26 @@ int main(int argc, char** argv)
                             << "["
                             << instruction.operand
                             << "] -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    // ========================================================
+                    // FILE READ
+                    // ========================================================
+
+                    case kpp::IROpcode::FileRead:
+
+                        std::cout
+                            << "FILE_READ \""
+                            << instruction.name
+                            << "\", "
+                            << instruction.operand
+                            << ", "
+                            << instruction.value
+                            << " -> "
                             << instruction.result
                             << '\n';
 
@@ -1371,6 +1421,54 @@ int main(int argc, char** argv)
 
         std::cout
             << "\n✔ K++ IR generada correctamente\n";
+
+        bool containsFileRead = false;
+
+        for (const auto& function : ir.functions)
+        {
+            for (const auto& instruction :
+                 function.instructions)
+            {
+                if (instruction.opcode ==
+                    kpp::IROpcode::FileRead)
+                {
+                    containsFileRead = true;
+                    break;
+                }
+            }
+
+            if (containsFileRead)
+                break;
+        }
+
+        // FILE_READ pertenece a esta fase del frontend/IR.
+        // El backend x86 todavía no implementa lectura real.
+        // No se debe generar código máquina ficticio.
+        if (!semanticOk || containsFileRead)
+        {
+            std::cout
+                << "\nK++ BACKEND OMITIDO\n"
+                << "===================\n";
+
+            if (containsFileRead)
+            {
+                std::cout
+                    << "FILE_READ está representado en IR, "
+                    << "pero su ejecución x86 todavía "
+                    << "no está implementada.\n";
+            }
+
+            if (!semanticOk)
+            {
+                std::cout
+                    << "El programa conserva el diagnóstico "
+                    << "semántico de file_write.\n";
+
+                return 1;
+            }
+
+            return 2;
+        }
 
 
         // ========================================================

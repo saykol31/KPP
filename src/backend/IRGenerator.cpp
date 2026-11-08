@@ -58,6 +58,13 @@ const char* irOpcodeName(IROpcode opcode)
             return "ARRAY_STORE";
 
         // ====================================================
+        // FILE I/O
+        // ====================================================
+
+        case IROpcode::FileRead:
+            return "FILE_READ";
+
+        // ====================================================
         // ARITMÉTICA BÁSICA
         // ====================================================
 
@@ -333,6 +340,7 @@ IRFunction IRGenerator::generateFunction(
 
     // Cada función empieza con un ámbito raíz independiente.
     variableScopes.clear();
+    arraySizeScopes.clear();
     variableNameCounter = 0;
     enterVariableScope();
 
@@ -442,6 +450,15 @@ void IRGenerator::generateStatement(
 
         variableScopes.back()[variableDeclaration->name] =
             mangledName;
+
+        // Conservar la capacidad real del array en el mismo
+        // ámbito que su identidad IR.
+        //
+        // También se registra 0 para escalares, de modo que
+        // una variable escalar que oculte un array exterior
+        // no herede accidentalmente su capacidad.
+        arraySizeScopes.back()[variableDeclaration->name] =
+            variableDeclaration->arraySize;
 
         // ----------------------------------------------------
         // DECLARE
@@ -1207,6 +1224,65 @@ std::string IRGenerator::generateExpression(
         dynamic_cast<const CallExpression*>(
             &expression))
     {
+        // ====================================================
+        // FILE_READ
+        //
+        // FILE_READ "archivo.bin", datos@0, 16 -> %0
+        //
+        // No se genera LOAD del array.
+        // El array se transporta por identidad y capacidad.
+        // ====================================================
+
+        if (call->callee == "file_read")
+        {
+            if (call->arguments.size() != 2)
+            {
+                throw std::runtime_error(
+                    "K++ IR: file_read requiere dos argumentos");
+            }
+
+            const auto* path =
+                dynamic_cast<const StringLiteral*>(
+                    call->arguments[0].get());
+
+            const auto* array =
+                dynamic_cast<const VariableExpression*>(
+                    call->arguments[1].get());
+
+            if (path == nullptr || array == nullptr)
+            {
+                throw std::runtime_error(
+                    "K++ IR: argumentos inválidos para file_read");
+            }
+
+            const std::string arrayIdentity =
+                resolveVariableName(array->name);
+
+            const int capacity =
+                resolveArraySize(array->name);
+
+            if (arrayIdentity.empty() || capacity <= 0)
+            {
+                throw std::runtime_error(
+                    "K++ IR: array inválido o sin capacidad "
+                    "para file_read: " +
+                    array->name);
+            }
+
+            const std::string result =
+                createTemporary();
+
+            function.instructions.push_back({
+                IROpcode::FileRead,
+                path->value,
+                arrayIdentity,
+                result,
+                capacity
+            });
+
+            return result;
+        }
+
         // ----------------------------------------------------
         // Generar los argumentos en el orden en que aparecen.
         //

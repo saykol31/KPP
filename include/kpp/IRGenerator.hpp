@@ -78,6 +78,15 @@ private:
     std::vector<std::unordered_map<std::string, std::string>>
         variableScopes;
 
+    // Capacidad de cada array por ámbito.
+    //
+    // 0 = variable escalar.
+    // >0 = capacidad real del array.
+    //
+    // Se mantiene sincronizada con variableScopes.
+    std::vector<std::unordered_map<std::string, int>>
+        arraySizeScopes;
+
     int variableNameCounter = 0;
 
     // Tipo de estructura -> nombre de campo -> tipo del campo.
@@ -89,12 +98,16 @@ private:
     void enterVariableScope()
     {
         variableScopes.emplace_back();
+        arraySizeScopes.emplace_back();
     }
 
     void leaveVariableScope()
     {
         if (!variableScopes.empty())
             variableScopes.pop_back();
+
+        if (!arraySizeScopes.empty())
+            arraySizeScopes.pop_back();
     }
 
     std::string resolveVariableName(
@@ -111,6 +124,25 @@ private:
         // Parámetros y nombres administrados por el backend
         // conservan su nombre original si no están registrados.
         return name;
+    }
+
+    // ========================================================
+    // RESOLVER CAPACIDAD DE ARRAY
+    // ========================================================
+
+    int resolveArraySize(
+        const std::string& name) const
+    {
+        for (auto it = arraySizeScopes.rbegin();
+             it != arraySizeScopes.rend(); ++it)
+        {
+            auto found = it->find(name);
+
+            if (found != it->end())
+                return found->second;
+        }
+
+        return 0;
     }
 
     // ========================================================

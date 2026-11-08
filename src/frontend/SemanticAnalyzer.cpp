@@ -974,6 +974,11 @@ std::string SemanticAnalyzer::inferExpressionType(
     if (const auto* call =
             dynamic_cast<const CallExpression*>(&expression))
     {
+        // Nativa file_read:
+        // devuelve la cantidad de bytes leídos como int.
+        if (call->callee == "file_read")
+            return "int";
+
         const auto function = functionDeclarations.find(call->callee);
         if (function == functionDeclarations.end() ||
             function->second == nullptr)
@@ -1146,6 +1151,105 @@ void SemanticAnalyzer::analyzeExpression(
         dynamic_cast<const CallExpression*>(
             &expression))
     {
+        // ====================================================
+        // NATIVA FILE_READ
+        //
+        // file_read("archivo.bin", datos)
+        //
+        // Requisitos:
+        //   - exactamente dos argumentos;
+        //   - ruta StringLiteral;
+        //   - segundo argumento VariableExpression;
+        //   - variable declarada;
+        //   - tipo int;
+        //   - capacidad de array mayor que cero.
+        //
+        // No se acepta:
+        //   file_read(ruta_variable, datos)
+        //   file_read("archivo.bin", datos[0])
+        //   file_read("archivo.bin", escalar)
+        // ====================================================
+
+        if (call->callee == "file_read")
+        {
+            if (call->arguments.size() != 2)
+            {
+                semanticErrors.push_back({
+                    "file_read requiere exactamente dos argumentos"
+                });
+
+                return;
+            }
+
+            const auto* path =
+                dynamic_cast<const StringLiteral*>(
+                    call->arguments[0].get());
+
+            if (path == nullptr)
+            {
+                semanticErrors.push_back({
+                    "el primer argumento de file_read debe ser "
+                    "una ruta literal StringLiteral"
+                });
+
+                return;
+            }
+
+            const auto* array =
+                dynamic_cast<const VariableExpression*>(
+                    call->arguments[1].get());
+
+            if (array == nullptr)
+            {
+                semanticErrors.push_back({
+                    "el segundo argumento de file_read debe ser "
+                    "una variable de array, no un acceso indexado "
+                    "ni una expresión"
+                });
+
+                return;
+            }
+
+            const std::string* arrayType =
+                lookupVariable(array->name);
+
+            if (arrayType == nullptr)
+            {
+                semanticErrors.push_back({
+                    "array no declarado para file_read: '" +
+                    array->name + "'"
+                });
+
+                return;
+            }
+
+            if (*arrayType != "int")
+            {
+                semanticErrors.push_back({
+                    "file_read requiere un array de tipo int: '" +
+                    array->name + "'"
+                });
+
+                return;
+            }
+
+            const int capacity =
+                lookupArraySize(array->name);
+
+            if (capacity <= 0)
+            {
+                semanticErrors.push_back({
+                    "file_read requiere un array declarado "
+                    "con capacidad positiva: '" +
+                    array->name + "'"
+                });
+
+                return;
+            }
+
+            return;
+        }
+
         // ----------------------------------------------------
         // Verificar que la función exista.
         // ----------------------------------------------------
