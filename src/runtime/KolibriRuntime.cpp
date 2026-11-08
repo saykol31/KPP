@@ -315,6 +315,691 @@ KolibriRuntime::emitGraphicsRuntime(
 }
 
 
+
+// ============================================================
+// FILE I/O RUNTIME — KOLIBRIOS
+// ============================================================
+
+KolibriFileIoRuntimeResult
+KolibriRuntime::emitFileIoRuntime(
+    X86Emitter& emitter)
+{
+    KolibriFileIoRuntimeResult result;
+
+    using BranchList = std::vector<std::size_t>;
+
+    // --------------------------------------------------------
+    // HELPERS DE CODIFICACIÓN X86
+    // --------------------------------------------------------
+
+    const auto emitJcc =
+        [&emitter](std::uint8_t condition)
+        {
+            emitter.emitByte(0x0F);
+            emitter.emitByte(condition);
+
+            return emitter.emitRel32Placeholder();
+        };
+
+    const auto emitJmp =
+        [&emitter]()
+        {
+            emitter.emitByte(0xE9);
+
+            return emitter.emitRel32Placeholder();
+        };
+
+    const auto emitCmpRegImm32 =
+        [&emitter](
+            std::uint8_t modrm,
+            std::uint32_t value)
+        {
+            emitter.emitByte(0x81);
+            emitter.emitByte(modrm);
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 8));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 16));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 24));
+        };
+
+    const auto emitLoadEaxEsp =
+        [&emitter](std::uint8_t displacement)
+        {
+            // MOV EAX, [ESP + disp8]
+            emitter.emitByte(0x8B);
+            emitter.emitByte(0x44);
+            emitter.emitByte(0x24);
+            emitter.emitByte(displacement);
+        };
+
+    const auto emitLoadEcxEsp =
+        [&emitter](std::uint8_t displacement)
+        {
+            // MOV ECX, [ESP + disp8]
+            emitter.emitByte(0x8B);
+            emitter.emitByte(0x4C);
+            emitter.emitByte(0x24);
+            emitter.emitByte(displacement);
+        };
+
+    const auto emitLoadEdxEsp =
+        [&emitter](std::uint8_t displacement)
+        {
+            // MOV EDX, [ESP + disp8]
+            emitter.emitByte(0x8B);
+            emitter.emitByte(0x54);
+            emitter.emitByte(0x24);
+            emitter.emitByte(displacement);
+        };
+
+    const auto emitLoadEsiEsp =
+        [&emitter](std::uint8_t displacement)
+        {
+            // MOV ESI, [ESP + disp8]
+            emitter.emitByte(0x8B);
+            emitter.emitByte(0x74);
+            emitter.emitByte(0x24);
+            emitter.emitByte(displacement);
+        };
+
+    const auto emitLoadEdiEsp =
+        [&emitter](std::uint8_t displacement)
+        {
+            // MOV EDI, [ESP + disp8]
+            emitter.emitByte(0x8B);
+            emitter.emitByte(0x7C);
+            emitter.emitByte(0x24);
+            emitter.emitByte(displacement);
+        };
+
+    const auto emitMovEbxImm32Placeholder =
+        [&emitter]()
+        {
+            // MOV EBX, imm32
+            emitter.emitByte(0xBB);
+            return emitter.emitImm32Placeholder();
+        };
+
+    const auto emitMovEsiImm32Placeholder =
+        [&emitter]()
+        {
+            // MOV ESI, imm32
+            emitter.emitByte(0xBE);
+            return emitter.emitImm32Placeholder();
+        };
+
+    const auto emitMovEdiImm32Placeholder =
+        [&emitter]()
+        {
+            // MOV EDI, imm32
+            emitter.emitByte(0xBF);
+            return emitter.emitImm32Placeholder();
+        };
+
+    const auto emitMovDwordEbxDispImm32 =
+        [&emitter](
+            std::uint8_t displacement,
+            std::uint32_t value)
+        {
+            // MOV DWORD [EBX + disp8], imm32
+            emitter.emitByte(0xC7);
+            emitter.emitByte(0x43);
+            emitter.emitByte(displacement);
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 8));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 16));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 24));
+        };
+
+    const auto emitCommonPrologue =
+        [&emitter]()
+        {
+            // Preservar registros callee-saved.
+            emitter.emitPushEbx();
+            emitter.emitByte(0x56); // PUSH ESI
+            emitter.emitByte(0x57); // PUSH EDI
+
+            // Guardar argumentos.
+            emitter.emitPushEax();
+            emitter.emitByte(0x51); // PUSH ECX
+            emitter.emitByte(0x52); // PUSH EDX
+        };
+
+    const auto emitCommonEpilogue =
+        [&emitter]()
+        {
+            // Descartar EDX, ECX y EAX guardados.
+            emitter.emitByte(0x83);
+            emitter.emitByte(0xC4);
+            emitter.emitByte(0x0C);
+
+            // Restaurar registros preservados.
+            emitter.emitByte(0x5F); // POP EDI
+            emitter.emitByte(0x5E); // POP ESI
+            emitter.emitByte(0x5B); // POP EBX
+
+            emitter.emitRet();
+        };
+
+    // ========================================================
+    // FILE_WRITE
+    // ========================================================
+
+    result.fileWriteEntry =
+        emitter.size();
+
+    BranchList writeFailureBranches;
+    BranchList writeSuccessBranches;
+
+    emitCommonPrologue();
+
+    /*
+     * Distribución de pila después del prólogo:
+     *
+     * [ESP + 00] = EDX original: capacidad
+     * [ESP + 04] = ECX original: cantidad
+     * [ESP + 08] = EAX original: ruta
+     * [ESP + 12] = EDI preservado
+     * [ESP + 16] = ESI preservado
+     * [ESP + 20] = EBX preservado: array
+     * [ESP + 24] = dirección de retorno
+     */
+
+    // Ruta no nula.
+    emitLoadEaxEsp(8);
+    emitter.emitCmpEaxImm32(0);
+
+    writeFailureBranches.push_back(
+        emitJcc(0x84)); // JE
+
+    // Array no nulo.
+    emitLoadEaxEsp(20);
+    emitter.emitCmpEaxImm32(0);
+
+    writeFailureBranches.push_back(
+        emitJcc(0x84)); // JE
+
+    // Cantidad >= 0.
+    emitLoadEcxEsp(4);
+    emitCmpRegImm32(0xF9, 0); // CMP ECX, 0
+
+    writeFailureBranches.push_back(
+        emitJcc(0x8C)); // JL
+
+    // Capacidad >= 0.
+    emitLoadEdxEsp(0);
+    emitCmpRegImm32(0xFA, 0); // CMP EDX, 0
+
+    writeFailureBranches.push_back(
+        emitJcc(0x8C)); // JL
+
+    // Capacidad <= 65536.
+    emitCmpRegImm32(
+        0xFA,
+        KOLIBRI_FILE_IO_MAX_BYTES);
+
+    writeFailureBranches.push_back(
+        emitJcc(0x87)); // JA
+
+    // Cantidad <= capacidad.
+    emitLoadEcxEsp(4);
+    emitLoadEdxEsp(0);
+
+    emitter.emitByte(0x39);
+    emitter.emitByte(0xD1); // CMP ECX, EDX
+
+    writeFailureBranches.push_back(
+        emitJcc(0x87)); // JA
+
+    // --------------------------------------------------------
+    // CONVERSIÓN ARRAY int32_t -> SCRATCH byte[]
+    // --------------------------------------------------------
+
+    emitLoadEsiEsp(20);
+
+    result.writeScratchAddressPatch =
+        emitMovEdiImm32Placeholder();
+
+    // EDX conserva la base del scratch.
+    //
+    // El bucle de conversión avanza EDI, así que la
+    // dirección que necesita el campo bufferAddress
+    // del bloque es la base, no el puntero avanzado.
+    // EDX ya no interviene tras las validaciones
+    // (cantidad y capacidad viven en la pila).
+    //
+    // MOV EDX, EDI
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xFA);
+
+    emitLoadEcxEsp(4);
+
+    // Cantidad cero: no ejecutar el bucle.
+    emitter.emitByte(0x85);
+    emitter.emitByte(0xC9); // TEST ECX, ECX
+
+    const std::size_t writeCopySkip =
+        emitJcc(0x84); // JE
+
+    const std::size_t writeCopyLoop =
+        emitter.size();
+
+    // EAX = celda int32_t.
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x06); // MOV EAX, [ESI]
+
+    // Guardar el byte bajo.
+    emitter.emitByte(0x88);
+    emitter.emitByte(0x07); // MOV [EDI], AL
+
+    // Avanzar array: 4 bytes.
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC6);
+    emitter.emitByte(0x04);
+
+    // Avanzar scratch: 1 byte.
+    emitter.emitByte(0x47); // INC EDI
+
+    // Siguiente celda.
+    emitter.emitByte(0x49); // DEC ECX
+
+    const std::size_t writeLoopBack =
+        emitJcc(0x85); // JNZ
+
+    emitter.patchRel32(
+        writeLoopBack,
+        writeCopyLoop);
+
+    const std::size_t writeCopyDone =
+        emitter.size();
+
+    emitter.patchRel32(
+        writeCopySkip,
+        writeCopyDone);
+
+
+    // --------------------------------------------------------
+    // ARMAR BLOQUE FUNCIÓN 70
+    // --------------------------------------------------------
+
+    result.writeParamsAddressPatch =
+        emitMovEbxImm32Placeholder();
+
+    // +00: subfunción WRITE = 2.
+    emitMovDwordEbxDispImm32(0, 2);
+
+    // +04: offsetLow = 0.
+    emitMovDwordEbxDispImm32(4, 0);
+
+    // +08: offsetHigh = 0.
+    emitMovDwordEbxDispImm32(8, 0);
+
+    // +12: cantidad.
+    emitLoadEcxEsp(4);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x4B);
+    emitter.emitByte(0x0C);
+
+    // +16: dirección del scratch.
+    //
+    // La base viene en EDX: EDI quedó avanzado
+    // por el bucle de conversión.
+    //
+    // MOV DWORD [EBX + 0x10], EDX
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x53);
+    emitter.emitByte(0x10);
+
+    // +20: encoding RAW = 0.
+    emitter.emitByte(0xC6);
+    emitter.emitByte(0x43);
+    emitter.emitByte(0x14);
+    emitter.emitByte(0x00);
+
+    // +21: puntero de ruta.
+    emitLoadEaxEsp(8);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x43);
+    emitter.emitByte(0x15);
+
+    // --------------------------------------------------------
+    // INT 0x40 — FUNCIÓN 70
+    // --------------------------------------------------------
+
+    emitter.emitMovEaxImm32(
+        static_cast<std::int32_t>(
+            KOLIBRI_FILE_IO_FUNCTION));
+
+    emitter.emitInt(0x40);
+
+    // EAX == 0 significa éxito.
+    emitter.emitCmpEaxImm32(0);
+
+    writeFailureBranches.push_back(
+        emitJcc(0x85)); // JNE
+
+    // Retorno correcto.
+    emitter.emitByte(0x31);
+    emitter.emitByte(0xC0); // XOR EAX, EAX
+
+    writeSuccessBranches.push_back(
+        emitJmp());
+
+    // --------------------------------------------------------
+    // ERROR WRITE
+    // --------------------------------------------------------
+
+    const std::size_t writeFailure =
+        emitter.size();
+
+    emitter.emitMovEaxImm32(-1);
+
+    const std::size_t writeEpilogue =
+        emitter.size();
+
+    emitCommonEpilogue();
+
+    for (const std::size_t patch :
+         writeFailureBranches)
+    {
+        emitter.patchRel32(
+            patch,
+            writeFailure);
+    }
+
+    for (const std::size_t patch :
+         writeSuccessBranches)
+    {
+        emitter.patchRel32(
+            patch,
+            writeEpilogue);
+    }
+
+    // ========================================================
+    // FILE_READ
+    // ========================================================
+
+    result.fileReadEntry =
+        emitter.size();
+
+    BranchList readFailureBranches;
+    BranchList readSuccessBranches;
+    BranchList readEofBranches;
+
+    emitCommonPrologue();
+
+    /*
+     * Distribución de pila:
+     *
+     * [ESP + 00] = EDX original
+     * [ESP + 04] = ECX original: capacidad
+     * [ESP + 08] = EAX original: ruta
+     * [ESP + 12] = EDI preservado
+     * [ESP + 16] = ESI preservado
+     * [ESP + 20] = EBX preservado: array
+     * [ESP + 24] = dirección de retorno
+     */
+
+    // Ruta no nula.
+    emitLoadEaxEsp(8);
+    emitter.emitCmpEaxImm32(0);
+
+    readFailureBranches.push_back(
+        emitJcc(0x84)); // JE
+
+    // Array no nulo.
+    emitLoadEaxEsp(20);
+    emitter.emitCmpEaxImm32(0);
+
+    readFailureBranches.push_back(
+        emitJcc(0x84)); // JE
+
+    // Capacidad > 0.
+    emitLoadEcxEsp(4);
+    emitCmpRegImm32(0xF9, 0);
+
+    readFailureBranches.push_back(
+        emitJcc(0x8E)); // JLE
+
+    // Capacidad <= 65536.
+    emitCmpRegImm32(
+        0xF9,
+        KOLIBRI_FILE_IO_MAX_BYTES);
+
+    readFailureBranches.push_back(
+        emitJcc(0x87)); // JA
+
+    // --------------------------------------------------------
+    // ARMAR BLOQUE FUNCIÓN 70
+    // --------------------------------------------------------
+
+    result.readParamsAddressPatch =
+        emitMovEbxImm32Placeholder();
+
+    // +00: subfunción READ = 0.
+    emitMovDwordEbxDispImm32(0, 0);
+
+    // +04: offsetLow = 0.
+    emitMovDwordEbxDispImm32(4, 0);
+
+    // +08: offsetHigh = 0.
+    emitMovDwordEbxDispImm32(8, 0);
+
+    // +12: capacidad solicitada.
+    emitLoadEcxEsp(4);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x4B);
+    emitter.emitByte(0x0C);
+
+    // +16: dirección scratch.
+    result.readScratchAddressPatch =
+        emitMovEsiImm32Placeholder();
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x73);
+    emitter.emitByte(0x10);
+
+    // +20: encoding RAW = 0.
+    emitter.emitByte(0xC6);
+    emitter.emitByte(0x43);
+    emitter.emitByte(0x14);
+    emitter.emitByte(0x00);
+
+    // +21: puntero de ruta.
+    emitLoadEaxEsp(8);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x43);
+    emitter.emitByte(0x15);
+
+    // --------------------------------------------------------
+    // INT 0x40 — FUNCIÓN 70
+    // --------------------------------------------------------
+
+    emitter.emitMovEaxImm32(
+        static_cast<std::int32_t>(
+            KOLIBRI_FILE_IO_FUNCTION));
+
+    emitter.emitInt(0x40);
+
+    // Código 6 = EOF: éxito corto.
+    //
+    // EBX trae los bytes realmente leídos, así que
+    // esta rama comparte el camino de validación
+    // y desempaquetado con EAX == 0.
+    emitter.emitCmpEaxImm32(
+        static_cast<std::int32_t>(
+            KOLIBRI_FILE_IO_EOF));
+
+    readEofBranches.push_back(
+        emitJcc(0x84)); // JE
+
+    // EAX == 0 significa lectura correcta.
+    emitter.emitCmpEaxImm32(0);
+
+    readFailureBranches.push_back(
+        emitJcc(0x85)); // JNE
+
+    // --------------------------------------------------------
+    // VALIDAR CANTIDAD DEVUELTA
+    //
+    // Punto común de EAX == 0 y EAX == 6 (EOF):
+    // EBX = bytes leídos en ambos casos.
+    // --------------------------------------------------------
+
+    const std::size_t readValidateCount =
+        emitter.size();
+
+    emitLoadEcxEsp(4);
+
+    // EBX = bytes leídos.
+    // ECX = capacidad solicitada.
+    emitter.emitByte(0x39);
+    emitter.emitByte(0xCB); // CMP EBX, ECX
+
+    readFailureBranches.push_back(
+        emitJcc(0x87)); // JA
+
+    // Guardar el número de bytes leídos.
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xDA); // MOV EDX, EBX
+
+    // Si no hay bytes, devolver cero.
+    emitter.emitByte(0x85);
+    emitter.emitByte(0xD2); // TEST EDX, EDX
+
+    const std::size_t readCopySkip =
+        emitJcc(0x84); // JE
+
+    // --------------------------------------------------------
+    // CONVERSIÓN SCRATCH byte[] -> ARRAY int32_t
+    //
+    // ESI ya contiene la base del scratch: se cargó
+    // una única vez al armar el bloque y su
+    // placeholder es el registrado en
+    // result.readScratchAddressPatch.
+    // INT 0x40 preserva ESI.
+    // --------------------------------------------------------
+
+    emitLoadEdiEsp(20);
+
+    // Número de bytes a convertir.
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xD1); // MOV ECX, EDX
+
+    const std::size_t readCopyLoop =
+        emitter.size();
+
+    // EAX = zero_extend(byte [ESI]).
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0xB6);
+    emitter.emitByte(0x06);
+
+    // [EDI] = EAX.
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x07);
+
+    // Siguiente byte.
+    emitter.emitByte(0x46); // INC ESI
+
+    // Siguiente celda int32_t.
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x04);
+
+    emitter.emitByte(0x49); // DEC ECX
+
+    const std::size_t readLoopBack =
+        emitJcc(0x85); // JNZ
+
+    emitter.patchRel32(
+        readLoopBack,
+        readCopyLoop);
+
+    const std::size_t readCopyDone =
+        emitter.size();
+
+    emitter.patchRel32(
+        readCopySkip,
+        readCopyDone);
+
+    // EAX = bytes leídos.
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xD0); // MOV EAX, EDX
+
+    readSuccessBranches.push_back(
+        emitJmp());
+
+    // --------------------------------------------------------
+    // ERROR READ
+    // --------------------------------------------------------
+
+    const std::size_t readFailure =
+        emitter.size();
+
+    emitter.emitMovEaxImm32(-1);
+
+    const std::size_t readEpilogue =
+        emitter.size();
+
+    emitCommonEpilogue();
+
+    // --------------------------------------------------------
+    // RESOLVER SALTOS
+    // --------------------------------------------------------
+
+    for (const std::size_t patch :
+         readFailureBranches)
+    {
+        emitter.patchRel32(
+            patch,
+            readFailure);
+    }
+
+    for (const std::size_t patch :
+         readEofBranches)
+    {
+        emitter.patchRel32(
+            patch,
+            readValidateCount);
+    }
+
+    for (const std::size_t patch :
+         readSuccessBranches)
+    {
+        emitter.patchRel32(
+            patch,
+            readEpilogue);
+    }
+
+    return result;
+}
+
+
+// ============================================================
+// FIN FILE I/O RUNTIME
+// ============================================================
+
+
 // ============================================================
 // PRINT
 // ============================================================

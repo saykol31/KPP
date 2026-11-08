@@ -470,6 +470,31 @@ X86Backend::generate(
 
     std::vector<std::uint8_t> data;
 
+    // KPP_FILE_IO_RUNTIME_BACKEND_PHASE2
+    //
+    // No reservar 64 KiB ni emitir las rutinas File I/O
+    // cuando el programa no utiliza estas instrucciones.
+
+    bool needsFileIoRuntime = false;
+
+    for (const auto& function : program.functions)
+    {
+        for (const auto& instruction : function.instructions)
+        {
+            if (instruction.opcode == IROpcode::FileRead ||
+                instruction.opcode == IROpcode::FileWrite)
+            {
+                needsFileIoRuntime = true;
+                break;
+            }
+        }
+
+        if (needsFileIoRuntime)
+        {
+            break;
+        }
+    }
+
     std::size_t integerBufferOffset = 0;
 
     // KPP_CURSOR_DATA
@@ -521,6 +546,15 @@ X86Backend::generate(
     const KolibriRuntimeResult runtimeResult =
         runtime.emitGraphicsRuntime(
             emitter);
+
+    // Runtime File I/O: solo cuando el IR lo necesita.
+    KolibriFileIoRuntimeResult fileIoRuntimeResult{};
+
+    if (needsFileIoRuntime)
+    {
+        fileIoRuntimeResult =
+            runtime.emitFileIoRuntime(emitter);
+    }
 
 
     // ========================================================
@@ -3997,6 +4031,38 @@ std::vector<std::size_t>
     }
 
     // ========================================================
+    // KPP_FILE_IO_RUNTIME_BACKEND_PHASE2
+    // SCRATCH Y BLOQUE DE PARÁMETROS
+    // ========================================================
+
+    std::size_t fileIoScratchOffset = 0;
+    std::size_t fileIoParamsOffset = 0;
+
+    if (needsFileIoRuntime)
+    {
+        // Scratch compartido de transferencia.
+        fileIoScratchOffset = data.size();
+
+        data.resize(
+            data.size() + KOLIBRI_FILE_IO_MAX_BYTES,
+            0);
+
+        // Alinear el comienzo del bloque a cuatro bytes.
+        while ((data.size() % 4u) != 0u)
+        {
+            data.push_back(0);
+        }
+
+        fileIoParamsOffset = data.size();
+
+        // La estructura empaquetada ocupa exactamente 25 bytes.
+        data.resize(
+            data.size() + sizeof(KolibriFileIoParams),
+            0);
+    }
+
+
+    // ========================================================
     // DATA BASE
     // ========================================================
 
@@ -4011,6 +4077,43 @@ std::vector<std::size_t>
             KOLIBRI_HEADER_SIZE +
             static_cast<std::uint32_t>(
                 codeSize);
+
+
+    // ========================================================
+    // KPP_FILE_IO_RUNTIME_BACKEND_PHASE2
+    // PATCH DIRECCIONES DEL RUNTIME FILE I/O
+    // ========================================================
+
+    if (needsFileIoRuntime)
+    {
+        const std::uint32_t scratchAddress =
+            dataBase +
+            static_cast<std::uint32_t>(
+                fileIoScratchOffset);
+
+        const std::uint32_t paramsAddress =
+            dataBase +
+            static_cast<std::uint32_t>(
+                fileIoParamsOffset);
+
+        // FILE_WRITE.
+        emitter.patch32(
+            fileIoRuntimeResult.writeScratchAddressPatch,
+            scratchAddress);
+
+        emitter.patch32(
+            fileIoRuntimeResult.writeParamsAddressPatch,
+            paramsAddress);
+
+        // FILE_READ.
+        emitter.patch32(
+            fileIoRuntimeResult.readScratchAddressPatch,
+            scratchAddress);
+
+        emitter.patch32(
+            fileIoRuntimeResult.readParamsAddressPatch,
+            paramsAddress);
+    }
 
 
     // ========================================================

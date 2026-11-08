@@ -41,6 +41,10 @@ inline constexpr std::uint32_t
 inline constexpr std::uint32_t
     KOLIBRI_FILE_IO_SUBFUNCTION_WRITE = 2u;
 
+// KolibriOS puede devolver 6 al alcanzar EOF.
+inline constexpr std::uint32_t
+    KOLIBRI_FILE_IO_EOF = 6u;
+
 inline constexpr std::uint32_t
     KOLIBRI_FILE_IO_MAX_BYTES = 64u * 1024u;
 
@@ -239,6 +243,58 @@ static_assert(
 // ============================================================
 
 
+// ============================================================
+// KPP_FILE_IO_RUNTIME_PHASE2
+//
+// ABI INTERNA DE LAS RUTINAS FILE I/O
+//
+// WRITE:
+//
+//     EAX = dirección de la ruta
+//     EBX = dirección del array int32_t
+//     ECX = cantidad de celdas
+//     EDX = capacidad del array
+//
+// READ:
+//
+//     EAX = dirección de la ruta
+//     EBX = dirección del array int32_t
+//     ECX = capacidad del array
+//
+// RETORNO:
+//
+//     EAX = resultado.
+//
+// REGISTROS:
+//
+//     EAX, ECX, EDX: volátiles.
+//     EBX, ESI, EDI: preservados por el runtime.
+//     EBP, ESP: preservados.
+//
+// La rutina guarda los registros preservados y los argumentos
+// que necesita en su propio marco de pila.
+//
+// La pila queda exactamente restaurada antes de RET.
+//
+// El caller debe preservar los temporales vivos que puedan
+// resultar destruidos durante la preparación de argumentos,
+// siguiendo la disciplina L15.
+//
+// SCRATCH:
+//
+//     65536 bytes compartidos entre READ y WRITE.
+//
+// BLOQUE:
+//
+//     sizeof(KolibriFileIoParams) = 25 bytes.
+//
+// EOF:
+//
+//     El código 6 de KolibriOS es éxito corto: EBX trae
+//     los bytes realmente leídos y la rutina devuelve
+//     ese conteo, igual que con EAX == 0.
+// ============================================================
+
 class X86Emitter;
 
 struct KolibriRuntimeResult
@@ -258,6 +314,27 @@ struct KolibriRuntimeResult
     // Dirección del título
     std::size_t titleAddressPatch = 0;
 };
+
+
+// ============================================================
+// RESULTADO DE EMISIÓN DEL RUNTIME FILE I/O
+//
+// Las posiciones son offsets dentro del código x86.
+// El backend las parchea cuando conoce dataBase.
+// ============================================================
+
+struct KolibriFileIoRuntimeResult
+{
+    std::size_t fileWriteEntry = 0;
+    std::size_t fileReadEntry = 0;
+
+    std::size_t writeScratchAddressPatch = 0;
+    std::size_t writeParamsAddressPatch = 0;
+
+    std::size_t readScratchAddressPatch = 0;
+    std::size_t readParamsAddressPatch = 0;
+};
+
 
 class KolibriRuntime
 {
@@ -306,6 +383,21 @@ public:
     emitPrintInteger(
         X86Emitter& emitter,
         std::uint32_t y);
+
+    /*
+     * Genera las rutinas x86 internas de FILE_WRITE y FILE_READ.
+     *
+     * Devuelve:
+     *     Entradas de ambas rutinas.
+     *     Parches para scratch.
+     *     Parches para el bloque de parámetros.
+     *
+     * Las direcciones absolutas se resolverán cuando
+     * X86Backend conozca la dirección base de DATA.
+     */
+    KolibriFileIoRuntimeResult
+    emitFileIoRuntime(
+        X86Emitter& emitter);
 
     /*
      * Genera salida inmediata de KolibriOS.
