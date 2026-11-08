@@ -19,7 +19,8 @@ KolibriRuntime::emitGraphicsRuntime(
     // PRINT CURSOR
     // ========================================================
     //
-    // EBP queda reservado para el cursor gráfico de K++.
+    // El cursor gráfico vive en una variable de DATA:
+    // EBP queda libre como puntero de marco (Rebanada 1).
     //
     // X = 35
     // Y = 40
@@ -29,9 +30,11 @@ KolibriRuntime::emitGraphicsRuntime(
     // y cada PRINT / PRINT_INT avanza Y.
     //
 
-    emitter.emitMovRegImm32(
-        0xBD,
+    emitter.emitMovEaxImm32(
         (35u << 16) + 40u);
+
+    cursorPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
 
     // ========================================================
     // START
@@ -331,9 +334,9 @@ KolibriRuntime::emitPrint(
      *
      * X = 35
      */
-    // EBX = cursor gráfico actual
-    // EBP contiene X/Y empaquetado.
-    emitter.emitMovEbxEbp();
+    // EBX = cursor gráfico actual (variable en DATA).
+    cursorPatchList.push_back(
+        emitter.emitMovEbxMem32Placeholder());
 
     // Text color
     emitter.emitMovRegImm32(
@@ -355,7 +358,13 @@ KolibriRuntime::emitPrint(
     emitter.emitInt(0x40);
 
     // Avanzar el cursor vertical para el siguiente PRINT.
-    emitter.emitAddEbpImm32(10);
+    cursorPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(10);
+
+    cursorPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
 
     return textPatch;
 }
@@ -369,8 +378,9 @@ KolibriRuntime::emitPrintFromEdx(
     // mov eax, 4
     emitter.emitMovEaxImm32(4);
 
-    // EBX = cursor gráfico actual
-    emitter.emitMovEbxEbp();
+    // EBX = cursor gráfico actual (variable en DATA).
+    cursorPatchList.push_back(
+        emitter.emitMovEbxMem32Placeholder());
 
     // Text color
     emitter.emitMovRegImm32(
@@ -388,7 +398,13 @@ KolibriRuntime::emitPrintFromEdx(
     emitter.emitInt(0x40);
 
     // Avanzar el cursor vertical.
-    emitter.emitAddEbpImm32(10);
+    cursorPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(10);
+
+    cursorPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
 
     return 0;
 }
@@ -523,9 +539,9 @@ KolibriRuntime::emitPrintInteger(
 
     emitter.emitMovEaxImm32(4);
 
-    // EBX = cursor gráfico actual
-    // EBP contiene X/Y empaquetado.
-    emitter.emitMovEbxEbp();
+    // EBX = cursor gráfico actual (variable en DATA).
+    cursorPatchList.push_back(
+        emitter.emitMovEbxMem32Placeholder());
 
     emitter.emitMovRegImm32(
         0xB9,
@@ -538,7 +554,13 @@ KolibriRuntime::emitPrintInteger(
     emitter.emitInt(0x40);
 
     // Avanzar el cursor vertical para el siguiente PRINT_INT.
-    emitter.emitAddEbpImm32(10);
+    cursorPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(10);
+
+    cursorPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
 
     /*
      * Restaurar el resultado original.
@@ -557,6 +579,17 @@ KolibriRuntime::emitExit(
 
     // int 0x40
     emitter.emitInt(0x40);
+}
+
+
+// ============================================================
+// CURSOR GRÁFICO — KPP_CURSOR_DATA
+// ============================================================
+
+const std::vector<std::size_t>&
+KolibriRuntime::cursorPatches() const
+{
+    return cursorPatchList;
 }
 
 }

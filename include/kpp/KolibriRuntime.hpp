@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace kpp {
 
@@ -79,6 +80,25 @@ public:
     void
     emitExit(
         X86Emitter& emitter);
+
+    /*
+     * Posiciones del código generado que referencian
+     * la variable del cursor gráfico en DATA.
+     *
+     * El backend las parchea con la dirección
+     * absoluta de la variable cuando conoce dataBase.
+     *
+     * KPP_CURSOR_DATA
+     */
+    const std::vector<std::size_t>&
+    cursorPatches() const;
+
+private:
+
+    // Cursor gráfico: X/Y empaquetado en una variable
+    // de DATA. Antes vivía en EBP; EBP es ahora el
+    // puntero de marco de las funciones (Rebanada 1).
+    std::vector<std::size_t> cursorPatchList;
 };
 
 }

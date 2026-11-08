@@ -43,9 +43,19 @@ private:
     };
 
 
+    // KPP_STACK_FRAME_REBANADA1
     struct VariableLocation
     {
-        std::size_t dataOffset;
+        // Offset absoluto dentro de DATA.
+        // Se utiliza para arrays y variables globales.
+        std::size_t dataOffset = 0;
+
+        // Indica que la variable vive en el marco EBP.
+        bool isStackLocal = false;
+
+        // Desplazamiento firmado respecto a EBP.
+        // Ejemplos: -4, -8, -12, -16.
+        std::int32_t stackOffset = 0;
     };
 
     struct VariableLoadPatch

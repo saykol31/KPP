@@ -17,6 +17,22 @@ public:
     void emitByte(
         std::uint8_t value);
 
+    // --------------------------------------------------------
+    // STACK FRAME — KPP REBANADA 1
+    // --------------------------------------------------------
+
+    void emitPushEbp();
+    void emitMovEbpEsp();
+    std::size_t emitSubEspImm32Placeholder();
+    void emitMovEspEbp();
+    void emitPopEbp();
+
+    void emitMovEaxEbpRelative(std::int32_t displacement);
+    void emitMovEbxEbpRelative(std::int32_t displacement);
+    void emitMovEbpRelativeEax(std::int32_t displacement);
+    void emitMovEbpRelativeEbx(std::int32_t displacement);
+
+
 
     // --------------------------------------------------------
     // MOV
@@ -81,6 +97,8 @@ public:
     void emitMovEdxEbx();
 
     void emitAddEbpImm32(std::uint32_t value);
+
+    void emitAddEaxImm32(std::uint32_t value);
 
 
     // --------------------------------------------------------

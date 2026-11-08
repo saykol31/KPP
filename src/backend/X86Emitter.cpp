@@ -14,6 +14,130 @@ void X86Emitter::emitByte(
     machineCode.push_back(value);
 }
 
+
+// ============================================================
+// KPP_STACK_FRAME_REBANADA1
+// MARCOS DE PILA EBP
+// ============================================================
+
+void X86Emitter::emitPushEbp()
+{
+    // PUSH EBP
+    // 55
+    emitByte(0x55);
+}
+
+void X86Emitter::emitMovEbpEsp()
+{
+    // MOV EBP, ESP
+    // 89 E5
+    emitByte(0x89);
+    emitByte(0xE5);
+}
+
+std::size_t X86Emitter::emitSubEspImm32Placeholder()
+{
+    // SUB ESP, imm32
+    // 81 EC imm32
+
+    emitByte(0x81);
+    emitByte(0xEC);
+
+    return emitImm32Placeholder();
+}
+
+void X86Emitter::emitMovEspEbp()
+{
+    // MOV ESP, EBP
+    // 89 EC
+    emitByte(0x89);
+    emitByte(0xEC);
+}
+
+void X86Emitter::emitPopEbp()
+{
+    // POP EBP
+    // 5D
+    emitByte(0x5D);
+}
+
+void X86Emitter::emitMovEaxEbpRelative(
+    std::int32_t displacement)
+{
+    // MOV EAX, [EBP+disp32]
+    // 8B 85 disp32
+
+    emitByte(0x8B);
+    emitByte(0x85);
+
+    const std::uint32_t value =
+        static_cast<std::uint32_t>(displacement);
+
+    emitByte(static_cast<std::uint8_t>(value & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 8) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 16) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 24) & 0xFF));
+}
+
+void X86Emitter::emitMovEbxEbpRelative(
+    std::int32_t displacement)
+{
+    // MOV EBX, [EBP+disp32]
+    // 8B 9D disp32
+
+    emitByte(0x8B);
+    emitByte(0x9D);
+
+    const std::uint32_t value =
+        static_cast<std::uint32_t>(displacement);
+
+    emitByte(static_cast<std::uint8_t>(value & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 8) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 16) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 24) & 0xFF));
+}
+
+void X86Emitter::emitMovEbpRelativeEax(
+    std::int32_t displacement)
+{
+    // MOV [EBP+disp32], EAX
+    // 89 85 disp32
+
+    emitByte(0x89);
+    emitByte(0x85);
+
+    const std::uint32_t value =
+        static_cast<std::uint32_t>(displacement);
+
+    emitByte(static_cast<std::uint8_t>(value & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 8) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 16) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 24) & 0xFF));
+}
+
+void X86Emitter::emitMovEbpRelativeEbx(
+    std::int32_t displacement)
+{
+    // MOV [EBP+disp32], EBX
+    // 89 9D disp32
+
+    emitByte(0x89);
+    emitByte(0x9D);
+
+    const std::uint32_t value =
+        static_cast<std::uint32_t>(displacement);
+
+    emitByte(static_cast<std::uint8_t>(value & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 8) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 16) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 24) & 0xFF));
+}
+
+// ============================================================
+// FIN KPP_STACK_FRAME_REBANADA1
+// ============================================================
+
+
 // ============================================================
 // CMP EAX, EBX
 //
@@ -594,6 +718,25 @@ void X86Emitter::emitAddEbpImm32(std::uint32_t value)
     // ADD EBP, imm32
     machineCode.push_back(0x81);
     machineCode.push_back(0xC5);
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>(value & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((value >> 8) & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((value >> 16) & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((value >> 24) & 0xFF));
+}
+
+void X86Emitter::emitAddEaxImm32(std::uint32_t value)
+{
+    // ADD EAX, imm32
+    machineCode.push_back(0x81);
+    machineCode.push_back(0xC0);
 
     machineCode.push_back(
         static_cast<std::uint8_t>(value & 0xFF));

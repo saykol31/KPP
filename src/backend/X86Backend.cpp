@@ -419,6 +419,9 @@ X86Backend::generate(
 
     std::size_t integerBufferOffset = 0;
 
+    // KPP_CURSOR_DATA
+    std::size_t cursorDataOffset = 0;
+
     // --------------------------------------------------------
     // Título automático
     // --------------------------------------------------------
@@ -560,6 +563,53 @@ X86Backend::generate(
 
     std::string currentFunctionName;
 
+    // KPP_STACK_FRAME_REBANADA1
+    bool frameActive = false;
+    std::size_t frameSizePatch = 0;
+    std::size_t frameSlots = 0;
+
+    // Reserva un slot de cuatro bytes en el marco actual.
+    // Devuelve -4, -8, -12, -16...
+    const auto allocateFrameSlot = [&frameSlots]() -> std::int32_t
+    {
+        if (frameSlots >= 0x1FFFFFFF)
+        {
+            throw std::runtime_error(
+                "K++ X86Backend: marco de pila demasiado grande.");
+        }
+
+        ++frameSlots;
+
+        return -static_cast<std::int32_t>(
+            frameSlots * 4);
+    };
+
+    // Cierra una función normal cuando termina su cuerpo IR.
+    // El retorno implícito cubre caminos que no ejecutaron RETURN.
+    const auto finishCurrentFunctionFrame = [&]()
+    {
+        if (!frameActive)
+        {
+            return;
+        }
+
+        // Retorno implícito: valor cero.
+        emitter.emitMovEaxImm32(0);
+
+        emitter.emitMovEspEbp();
+        emitter.emitPopEbp();
+        emitter.emitRet();
+
+        const std::size_t frameBytes =
+            frameSlots * 4;
+
+        emitter.patch32(
+            frameSizePatch,
+            static_cast<std::uint32_t>(frameBytes));
+
+        frameActive = false;
+    };
+
     // ========================================================
     // LABELS LOCALES POR FUNCIÓN
     //
@@ -609,6 +659,7 @@ X86Backend::generate(
             if (instruction.opcode ==
                 IROpcode::FunctionBegin)
             {
+                finishCurrentFunctionFrame();
                 if (instruction.name.empty())
                 {
                     throw std::runtime_error(
@@ -653,6 +704,19 @@ X86Backend::generate(
                 {
                     mainBody =
                         emitter.size();
+                }
+                else
+                {
+                    // Cada función normal obtiene su propio marco.
+                    emitter.emitPushEbp();
+                    emitter.emitMovEbpEsp();
+
+                    frameSlots = 0;
+
+                    frameSizePatch =
+                        emitter.emitSubEspImm32Placeholder();
+
+                    frameActive = true;
                 }
 
                 // ------------------------------------------------
@@ -741,31 +805,57 @@ X86Backend::generate(
                                 instruction.name);
                         }
 
-                        const std::size_t dataOffset =
-                            allocateVariableData(data);
-
-                        declareVariable(
-                            parameter,
-                            dataOffset);
-
-                        std::size_t patchOffset = 0;
-
-                        if (parameterIndex == 0)
+                        if (frameActive)
                         {
-                            patchOffset =
-                                emitter.emitMovMemEax32Placeholder();
+                            const std::int32_t stackOffset =
+                                allocateFrameSlot();
+
+                            variables[parameter] = {
+                                0,
+                                true,
+                                stackOffset
+                            };
+
+                            if (parameterIndex == 0)
+                            {
+                                emitter.emitMovEbpRelativeEax(
+                                    stackOffset);
+                            }
+                            else
+                            {
+                                emitter.emitMovEbpRelativeEbx(
+                                    stackOffset);
+                            }
                         }
                         else
                         {
-                            patchOffset =
-                                emitter.emitMovMemEbx32Placeholder();
-                        }
+                            // main conserva su mecanismo anterior.
+                            const std::size_t dataOffset =
+                                allocateVariableData(data);
 
-                        variableStorePatches.push_back({
-                            currentFunctionName,
-                            parameter,
-                            patchOffset
-                        });
+                            declareVariable(
+                                parameter,
+                                dataOffset);
+
+                            std::size_t patchOffset = 0;
+
+                            if (parameterIndex == 0)
+                            {
+                                patchOffset =
+                                    emitter.emitMovMemEax32Placeholder();
+                            }
+                            else
+                            {
+                                patchOffset =
+                                    emitter.emitMovMemEbx32Placeholder();
+                            }
+
+                            variableStorePatches.push_back({
+                                currentFunctionName,
+                                parameter,
+                                patchOffset
+                            });
+                        }
 
                         ++parameterIndex;
 
@@ -954,17 +1044,33 @@ X86Backend::generate(
             else if (instruction.opcode ==
                 IROpcode::Declare)
             {
-                const std::size_t offset =
-                    allocateVariableData(
-                        data,
-                        instruction.value > 0
-                            ? static_cast<std::size_t>(
-                                  instruction.value)
-                            : 1);
+                if (frameActive && instruction.value <= 0)
+                {
+                    // Variable escalar local.
+                    const std::int32_t stackOffset =
+                        allocateFrameSlot();
 
-                declareVariable(
-                    instruction.name,
-                    offset);
+                    variables[instruction.name] = {
+                        0,
+                        true,
+                        stackOffset
+                    };
+                }
+                else
+                {
+                    // Arrays y variables de main permanecen en DATA.
+                    const std::size_t offset =
+                        allocateVariableData(
+                            data,
+                            instruction.value > 0
+                                ? static_cast<std::size_t>(
+                                      instruction.value)
+                                : 1);
+
+                    declareVariable(
+                        instruction.name,
+                        offset);
+                }
             }
 
             // ------------------------------------------------
@@ -1012,39 +1118,52 @@ X86Backend::generate(
                     getTemporaryRegister(
                         instruction.operand);
 
-                std::size_t patchOffset = 0;
-
-                if (reg == 0)
+                if (variableIt->second.isStackLocal)
                 {
-                    /*
-                     * Temporal en EAX.
-                     *
-                     *     MOV [moffs32], EAX
-                     */
-                    patchOffset =
-                        emitter.emitMovMemEax32Placeholder();
-                }
-                else if (reg == 3)
-                {
-                    /*
-                     * Temporal en EBX.
-                     *
-                     *     MOV [moffs32], EBX
-                     */
-                    patchOffset =
-                        emitter.emitMovMemEbx32Placeholder();
+                    // STORE sobre variable local del marco.
+                    if (reg == 0)
+                    {
+                        emitter.emitMovEbpRelativeEax(
+                            variableIt->second.stackOffset);
+                    }
+                    else if (reg == 3)
+                    {
+                        emitter.emitMovEbpRelativeEbx(
+                            variableIt->second.stackOffset);
+                    }
+                    else
+                    {
+                        throw std::runtime_error(
+                            "K++ X86Backend: STORE usa registro no soportado.");
+                    }
                 }
                 else
                 {
-                    throw std::runtime_error(
-                        "K++ X86Backend: STORE usa un registro temporal no soportado.");
-                }
+                    // STORE sobre variable DATA.
+                    std::size_t patchOffset = 0;
 
-                variableStorePatches.push_back({
-                    currentFunctionName,
-                    instruction.name,
-                    patchOffset
-                });
+                    if (reg == 0)
+                    {
+                        patchOffset =
+                            emitter.emitMovMemEax32Placeholder();
+                    }
+                    else if (reg == 3)
+                    {
+                        patchOffset =
+                            emitter.emitMovMemEbx32Placeholder();
+                    }
+                    else
+                    {
+                        throw std::runtime_error(
+                            "K++ X86Backend: STORE usa registro no soportado.");
+                    }
+
+                    variableStorePatches.push_back({
+                        currentFunctionName,
+                        instruction.name,
+                        patchOffset
+                    });
+                }
 
                 /*
                  * STORE consume el temporal.
@@ -1275,12 +1394,28 @@ X86Backend::generate(
                  * realmente asignado.
                  */
 
-                if (registerCode == 0)
+                if (variableIt->second.isStackLocal)
                 {
-                    /*
-                     * MOV EAX, [direccion_de_x]
-                     */
-
+                    // LOAD desde el marco de la invocación actual.
+                    if (registerCode == 0)
+                    {
+                        emitter.emitMovEaxEbpRelative(
+                            variableIt->second.stackOffset);
+                    }
+                    else if (registerCode == 3)
+                    {
+                        emitter.emitMovEbxEbpRelative(
+                            variableIt->second.stackOffset);
+                    }
+                    else
+                    {
+                        throw std::runtime_error(
+                            "K++ X86Backend: registro no soportado para LOAD.");
+                    }
+                }
+                else if (registerCode == 0)
+                {
+                    // LOAD desde DATA.
                     const std::size_t patchOffset =
                         emitter.emitMovEaxMem32Placeholder();
 
@@ -1292,10 +1427,7 @@ X86Backend::generate(
                 }
                 else if (registerCode == 3)
                 {
-                    /*
-                     * MOV EBX, [direccion_de_x]
-                     */
-
+                    // LOAD desde DATA.
                     const std::size_t patchOffset =
                         emitter.emitMovEbxMem32Placeholder();
 
@@ -3597,7 +3729,16 @@ else if (instruction.opcode ==
 
                 if (currentFunctionName != "main")
                 {
-                    emitter.emitRet();
+                    if (frameActive)
+                    {
+                        emitter.emitMovEspEbp();
+                        emitter.emitPopEbp();
+                        emitter.emitRet();
+                    }
+                    else
+                    {
+                        emitter.emitRet();
+                    }
                 }
                 else
                 {
@@ -3608,6 +3749,9 @@ else if (instruction.opcode ==
                 }
             }
         }
+
+        // Fin del cuerpo de esta IRFunction.
+        finishCurrentFunctionFrame();
     }
 
 
@@ -3765,6 +3909,19 @@ if (!integerBufferPatches.empty())
         data.size() + 16,
         0);
 }
+
+
+// ========================================================
+// CURSOR GRÁFICO (DATA) — KPP_CURSOR_DATA
+// ========================================================
+
+cursorDataOffset =
+    data.size();
+
+// X/Y empaquetado: 4 bytes.
+data.resize(
+    data.size() + 4,
+    0);
 
 
 
@@ -4065,6 +4222,27 @@ for (const auto& patch :
             emitter.patch32(
                 patch,
                 integerBufferAddress);
+        }
+    }
+
+
+    // ========================================================
+    // PATCH CURSOR GRÁFICO — KPP_CURSOR_DATA
+    // ========================================================
+
+    {
+        const std::uint32_t
+            cursorAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    cursorDataOffset);
+
+        for (const std::size_t patch :
+             runtime.cursorPatches())
+        {
+            emitter.patch32(
+                patch,
+                cursorAddress);
         }
     }
 
