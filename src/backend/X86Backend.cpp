@@ -4809,6 +4809,364 @@ std::vector<std::size_t>
 
 
     // ========================================================
+    // ========================================================
+    // KPP_FILE_IO_ADDRESS_RESOLUTION_PHASE5
+    //
+    // RESOLUCIÓN DE DIRECCIONES FILE_WRITE / FILE_READ
+    //
+    // En este punto:
+    //
+    //     - dataBase ya está calculado.
+    //     - DATA ya contiene las rutas.
+    //     - Los contextos functionVariables están completos.
+    //     - Los placeholders imm32 siguen pendientes.
+    //
+    // Las direcciones de los arrays se recuperan desde
+    // el contexto correspondiente a cada función.
+    //
+    // No se utiliza el mapa temporal "variables" porque
+    // en este punto puede pertenecer a la última función.
+    // ========================================================
+
+    const auto resolveFileIoPatch =
+        [&](const auto& patch, const char* operation)
+        {
+            // ------------------------------------------------
+            // VALIDAR CONTEXTO DE FUNCIÓN
+            // ------------------------------------------------
+
+            if (patch.functionName.empty())
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": functionName vacío.");
+            }
+
+            const auto functionIt =
+                functionVariables.find(
+                    patch.functionName);
+
+            if (functionIt ==
+                functionVariables.end())
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": contexto de variables no encontrado: "
+                    + patch.functionName);
+            }
+
+            // ------------------------------------------------
+            // LOCALIZAR ARRAY EN EL CONTEXTO DE SU FUNCIÓN
+            // ------------------------------------------------
+
+            if (patch.arrayName.empty())
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": arrayName vacío.");
+            }
+
+            const auto arrayIt =
+                functionIt->second.find(
+                    patch.arrayName);
+
+            if (arrayIt ==
+                functionIt->second.end())
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": array no encontrado: "
+                    + patch.functionName
+                    + "::"
+                    + patch.arrayName);
+            }
+
+            const VariableLocation& arrayLocation =
+                arrayIt->second;
+
+            // ------------------------------------------------
+            // VALIDAR QUE SEA UN ARRAY EN DATA
+            // ------------------------------------------------
+
+            if (arrayLocation.isStackLocal)
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": el array está ubicado en stack: "
+                    + patch.functionName
+                    + "::"
+                    + patch.arrayName);
+            }
+
+            if (arrayLocation.arrayCapacity == 0)
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": capacidad del array no registrada: "
+                    + patch.arrayName);
+            }
+
+            if (patch.capacity == 0 ||
+                patch.capacity !=
+                    arrayLocation.arrayCapacity)
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": capacidad del parche incompatible "
+                    "con el array: "
+                    + patch.arrayName);
+            }
+
+            // ------------------------------------------------
+            // VALIDAR OFFSET DEL ARRAY DENTRO DE DATA
+            // ------------------------------------------------
+
+            const std::size_t arrayDataOffset =
+                arrayLocation.dataOffset;
+
+            if (arrayDataOffset >= data.size())
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": offset del array fuera de DATA: "
+                    + patch.arrayName);
+            }
+
+            // Cada celda del array ocupa un uint32_t.
+            //
+            // Se evita multiplicar antes de comprobar
+            // los límites para prevenir desbordamientos.
+
+            const std::size_t remainingData =
+                data.size() - arrayDataOffset;
+
+            if (arrayLocation.arrayCapacity >
+                remainingData / sizeof(std::uint32_t))
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": el array completo excede DATA: "
+                    + patch.arrayName);
+            }
+
+            // ------------------------------------------------
+            // VALIDAR OFFSET DE LA RUTA DENTRO DE DATA
+            // ------------------------------------------------
+
+            if (patch.pathDataOffset >= data.size())
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": pathDataOffset fuera de DATA.");
+            }
+
+            // ------------------------------------------------
+            // VALIDAR OFFSETS IMM32 DENTRO DEL CÓDIGO
+            // ------------------------------------------------
+
+            const std::size_t codeSize =
+                emitter.size();
+
+            const auto validateCodePatch =
+                [&](std::size_t offset,
+                    const char* field)
+                {
+                    if (offset > codeSize ||
+                        codeSize - offset < 4)
+                    {
+                        throw std::runtime_error(
+                            std::string(
+                                "K++ X86Backend: ")
+                            + operation
+                            + ": "
+                            + field
+                            + " fuera del buffer de código.");
+                    }
+                };
+
+            validateCodePatch(
+                patch.pathAddressPatch,
+                "pathAddressPatch");
+
+            validateCodePatch(
+                patch.arrayAddressPatch,
+                "arrayAddressPatch");
+
+            if (patch.pathAddressPatch ==
+                patch.arrayAddressPatch)
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": pathAddressPatch y "
+                    "arrayAddressPatch coinciden.");
+            }
+
+            // ------------------------------------------------
+            // VALIDAR PLACEHOLDERS ORIGINALES
+            //
+            // Ambos imm32 deben seguir a cero.
+            // Esto evita parchear accidentalmente otra
+            // instrucción o resolver dos veces el mismo sitio.
+            // ------------------------------------------------
+
+            const auto& machineCode =
+                emitter.code();
+
+            const auto validateZeroPlaceholder =
+                [&](std::size_t offset,
+                    const char* field)
+                {
+                    for (std::size_t i = 0; i < 4; ++i)
+                    {
+                        if (machineCode[offset + i] != 0)
+                        {
+                            throw std::runtime_error(
+                                std::string(
+                                    "K++ X86Backend: ")
+                                + operation
+                                + ": placeholder "
+                                + field
+                                + " ya no está a cero.");
+                        }
+                    }
+                };
+
+            validateZeroPlaceholder(
+                patch.pathAddressPatch,
+                "pathAddressPatch");
+
+            validateZeroPlaceholder(
+                patch.arrayAddressPatch,
+                "arrayAddressPatch");
+
+            // ------------------------------------------------
+            // CALCULAR DIRECCIONES ABSOLUTAS
+            //
+            // Dirección de ruta:
+            //
+            //     dataBase + pathDataOffset
+            //
+            // Dirección de array:
+            //
+            //     dataBase + arrayLocation.dataOffset
+            // ------------------------------------------------
+
+            const std::uint64_t pathAddress64 =
+                static_cast<std::uint64_t>(dataBase)
+                + static_cast<std::uint64_t>(
+                    patch.pathDataOffset);
+
+            const std::uint64_t arrayAddress64 =
+                static_cast<std::uint64_t>(dataBase)
+                + static_cast<std::uint64_t>(
+                    arrayDataOffset);
+
+            // ------------------------------------------------
+            // VALIDAR RANGO DE DIRECCIONES X86
+            // ------------------------------------------------
+
+            constexpr std::uint64_t MAX_UINT32 =
+                0xFFFFFFFFull;
+
+            if (pathAddress64 > MAX_UINT32)
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": dirección absoluta de ruta "
+                    "excede uint32.");
+            }
+
+            if (arrayAddress64 > MAX_UINT32)
+            {
+                throw std::runtime_error(
+                    std::string(
+                        "K++ X86Backend: ")
+                    + operation
+                    + ": dirección absoluta del array "
+                    "excede uint32.");
+            }
+
+            const std::uint32_t pathAddress =
+                static_cast<std::uint32_t>(
+                    pathAddress64);
+
+            const std::uint32_t arrayAddress =
+                static_cast<std::uint32_t>(
+                    arrayAddress64);
+
+            // ------------------------------------------------
+            // PATCH IMM32 LITTLE-ENDIAN
+            //
+            // X86Emitter::patch32 escribe:
+            //
+            //     byte 0 = value & 0xFF
+            //     byte 1 = value >> 8
+            //     byte 2 = value >> 16
+            //     byte 3 = value >> 24
+            //
+            // No se implementa otro mecanismo de parcheo.
+            // ------------------------------------------------
+
+            emitter.patch32(
+                patch.pathAddressPatch,
+                pathAddress);
+
+            emitter.patch32(
+                patch.arrayAddressPatch,
+                arrayAddress);
+        };
+
+
+    // ========================================================
+    // PATCH FILE_WRITE
+    // ========================================================
+
+    for (const auto& patch :
+         fileWritePatches)
+    {
+        resolveFileIoPatch(
+            patch,
+            "FILE_WRITE");
+    }
+
+
+    // ========================================================
+    // PATCH FILE_READ
+    // ========================================================
+
+    for (const auto& patch :
+         fileReadPatches)
+    {
+        resolveFileIoPatch(
+            patch,
+            "FILE_READ");
+    }
+
+
     // PATCH TEMPORARY SPILLS
     // ========================================================
 
