@@ -2299,6 +2299,71 @@ X86Backend::generate(
                         instruction.result);
                 }
 
+                /*
+                 * ------------------------------------------------
+                 * CASO 4
+                 *
+                 * KPP_REBANADA31_CMPGT_CASO4
+                 *
+                 * izquierdo = MEMORY
+                 * derecho   = EBX
+                 *
+                 * Si EAX conserva un temporal vivo ajeno a la
+                 * comparación, se derrama primero a su slot
+                 * del marco para no destruirlo.
+                 *
+                 * Recargamos el izquierdo:
+                 *
+                 *     MOV EAX, [izquierdo]
+                 *
+                 * Después:
+                 *
+                 *     CMP EAX, EBX
+                 *     SETG AL
+                 *     MOVZX EAX, AL
+                 * ------------------------------------------------
+                 */
+
+                else if (
+                    leftKind ==
+                        TemporaryLocation::Kind::Memory &&
+                    rightKind ==
+                        TemporaryLocation::Kind::Register &&
+                    rightIt->second.registerCode == 3)
+                {
+                    const std::string eaxTemporary =
+                        temporaryInRegister(0);
+
+                    if (!eaxTemporary.empty() &&
+                        eaxTemporary != left &&
+                        eaxTemporary != right)
+                    {
+                        spillTemporary(
+                            eaxTemporary,
+                            data,
+                            temporarySpillPatches);
+                    }
+
+                    const std::size_t patchOffset =
+                        emitMovEaxFramePlaceholder();
+
+                    temporaryReloadPatches.push_back({
+                        left,
+                        patchOffset,
+                        leftIt->second.dataOffset
+                    });
+
+                    emitter.emitCmpEaxEbx();
+                    emitter.emitSetgAl();
+                    emitter.emitMovzxEaxAl();
+
+                    freeTemporary(left);
+                    freeTemporary(right);
+
+                    bindTemporaryToEax(
+                        instruction.result);
+                }
+
                 else
                 {
                     throw std::runtime_error(
@@ -2505,8 +2570,44 @@ X86Backend::generate(
                 bindTemporaryToEax(instruction.result);
             }
 
-else if (instruction.opcode ==
-                     IROpcode::Sub)
+
+            // ------------------------------------------------
+            // SUB
+            // ------------------------------------------------
+            //
+            // KPP_REBANADA3_SUB_PRESERVATION
+            //
+            // SUB %left, %right -> %result
+            //
+            // Antes de ejecutar SUB:
+            //
+            //     EAX y EBX se consideran registros de trabajo.
+            //
+            // Por tanto, ningún temporal vivo puede permanecer
+            // exclusivamente en esos registros.
+            //
+            // Estrategia:
+            //
+            //     1. Derramar todos los temporales residentes
+            //        en EAX y EBX al marco EBP.
+            //
+            //     2. Recargar el izquierdo en EAX.
+            //
+            //     3. Recargar el derecho en EBX.
+            //
+            //     4. Ejecutar SUB EAX, EBX.
+            //
+            // Los operandos originales permanecen respaldados
+            // en memoria. No se eliminan del mapa porque pueden
+            // tener usos posteriores.
+            //
+            // Resultado:
+            //
+            //     EAX = izquierdo - derecho
+            //
+            // ------------------------------------------------
+
+            else if (instruction.opcode == IROpcode::Sub)
             {
                 const std::size_t comma =
                     instruction.operand.find(",");
@@ -2518,13 +2619,10 @@ else if (instruction.opcode ==
                 }
 
                 const std::string left =
-                    instruction.operand.substr(
-                        0,
-                        comma);
+                    instruction.operand.substr(0, comma);
 
                 const std::string right =
-                    instruction.operand.substr(
-                        comma + 2);
+                    instruction.operand.substr(comma + 2);
 
                 if (!hasTemporary(left))
                 {
@@ -2540,293 +2638,156 @@ else if (instruction.opcode ==
                         right);
                 }
 
+                if (!frameActive)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: SUB necesita un marco EBP activo "
+                        "para preservar temporales.");
+                }
+
+                // ------------------------------------------------
+                // FASE 1
+                //
+                // Reunir los temporales residentes en registros.
+                //
+                // No se modifica el mapa mientras se recorre.
+                // ------------------------------------------------
+
+                std::vector<std::string> registerTemporaries;
+
+                for (const auto& entry : temporaries)
+                {
+                    if (entry.second.kind ==
+                        TemporaryLocation::Kind::Register)
+                    {
+                        registerTemporaries.push_back(
+                            entry.first);
+                    }
+                }
+
+                // ------------------------------------------------
+                // FASE 2
+                //
+                // Derramar cada temporal antes de destruir
+                // el contenido de EAX o EBX.
+                //
+                // spillTemporary actualiza la ubicación del
+                // temporal a MEMORY dentro de temporaries.
+                // ------------------------------------------------
+
+                for (const auto& temporary : registerTemporaries)
+                {
+                    const auto it =
+                        temporaries.find(temporary);
+
+                    if (it == temporaries.end())
+                    {
+                        continue;
+                    }
+
+                    if (it->second.kind ==
+                        TemporaryLocation::Kind::Register)
+                    {
+                        spillTemporary(
+                            temporary,
+                            data,
+                            temporarySpillPatches);
+                    }
+                }
+
+                // ------------------------------------------------
+                // FASE 3
+                //
+                // Verificar que ambos operandos quedaron en
+                // slots EBP-relative.
+                // ------------------------------------------------
+
                 const auto leftIt =
                     temporaries.find(left);
 
                 const auto rightIt =
                     temporaries.find(right);
 
-                if (leftIt == temporaries.end())
+                if (leftIt == temporaries.end() ||
+                    rightIt == temporaries.end())
                 {
                     throw std::runtime_error(
-                        "K++ X86Backend: SUB usa temporal izquierdo inexistente: " +
-                        left);
+                        "K++ X86Backend: SUB perdió un temporal "
+                        "durante la preservación.");
                 }
 
-                if (rightIt == temporaries.end())
+                if (leftIt->second.kind !=
+                        TemporaryLocation::Kind::Memory ||
+                    rightIt->second.kind !=
+                        TemporaryLocation::Kind::Memory)
                 {
                     throw std::runtime_error(
-                        "K++ X86Backend: SUB usa temporal derecho inexistente: " +
-                        right);
+                        "K++ X86Backend: SUB no pudo preservar "
+                        "ambos operandos en el marco.");
                 }
 
-                const auto leftKind =
-                    leftIt->second.kind;
+                const std::int32_t leftOffset =
+                    leftIt->second.dataOffset;
 
-                const auto rightKind =
-                    rightIt->second.kind;
+                const std::int32_t rightOffset =
+                    rightIt->second.dataOffset;
 
                 // ------------------------------------------------
-                // CASO 1
+                // FASE 4
                 //
-                // EAX - EBX
+                // EAX = operando izquierdo.
+                // ------------------------------------------------
+
+                const std::size_t leftPatch =
+                    emitMovEaxFramePlaceholder();
+
+                temporaryReloadPatches.push_back({
+                    left,
+                    leftPatch,
+                    leftOffset
+                });
+
+                // ------------------------------------------------
+                // FASE 5
+                //
+                // EBX = operando derecho.
+                // ------------------------------------------------
+
+                const std::size_t rightPatch =
+                    emitMovEbxFramePlaceholder();
+
+                temporaryReloadPatches.push_back({
+                    right,
+                    rightPatch,
+                    rightOffset
+                });
+
+                // ------------------------------------------------
+                // FASE 6
                 //
                 // EAX = EAX - EBX
+                //
+                // No se ejecutan PUSH/POP para intercambiar
+                // registros y, por tanto, no se destruye ningún
+                // temporal que continúe registrado en EAX/EBX.
                 // ------------------------------------------------
 
-                if (
-                    leftKind ==
-                        TemporaryLocation::Kind::Register &&
-                    leftIt->second.registerCode == 0 &&
-                    rightKind ==
-                        TemporaryLocation::Kind::Register &&
-                    rightIt->second.registerCode == 3)
-                {
-                    emitter.emitSubEaxEbx();
-
-                    freeTemporary(left);
-                    freeTemporary(right);
-
-                    bindTemporaryToEax(
-                        instruction.result);
-                }
+                emitter.emitSubEaxEbx();
 
                 // ------------------------------------------------
-                // CASO 2
+                // FASE 7
                 //
-                // EBX - EAX
+                // Los operandos originales permanecen en MEMORY.
                 //
-                // PUSH EAX
-                // MOV  EAX, EBX
-                // POP  EBX
-                // SUB  EAX, EBX
+                // No llamar a freeTemporary(left/right):
+                // pueden volver a utilizarse después de SUB.
+                //
+                // El resultado nuevo queda en EAX.
                 // ------------------------------------------------
 
-                else if (
-                    leftKind ==
-                        TemporaryLocation::Kind::Register &&
-                    leftIt->second.registerCode == 3 &&
-                    rightKind ==
-                        TemporaryLocation::Kind::Register &&
-                    rightIt->second.registerCode == 0)
-                {
-                    emitter.emitPushEax();
-                    emitter.emitMovEaxEbx();
-                    emitter.emitPopEbx();
-
-                    emitter.emitSubEaxEbx();
-
-                    freeTemporary(left);
-                    freeTemporary(right);
-
-                    bindTemporaryToEax(
-                        instruction.result);
-                }
-
-                // ------------------------------------------------
-                // CASO 3
-                //
-                // MEMORY - EAX
-                //
-                // PUSH EAX
-                // MOV  EAX, [MEMORY]
-                // POP  EBX
-                // SUB  EAX, EBX
-                // ------------------------------------------------
-
-                else if (
-                    leftKind ==
-                        TemporaryLocation::Kind::Memory &&
-                    rightKind ==
-                        TemporaryLocation::Kind::Register &&
-                    rightIt->second.registerCode == 0)
-                {
-                    emitter.emitPushEax();
-
-                    const std::size_t patchOffset =
-                        emitMovEaxFramePlaceholder();
-
-                    temporaryReloadPatches.push_back({
-                        left,
-                        patchOffset,
-                        leftIt->second.dataOffset
-                    });
-
-                    emitter.emitPopEbx();
-
-                    emitter.emitSubEaxEbx();
-
-                    freeTemporary(left);
-                    freeTemporary(right);
-
-                    bindTemporaryToEax(
-                        instruction.result);
-                }
-
-                // ------------------------------------------------
-                // CASO 4
-                //
-                // EAX - MEMORY
-                //
-                // Guardamos EAX = izquierdo.
-                //
-                // PUSH EAX
-                // MOV  EAX, [MEMORY]
-                // POP  EBX
-                //
-                // Ahora:
-                //     EBX = izquierdo
-                //     EAX = derecho
-                //
-                // Reordenamos:
-                //
-                // PUSH EAX
-                // MOV  EAX, EBX
-                // POP  EBX
-                //
-                // Ahora:
-                //     EAX = izquierdo
-                //     EBX = derecho
-                //
-                // SUB EAX, EBX
-                // ------------------------------------------------
-
-                else if (
-                    leftKind ==
-                        TemporaryLocation::Kind::Register &&
-                    leftIt->second.registerCode == 0 &&
-                    rightKind ==
-                        TemporaryLocation::Kind::Memory)
-                {
-                    emitter.emitPushEax();
-
-                    const std::size_t patchOffset =
-                        emitMovEaxFramePlaceholder();
-
-                    temporaryReloadPatches.push_back({
-                        right,
-                        patchOffset,
-                        rightIt->second.dataOffset
-                    });
-
-                    emitter.emitPopEbx();
-
-                    emitter.emitPushEax();
-                    emitter.emitMovEaxEbx();
-                    emitter.emitPopEbx();
-
-                    emitter.emitSubEaxEbx();
-
-                    freeTemporary(left);
-                    freeTemporary(right);
-
-                    bindTemporaryToEax(
-                        instruction.result);
-                }
-
-                // ------------------------------------------------
-                // CASO 5
-                //
-                // MEMORY - EBX
-                //
-                // MOV EAX, EBX
-                // PUSH EAX
-                // MOV EAX, [MEMORY]
-                // POP EBX
-                // SUB EAX, EBX
-                // ------------------------------------------------
-
-                else if (
-                    leftKind ==
-                        TemporaryLocation::Kind::Memory &&
-                    rightKind ==
-                        TemporaryLocation::Kind::Register &&
-                    rightIt->second.registerCode == 3)
-                {
-                    emitter.emitMovEaxEbx();
-                    emitter.emitPushEax();
-
-                    const std::size_t patchOffset =
-                        emitMovEaxFramePlaceholder();
-
-                    temporaryReloadPatches.push_back({
-                        left,
-                        patchOffset,
-                        leftIt->second.dataOffset
-                    });
-
-                    emitter.emitPopEbx();
-
-                    emitter.emitSubEaxEbx();
-
-                    freeTemporary(left);
-                    freeTemporary(right);
-
-                    bindTemporaryToEax(
-                        instruction.result);
-                }
-
-                // ------------------------------------------------
-                // CASO 6
-                //
-                // EBX - MEMORY
-                //
-                // MOV EAX, EBX
-                // PUSH EAX
-                // MOV EAX, [MEMORY]
-                // POP EBX
-                //
-                // Ahora:
-                //     EBX = izquierdo
-                //     EAX = derecho
-                //
-                // Reordenamos para SUB:
-                //
-                // EAX = izquierdo
-                // EBX = derecho
-                // ------------------------------------------------
-
-                else if (
-                    leftKind ==
-                        TemporaryLocation::Kind::Register &&
-                    leftIt->second.registerCode == 3 &&
-                    rightKind ==
-                        TemporaryLocation::Kind::Memory)
-                {
-                    emitter.emitMovEaxEbx();
-                    emitter.emitPushEax();
-
-                    const std::size_t patchOffset =
-                        emitMovEaxFramePlaceholder();
-
-                    temporaryReloadPatches.push_back({
-                        right,
-                        patchOffset,
-                        rightIt->second.dataOffset
-                    });
-
-                    emitter.emitPopEbx();
-
-                    emitter.emitPushEax();
-                    emitter.emitMovEaxEbx();
-                    emitter.emitPopEbx();
-
-                    emitter.emitSubEaxEbx();
-
-                    freeTemporary(left);
-                    freeTemporary(right);
-
-                    bindTemporaryToEax(
-                        instruction.result);
-                }
-
-                else
-                {
-                    throw std::runtime_error(
-                        "K++ X86Backend: combinación de operandos SUB no soportada");
-                }
+                bindTemporaryToEax(
+                    instruction.result);
             }
-
 
             // ------------------------------------------------
             // MUL
