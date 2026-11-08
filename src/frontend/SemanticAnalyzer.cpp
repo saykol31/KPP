@@ -974,9 +974,10 @@ std::string SemanticAnalyzer::inferExpressionType(
     if (const auto* call =
             dynamic_cast<const CallExpression*>(&expression))
     {
-        // Nativa file_read:
-        // devuelve la cantidad de bytes leídos como int.
-        if (call->callee == "file_read")
+        // Nativas de entrada/salida de archivos.
+        // Ambas devuelven int.
+        if (call->callee == "file_read" ||
+            call->callee == "file_write")
             return "int";
 
         const auto function = functionDeclarations.find(call->callee);
@@ -1245,6 +1246,161 @@ void SemanticAnalyzer::analyzeExpression(
                 });
 
                 return;
+            }
+
+            return;
+        }
+
+        // ====================================================
+        // NATIVA FILE_WRITE
+        //
+        // file_write("archivo.bin", datos, cantidad)
+        //
+        // Requisitos:
+        //   1. Exactamente tres argumentos.
+        //   2. Ruta StringLiteral.
+        //   3. Array declarado de tipo int.
+        //   4. Cantidad de tipo int.
+        //   5. Capacidad del array positiva.
+        //
+        // No se acepta:
+        //   file_write(ruta_variable, datos, 5)
+        //   file_write("archivo.bin", datos[0], 5)
+        //   file_write("archivo.bin", escalar, 5)
+        //
+        // Las cantidades constantes se validan contra
+        // la capacidad conocida del array.
+        //
+        // Las cantidades dinámicas se validarán también
+        // en tiempo de ejecución en el backend.
+        // ====================================================
+
+        if (call->callee == "file_write")
+        {
+            if (call->arguments.size() != 3)
+            {
+                semanticErrors.push_back({
+                    "file_write requiere exactamente tres argumentos"
+                });
+
+                return;
+            }
+
+            const auto* path =
+                dynamic_cast<const StringLiteral*>(
+                    call->arguments[0].get());
+
+            if (path == nullptr)
+            {
+                semanticErrors.push_back({
+                    "el primer argumento de file_write debe ser "
+                    "una ruta literal StringLiteral"
+                });
+
+                return;
+            }
+
+            const auto* array =
+                dynamic_cast<const VariableExpression*>(
+                    call->arguments[1].get());
+
+            if (array == nullptr)
+            {
+                semanticErrors.push_back({
+                    "el segundo argumento de file_write debe ser "
+                    "una variable de array, no un acceso indexado "
+                    "ni una expresión"
+                });
+
+                return;
+            }
+
+            const std::string* arrayType =
+                lookupVariable(array->name);
+
+            if (arrayType == nullptr)
+            {
+                semanticErrors.push_back({
+                    "array no declarado para file_write: '" +
+                    array->name + "'"
+                });
+
+                return;
+            }
+
+            if (*arrayType != "int")
+            {
+                semanticErrors.push_back({
+                    "file_write requiere un array de tipo int: '" +
+                    array->name + "'"
+                });
+
+                return;
+            }
+
+            const int capacity =
+                lookupArraySize(array->name);
+
+            if (capacity <= 0)
+            {
+                semanticErrors.push_back({
+                    "file_write requiere un array declarado "
+                    "con capacidad positiva: '" +
+                    array->name + "'"
+                });
+
+                return;
+            }
+
+            if (!call->arguments[2])
+            {
+                semanticErrors.push_back({
+                    "falta el tercer argumento de file_write"
+                });
+
+                return;
+            }
+
+            // Analizar la expresión de cantidad.
+            analyzeExpression(*call->arguments[2]);
+
+            const std::string countType =
+                inferExpressionType(*call->arguments[2]);
+
+            if (countType != "int")
+            {
+                semanticErrors.push_back({
+                    "el tercer argumento de file_write "
+                    "debe ser de tipo int"
+                });
+
+                return;
+            }
+
+            // Validación estática de cantidades constantes.
+            if (const auto* count =
+                    dynamic_cast<const IntegerLiteral*>(
+                        call->arguments[2].get()))
+            {
+                if (count->value < 0)
+                {
+                    semanticErrors.push_back({
+                        "file_write no admite una cantidad negativa"
+                    });
+
+                    return;
+                }
+
+                if (count->value > capacity)
+                {
+                    semanticErrors.push_back({
+                        "la cantidad de file_write supera "
+                        "la capacidad del array '" +
+                        array->name + "'"
+                    });
+
+                    return;
+                }
             }
 
             return;

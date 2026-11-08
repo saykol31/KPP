@@ -49,6 +49,7 @@ enum class IROpcode
     // ========================================================
 
     FileRead,
+    FileWrite,
 
     // ========================================================
     // ARITMÉTICA BÁSICA
@@ -203,6 +204,18 @@ struct IRInstruction
     // ========================================================
 
     int value = 0;
+
+    // Operando auxiliar para instrucciones que necesitan
+    // transportar un segundo temporal sin sobrecargar
+    // el campo operand.
+    //
+    // FILE_WRITE:
+    //   name      = ruta
+    //   operand   = identidad del array
+    //   auxiliary = temporal con cantidad de bytes
+    //   value     = capacidad del array
+    //   result    = temporal de retorno
+    std::string auxiliary;
 };
 
 // ============================================================

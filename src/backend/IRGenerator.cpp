@@ -64,6 +64,9 @@ const char* irOpcodeName(IROpcode opcode)
         case IROpcode::FileRead:
             return "FILE_READ";
 
+        case IROpcode::FileWrite:
+            return "FILE_WRITE";
+
         // ====================================================
         // ARITMÉTICA BÁSICA
         // ====================================================
@@ -1278,6 +1281,90 @@ std::string IRGenerator::generateExpression(
                 arrayIdentity,
                 result,
                 capacity
+            });
+
+            return result;
+        }
+
+        // ====================================================
+        // FILE_WRITE
+        //
+        // FILE_WRITE "archivo.bin", datos@0, %cantidad,
+        //            capacity=16 -> %resultado
+        //
+        // No se genera LOAD del array.
+        // El array se transporta por identidad.
+        //
+        // auxiliary contiene el temporal de cantidad.
+        // value contiene la capacidad real del array.
+        // ====================================================
+
+        if (call->callee == "file_write")
+        {
+            if (call->arguments.size() != 3)
+            {
+                throw std::runtime_error(
+                    "K++ IR: file_write requiere tres argumentos");
+            }
+
+            const auto* path =
+                dynamic_cast<const StringLiteral*>(
+                    call->arguments[0].get());
+
+            const auto* array =
+                dynamic_cast<const VariableExpression*>(
+                    call->arguments[1].get());
+
+            if (path == nullptr || array == nullptr)
+            {
+                throw std::runtime_error(
+                    "K++ IR: argumentos inválidos para file_write");
+            }
+
+            if (!call->arguments[2])
+            {
+                throw std::runtime_error(
+                    "K++ IR: cantidad ausente en file_write");
+            }
+
+            const std::string arrayIdentity =
+                resolveVariableName(array->name);
+
+            const int capacity =
+                resolveArraySize(array->name);
+
+            if (arrayIdentity.empty() || capacity <= 0)
+            {
+                throw std::runtime_error(
+                    "K++ IR: array inválido o sin capacidad "
+                    "para file_write: " +
+                    array->name);
+            }
+
+            // Evaluar solamente el tercer argumento.
+            // El array no debe convertirse a un valor escalar.
+            const std::string countTemporary =
+                generateExpression(
+                    *call->arguments[2],
+                    function);
+
+            if (countTemporary.empty())
+            {
+                throw std::runtime_error(
+                    "K++ IR: no se pudo generar la cantidad "
+                    "de file_write");
+            }
+
+            const std::string result =
+                createTemporary();
+
+            function.instructions.push_back({
+                IROpcode::FileWrite,
+                path->value,
+                arrayIdentity,
+                result,
+                capacity,
+                countTemporary
             });
 
             return result;
