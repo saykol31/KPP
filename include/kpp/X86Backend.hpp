@@ -56,6 +56,12 @@ private:
         // Desplazamiento firmado respecto a EBP.
         // Ejemplos: -4, -8, -12, -16.
         std::int32_t stackOffset = 0;
+
+        // KPP_FILE_WRITE_CAPACITY_PHASE3
+        //
+        // Capacidad declarada del array en celdas int32_t.
+        // Cero para escalares y parámetros escalares.
+        std::size_t arrayCapacity = 0;
     };
 
     struct VariableLoadPatch
@@ -182,7 +188,8 @@ private:
 
     void declareVariable(
         const std::string& name,
-        std::size_t dataOffset);
+        std::size_t dataOffset,
+        std::size_t arrayCapacity = 0);
 
     void bindTemporaryToEax(
         const std::string& temporary);
