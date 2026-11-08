@@ -687,11 +687,13 @@ pruebas confirmadas y pendientes.
   L14       PASS           Errores sintácticos y   Pendiente de confirmar
                            semánticos              ejecución
 
-  L15       Pendiente     Recursión               Pendiente de confirmar
-                                                  ejecución
+  L15       PASS           Recursión               Pendiente de confirmar
+                                                   ejecución
 
-  L16        PASS         Llamadas anidadas       Backend verificado en
-                                                  KolibriOS (2026-10-14)
+  L16       PASS           Llamadas anidadas       Backend verificado en
+                                                   KolibriOS (2026-10-14)
+
+  L17       FALTA          Arreglos en el Marco    LEA EDX, [EBP + EAX*4 - disp32]
 
   -----------------------------------------------------------------------
 

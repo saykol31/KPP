@@ -1,0 +1,15 @@
+int suma_rec(int n)
+{
+    int v[2];
+    v[0] = n;
+    v[1] = n * 10;
+    if (n <= 0) { return 0; }
+    int r = suma_rec(n - 1);
+    return v[0] + v[1] + r;
+}
+
+int main()
+{
+    print_int(suma_rec(3));
+    return 0;
+}
