@@ -634,6 +634,30 @@ X86Backend::generate(
     std::vector<FileWritePatch>
         fileWritePatches;
 
+    // KPP_FILE_READ_PATCH_PHASE4
+    //
+    // Registra las direcciones que resolverá la fase 5.
+    // FILE_READ y FILE_WRITE se resolverán conjuntamente.
+    //
+    // En esta fase no se calculan direcciones absolutas.
+
+    struct FileReadPatch
+    {
+        std::string functionName;
+        std::string arrayName;
+
+        std::size_t pathDataOffset = 0;
+
+        std::size_t pathAddressPatch = 0;
+        std::size_t arrayAddressPatch = 0;
+
+        std::size_t capacity = 0;
+    };
+
+    std::vector<FileReadPatch>
+        fileReadPatches;
+
+
     std::vector<StringConstPatch>
         stringConstPatches;
 
@@ -3306,6 +3330,280 @@ X86Backend::generate(
                 integerBufferPatches.push_back(patch);
                 ++printIndex;
             }
+
+
+            // ------------------------------------------------
+            // KPP_FILE_READ_HANDLER_PHASE4
+            //
+            // FILE_READ "ruta", array@id,
+            //           capacity=N -> %resultado
+            //
+            // ABI INTERNA:
+            //
+            //     EAX = dirección de ruta
+            //     EBX = dirección del array
+            //     ECX = capacidad del array
+            //
+            // RETORNO:
+            //
+            //     EAX = bytes leídos
+            //     EAX = -1 error
+            //
+            // IMPORTANTE:
+            //
+            // Las direcciones absolutas de ruta y array
+            // permanecen pendientes para la fase 5.
+            //
+            // La capacidad se transporta como inmediato.
+            //
+            // No existe temporal de cantidad en FILE_READ.
+            // ------------------------------------------------
+
+else if (instruction.opcode ==
+                     IROpcode::FileRead)
+            {
+                // ------------------------------------------------
+                // VALIDACIÓN DEL CONTEXTO
+                // ------------------------------------------------
+
+                if (!frameActive)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: FILE_READ fuera "
+                        "de un marco activo");
+                }
+
+                if (instruction.name.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: FILE_READ sin ruta");
+                }
+
+                if (instruction.name.find('\0') !=
+                    std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: la ruta FILE_READ "
+                        "contiene NUL interno");
+                }
+
+                if (instruction.operand.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: FILE_READ sin "
+                        "identidad de array");
+                }
+
+                if (instruction.result.empty())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: FILE_READ sin "
+                        "temporal de retorno");
+                }
+
+                if (instruction.value <= 0 ||
+                    static_cast<std::uint64_t>(
+                        instruction.value) >
+                        KOLIBRI_FILE_IO_MAX_BYTES)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: capacidad FILE_READ "
+                        "fuera del rango 1..65536");
+                }
+
+                // ------------------------------------------------
+                // LOCALIZAR EL ARRAY
+                // ------------------------------------------------
+
+                const auto arrayIt =
+                    variables.find(instruction.operand);
+
+                if (arrayIt == variables.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: array FILE_READ "
+                        "no declarado: " +
+                        instruction.operand);
+                }
+
+                const VariableLocation& arrayLocation =
+                    arrayIt->second;
+
+                if (arrayLocation.isStackLocal)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: FILE_READ requiere "
+                        "un array en DATA, no una variable "
+                        "escalar local");
+                }
+
+                if (arrayLocation.arrayCapacity == 0)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: capacidad de array "
+                        "no registrada: " +
+                        instruction.operand);
+                }
+
+                if (arrayLocation.arrayCapacity !=
+                    static_cast<std::size_t>(
+                        instruction.value))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: la capacidad FILE_READ "
+                        "no coincide con DECLARE: " +
+                        instruction.operand);
+                }
+
+                // ------------------------------------------------
+                // PRESERVAR TEMPORALES VIVOS — L15
+                //
+                // Derramar todos los temporales residentes
+                // en EAX y EBX antes de preparar argumentos.
+                //
+                // FILE_READ no tiene temporal de cantidad.
+                // No se consulta auxiliary.
+                // ------------------------------------------------
+
+                {
+                    std::vector<std::string> liveRegisters;
+
+                    for (const auto& entry : temporaries)
+                    {
+                        if (entry.second.kind ==
+                            TemporaryLocation::Kind::Register)
+                        {
+                            liveRegisters.push_back(
+                                entry.first);
+                        }
+                    }
+
+                    for (const auto& temporary :
+                         liveRegisters)
+                    {
+                        const auto it =
+                            temporaries.find(temporary);
+
+                        if (it != temporaries.end() &&
+                            it->second.kind ==
+                                TemporaryLocation::Kind::Register)
+                        {
+                            spillTemporary(
+                                temporary,
+                                data,
+                                temporarySpillPatches);
+                        }
+                    }
+                }
+
+                // ------------------------------------------------
+                // COPIAR RUTA A DATA
+                //
+                // Se registra el offset relativo.
+                // La dirección absoluta se resuelve en fase 5.
+                // ------------------------------------------------
+
+                const std::size_t pathDataOffset =
+                    data.size();
+
+                for (const char c : instruction.name)
+                {
+                    data.push_back(
+                        static_cast<std::uint8_t>(
+                            static_cast<unsigned char>(c)));
+                }
+
+                // Terminador C.
+                data.push_back(0);
+
+                // ------------------------------------------------
+                // EAX = DIRECCIÓN DE RUTA
+                //
+                // B8 imm32
+                // El imm32 queda pendiente de fase 5.
+                // ------------------------------------------------
+
+                const std::size_t pathAddressPatch =
+                    emitter.size() + 1;
+
+                emitter.emitMovEaxImm32(0);
+
+                // ------------------------------------------------
+                // EBX = DIRECCIÓN DEL ARRAY
+                //
+                // BB imm32
+                // El imm32 queda pendiente de fase 5.
+                // ------------------------------------------------
+
+                const std::size_t arrayAddressPatch =
+                    emitter.size() + 1;
+
+                emitter.emitMovRegImm32(
+                    0xBB,
+                    0);
+
+                // ------------------------------------------------
+                // ECX = CAPACIDAD DEL ARRAY
+                //
+                // B9 imm32
+                //
+                // La capacidad procede de DECLARE y ya fue
+                // contrastada contra instruction.value.
+                //
+                // No se carga desde EBP.
+                // No existe temporal de cantidad.
+                // ------------------------------------------------
+
+                emitter.emitMovRegImm32(
+                    0xB9,
+                    static_cast<std::uint32_t>(
+                        arrayLocation.arrayCapacity));
+
+                // ------------------------------------------------
+                // CALL FILE_READ_RUNTIME
+                //
+                // fileReadEntry fue generado en fase 2.
+                // El destino está dentro del mismo buffer x86.
+                // ------------------------------------------------
+
+                emitter.emitByte(0xE8);
+
+                const std::size_t runtimeCallPatch =
+                    emitter.emitRel32Placeholder();
+
+                emitter.patchRel32(
+                    runtimeCallPatch,
+                    fileIoRuntimeResult.fileReadEntry);
+
+                // ------------------------------------------------
+                // RETORNO DEL RUNTIME EN EAX
+                //
+                // EAX:
+                //     >= 0 : bytes leídos
+                //     -1   : error
+                // ------------------------------------------------
+
+                bindTemporaryToEax(
+                    instruction.result);
+
+                // ------------------------------------------------
+                // REGISTRAR DIRECCIONES PARA FASE 5
+                //
+                // No resolver aquí dataBase + offset.
+                // FILE_READ y FILE_WRITE serán resueltos
+                // conjuntamente en la fase 5.
+                // ------------------------------------------------
+
+                fileReadPatches.push_back({
+                    currentFunctionName,
+                    instruction.operand,
+                    pathDataOffset,
+                    pathAddressPatch,
+                    arrayAddressPatch,
+                    arrayLocation.arrayCapacity
+                });
+            }
+
 
             // ------------------------------------------------
             // KPP_FILE_WRITE_HANDLER_PHASE3
