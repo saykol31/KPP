@@ -1520,8 +1520,13 @@ KolibriRuntime::emitPrintInteger(
      *     "30\0"
      */
 
-    // El RETURN posterior necesita recuperar EAX.
+    // El RETURN posterior necesita recuperar EAX y EBX:
+    // la rutina carga la posición del texto en EBX (SF 4)
+    // y un temporal puede residir en EBX al imprimir; sin
+    // preservarlo, un RETURN posterior desde EBX devolvía
+    // la posición del texto en lugar del valor.
     emitter.emitPushEax();
+    emitter.emitPushEbx();
 
     /*
      * EDI apunta inicialmente al final del buffer.
@@ -1648,6 +1653,7 @@ KolibriRuntime::emitPrintInteger(
     /*
      * Restaurar el resultado original.
      */
+    emitter.emitPopEbx();
     emitter.emitPopEax();
 
     return bufferPatch;
