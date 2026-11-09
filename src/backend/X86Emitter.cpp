@@ -871,6 +871,24 @@ void X86Emitter::emitPushEbx()
     machineCode.push_back(0x53);
 }
 
+void X86Emitter::emitAddEspImm32(
+    std::int32_t value)
+{
+    // ADD ESP, imm32
+    // 81 C4 imm32
+
+    emitByte(0x81);
+    emitByte(0xC4);
+
+    const std::uint32_t v =
+        static_cast<std::uint32_t>(value);
+
+    emitByte(static_cast<std::uint8_t>(v & 0xFF));
+    emitByte(static_cast<std::uint8_t>((v >> 8) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((v >> 16) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((v >> 24) & 0xFF));
+}
+
 void X86Emitter::emitPopEax()
 {
     machineCode.push_back(0x58);

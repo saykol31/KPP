@@ -982,14 +982,6 @@ X86Backend::generate(
                                 instruction.name);
                         }
 
-                        if (parameterIndex > 1)
-                        {
-                            throw std::runtime_error(
-                                "K++ X86Backend: más de 2 parámetros "
-                                "no soportados todavía en función " +
-                                instruction.name);
-                        }
-
                         if (frameActive)
                         {
                             const std::int32_t stackOffset =
@@ -1006,15 +998,42 @@ X86Backend::generate(
                                 emitter.emitMovEbpRelativeEax(
                                     stackOffset);
                             }
-                            else
+                            else if (parameterIndex == 1)
                             {
                                 emitter.emitMovEbpRelativeEbx(
+                                    stackOffset);
+                            }
+                            else
+                            {
+                                // CICLO 4: el argumento llega
+                                // por la pila del llamador:
+                                // [EBP+8] es el argumento 2,
+                                // [EBP+12] el 3, etc. EAX ya
+                                // entregó el argumento 0 y EBX
+                                // el 1 (índices anteriores), así
+                                // que EAX sirve de lanzadera.
+                                emitter.emitMovEaxEbpRelative(
+                                    8 + static_cast<std::int32_t>(
+                                            (parameterIndex - 2)
+                                            * 4));
+
+                                emitter.emitMovEbpRelativeEax(
                                     stackOffset);
                             }
                         }
                         else
                         {
-                            // main conserva su mecanismo anterior.
+                            // main conserva su mecanismo anterior
+                            // (sin llamador que prepare la pila:
+                            // máximo dos parámetros).
+                            if (parameterIndex > 1)
+                            {
+                                throw std::runtime_error(
+                                    "K++ X86Backend: más de 2 parámetros "
+                                    "no soportados todavía en función " +
+                                    instruction.name);
+                            }
+
                             const std::size_t dataOffset =
                                 allocateVariableData(data);
 
@@ -4077,6 +4096,10 @@ else if (instruction.opcode ==
                 //
                 //     argumento 0 -> EAX
                 //     argumento 1 -> EBX
+                //     argumento 2.. -> pila del llamador
+                //         (CICLO 4; el llamado los recoge en
+                //         [EBP+8], [EBP+12], … y el llamador
+                //         limpia la pila tras el CALL)
                 //
                 // Los argumentos pueden encontrarse:
                 //
@@ -4109,87 +4132,89 @@ else if (instruction.opcode ==
                     }
                 }
 
+                // CICLO 4: la lista de argumentos puede
+                // tener cualquier longitud. Los argumentos
+                // 0 y 1 siguen llamándose left y right para
+                // la normalización histórica; la lista
+                // completa vive en `arguments`.
+                std::vector<std::string> arguments;
+
+                std::size_t extraStackArguments = 0;
+
                 std::string left;
                 std::string right;
 
                 if (!instruction.operand.empty())
                 {
-                    const std::size_t comma =
-                        instruction.operand.find(',');
+                    std::size_t argStart = 0;
 
-                    left =
-                        instruction.operand.substr(
-                            0,
-                            comma);
-
-                    if (comma != std::string::npos)
+                    while (true)
                     {
-                        right =
-                            instruction.operand.substr(
-                                comma + 1);
+                        const std::size_t comma =
+                            instruction.operand.find(
+                                ',', argStart);
 
-                        if (right.find(',') !=
-                            std::string::npos)
+                        std::string argument =
+                            instruction.operand.substr(
+                                argStart,
+                                (comma == std::string::npos)
+                                    ? std::string::npos
+                                    : comma - argStart);
+
+                        while (!argument.empty() &&
+                               argument.front() == ' ')
+                        {
+                            argument.erase(
+                                argument.begin());
+                        }
+
+                        while (!argument.empty() &&
+                               argument.back() == ' ')
+                        {
+                            argument.pop_back();
+                        }
+
+                        if (argument.empty())
                         {
                             throw std::runtime_error(
-                                "K++ X86Backend: CALL soporta como máximo 2 argumentos");
+                                "K++ X86Backend: CALL argumento vacío");
                         }
-                    }
 
-                    while (!left.empty() &&
-                           left.front() == ' ')
-                    {
-                        left.erase(
-                            left.begin());
-                    }
-
-                    while (!left.empty() &&
-                           left.back() == ' ')
-                    {
-                        left.pop_back();
-                    }
-
-                    while (!right.empty() &&
-                           right.front() == ' ')
-                    {
-                        right.erase(
-                            right.begin());
-                    }
-
-                    while (!right.empty() &&
-                           right.back() == ' ')
-                    {
-                        right.pop_back();
-                    }
-
-                    if (left.empty())
-                    {
-                        throw std::runtime_error(
-                            "K++ X86Backend: CALL argumento vacío");
-                    }
-
-                    const auto leftIt =
-                        temporaries.find(left);
-
-                    if (leftIt == temporaries.end())
-                    {
-                        throw std::runtime_error(
-                            "K++ X86Backend: CALL argumento no encontrado: " +
-                            left);
-                    }
-
-                    if (!right.empty())
-                    {
-                        const auto rightIt =
-                            temporaries.find(right);
-
-                        if (rightIt == temporaries.end())
+                        if (temporaries.find(argument) ==
+                            temporaries.end())
                         {
                             throw std::runtime_error(
                                 "K++ X86Backend: CALL argumento no encontrado: " +
-                                right);
+                                argument);
                         }
+
+                        arguments.push_back(argument);
+
+                        if (comma == std::string::npos)
+                        {
+                            break;
+                        }
+
+                        argStart = comma + 1;
                     }
+
+                    left = arguments[0];
+
+                    if (arguments.size() > 1)
+                    {
+                        right = arguments[1];
+                    }
+
+                    // Argumentos que viajarán por la pila
+                    // (índice >= 2); este llamador los retira
+                    // tras el CALL.
+                    extraStackArguments =
+                        (arguments.size() > 2)
+                            ? arguments.size() - 2
+                            : 0;
+
+                    const auto leftIt =
+                        temporaries.find(left);
 
                     auto emitLoadMemoryToEax =
                         [&](const std::string& temporary,
@@ -4204,6 +4229,54 @@ else if (instruction.opcode ==
                             dataOffset
                         });
                     };
+
+                    // ------------------------------------------------
+                    // CICLO 4 — ARGUMENTOS POR PILA (índice >= 2)
+                    //
+                    // Se empujan en orden inverso (el último
+                    // primero) ANTES de normalizar EAX/EBX, de
+                    // modo que al ejecutarse CALL el argumento
+                    // 2 quede en [EBP+8] del llamado, el 3 en
+                    // [EBP+12], etc. Invariante: el derrame
+                    // universal previo dejó todos los temporales
+                    // en memoria; la lanzadera es EAX y la
+                    // normalización posterior usa empujes
+                    // transitorios balanceados que no alteran
+                    // esta zona de la pila.
+                    // ------------------------------------------------
+
+                    for (std::size_t argIndex = arguments.size();
+                         argIndex-- > 2;)
+                    {
+                        const std::string& argument =
+                            arguments[argIndex];
+
+                        const auto& location =
+                            temporaries.at(argument);
+
+                        if (location.kind ==
+                            TemporaryLocation::Kind::Memory)
+                        {
+                            emitLoadMemoryToEax(
+                                argument,
+                                location.dataOffset);
+                        }
+                        else if (location.registerCode == 0)
+                        {
+                            // Ya está en EAX.
+                        }
+                        else if (location.registerCode == 3)
+                        {
+                            emitter.emitMovEaxEbx();
+                        }
+                        else
+                        {
+                            throw std::runtime_error(
+                                "K++ X86Backend: registro de argumento no soportado");
+                        }
+
+                        emitter.emitPushEax();
+                    }
 
                     const auto& leftLocation =
                         leftIt->second;
@@ -4423,6 +4496,15 @@ else if (instruction.opcode ==
                     {
                         freeTemporary(right);
                     }
+
+                    // CICLO 4: también quedan consumidos los
+                    // argumentos que viajaron por la pila.
+                    for (std::size_t argIndex = 2;
+                         argIndex < arguments.size();
+                         ++argIndex)
+                    {
+                        freeTemporary(arguments[argIndex]);
+                    }
                 }
 
                 // ------------------------------------------------
@@ -4438,6 +4520,16 @@ else if (instruction.opcode ==
                     instruction.name,
                     patchOffset
                 });
+
+                // CICLO 4: el llamador retira de la pila los
+                // argumentos que empujó (índice >= 2). EAX
+                // conserva el resultado de la función.
+                if (extraStackArguments > 0)
+                {
+                    emitter.emitAddEspImm32(
+                        static_cast<std::int32_t>(
+                            extraStackArguments * 4));
+                }
 
                 // ------------------------------------------------
                 // Resultado de la función:

@@ -1,0 +1,20 @@
+int suma5(int a, int b, int c, int d, int e)
+{
+    return a + b + c + d + e;
+}
+int cuenta(int n, int acc, int paso)
+{
+    if (n <= 0)
+    {
+        return acc;
+    }
+    return cuenta(n - 1, acc + paso, paso);
+}
+int main()
+{
+    int r = suma5(1, 2, 3, 4, 5);
+    print_int(r);
+    int s = cuenta(4, 0, 10);
+    print_int(s);
+    return 0;
+}

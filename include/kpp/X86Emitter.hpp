@@ -124,6 +124,7 @@ public:
 
     void emitPushEax();
     void emitPushEbx();
+    void emitAddEspImm32(std::int32_t value);
     void emitPopEax();
     void emitPopEbx();
     void emitMovEdxEdi();
