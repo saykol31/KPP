@@ -687,8 +687,9 @@ pruebas confirmadas y pendientes.
   L14       PASS           Errores sintácticos y   Pendiente de confirmar
                            semánticos              ejecución
 
-  L15       PASS           Recursión               Pendiente de confirmar
-                                                   ejecución
+  L15       PASS           Recursión               Confirmada en KolibriOS
+                                                   (2026-11-08):
+                                                   2, 6, 24, 120, 120
 
   L16       PASS           Llamadas anidadas       Backend verificado en
                                                    KolibriOS (2026-10-14)
@@ -758,43 +759,80 @@ son:
 -   **Targets adicionales:** ARM64, Linux, Windows y bare metal son
     líneas futuras, no targets que este README declare ya funcionales.
 
-### Limitación conocida: funciones con más de dos parámetros
+### Funciones con más de dos parámetros
 
-**Estado:** pendiente de implementación.
+**Estado:** RESUELTO — ciclo 4 de la consolidación de Stage 0
+(commit `005b854`, 2026-11-08), verificado en KolibriOS.
 
-La convención de llamada actual del backend x86 admite como máximo dos parámetros enteros, asignados a `EAX` y `EBX`. Las funciones con más de dos parámetros pueden superar el análisis semántico y generar IR válido, pero la generación de código máquina las rechaza.
+La convención de llamada vigente combina registros y pila:
 
-**Prueba de referencia:** `projects/resión de registros y valores intermedios.kpp`
+-   Argumento 0 → `EAX`, argumento 1 → `EBX` (sin cambios).
+-   Argumentos 2 en adelante: el llamador los empuja a la
+    pila en orden inverso antes de la llamada y los retira
+    después con `ADD ESP, 4·(N-2)`.
+-   El llamado copia cada argumento de pila desde
+    `[EBP+8]`, `[EBP+12]`, … a su hueco del marco al
+    entrar.
+-   `main` conserva su mecanismo propio, con un máximo de
+    dos parámetros (no tiene llamador que prepare la
+    pila).
 
-**Mensaje actual:** `K++ X86Backend: más de 2 parámetros no soportados todavía`
+**Pruebas de referencia:** `projects/resión de registros y
+valores intermedios.kpp` (`combinar`, cuatro parámetros:
+imprime `110, 110` en KolibriOS — la impresión automática
+del RETURN dentro de `combinar` más el `print_int` de
+`main`) y `projects/sonda_ciclo4.kpp` (cinco parámetros y
+recursión de tres: `15, 15, 40, 40, 40, 40, 40, 40`).
 
-**Posible solución futura:** implementar paso de argumentos por pila, acceso a parámetros desde el cuerpo de la función y limpieza de la pila por el llamador.
+**Suite actual (2026-11-08):** 64 positivas, 10 negativas
+y 1 caso clasificado FAIL por el script —
+`projects/array_Índice constante fuera de rango.kpp`,
+que el análisis semántico rechaza correctamente pero el
+script no tiene en su lista de negativos.
 
-Esta limitación es una funcionalidad pendiente, no un defecto de la prueba ni del frontend.
-El script ya clasifica 84 pruebas positivas y 12 negativas correctamente. El único caso pendiente es esta prueba de cuatro parámetros.
+### Comportamiento vigente: arreglos compartidos por nombre
 
-No la marques como PASS ni la elimines: si la excluimos sin control, podríamos dejar de detectar cuándo el backend cambia de comportamiento.
+**Estado:** RESUELTO — ciclo 2 de la consolidación de Stage 0
+(commit `7d5926b`, 2026-11-08), verificado en KolibriOS.
 
-### Comportamiento vigente: arreglos locales por función
+Los arreglos se comparten **por nombre de fuente** entre
+funciones: el primer `DECLARE` que reserva un nombre fija
+su hueco en DATA y el tamaño compartido es el mayor
+declarado; los demás `DECLARE` del mismo nombre en otras
+funciones apuntan al mismo hueco. Así las tablas del
+compilador Stage 1 (tokens, símbolos) pueden ser escritas
+por una función y leídas por otra.
 
-**Estado:** comportamiento actual del backend; el alias por nombre
-está previsto como ciclo 2 de la consolidación de Stage 0.
+Dos precisiones:
 
-Cada función que declara un arreglo recibe su propio espacio en
-DATA, aunque otra función declare un arreglo con el mismo nombre:
-los arreglos **no se comparten entre funciones**. La identidad del
-IR se numera por función y el backend asigna un hueco independiente
-a cada declaración.
+-   Un `DECLARE` repetido del mismo nombre **dentro de la
+    misma función** (sombra de bloque) conserva su hueco
+    propio, como siempre.
+-   Los escalares no cambian: siguen siendo locales por
+    función, en el marco EBP.
 
-**Prueba de referencia:** `projects/sonda_tablas.kpp` — `escribe()`
-guarda `72` en su `t[0]`; `lee()` declara su propio `t[4]` e imprime
-`t[0]`. El resultado es `0`, no `72` (deducido del código emitido:
-las dos declaraciones reciben bases distintas en DATA).
+**Prueba de referencia:** `projects/sonda_tablas.kpp` —
+`escribe()` guarda `72` en su `t[0]`; `lee()` declara su
+propio `t[4]` e imprime `t[0]`: imprime `72` en KolibriOS
+(antes del ciclo 2 imprimía `0`).
 
-Las tablas que el compilador Stage 1 necesita compartir entre
-funciones (tokens, símbolos) requerirán la regla de alias por
-nombre: el primer `DECLARE` de un nombre reserva el hueco en DATA
-y los siguientes `DECLARE` del mismo nombre apuntan a él.
+### Comportamiento verificado: impresión automática en RETURN
+
+El generador IR emite un `PRINT_INT` automático antes de
+todo `RETURN` cuyo operando es un temporal calculado o
+cargado (el resultado de una operación, de una llamada, de
+una lectura). Un `RETURN` de constante no imprime. Por eso
+un programa que además imprime el resultado en `main`
+muestra el valor dos veces: es el comportamiento del
+lenguaje, no un eco.
+
+La rutina de impresión preserva `EAX` y `EBX` (corregido
+en `df3a968`): antes de esa corrección, un `RETURN` desde
+un temporal residente en `EBX` justo después de su
+impresión automática devolvía la posición del texto en
+pantalla en lugar del valor. Lo detectó la prueba de
+campo de `projects/sonda_ciclo4.kpp`, que imprimió la
+posición (2293820) cinco veces en lugar del 40 esperado.
 
 ------------------------------------------------------------------------
 
