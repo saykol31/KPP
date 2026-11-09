@@ -3401,14 +3401,11 @@ else if (instruction.opcode ==
                         "temporal de retorno");
                 }
 
-                if (instruction.value <= 0 ||
-                    static_cast<std::uint64_t>(
-                        instruction.value) >
-                        KOLIBRI_FILE_IO_MAX_BYTES)
+                if (instruction.value <= 0)
                 {
                     throw std::runtime_error(
                         "K++ X86Backend: capacidad FILE_READ "
-                        "fuera del rango 1..65536");
+                        "debe ser al menos 1");
                 }
 
                 // ------------------------------------------------
@@ -3680,14 +3677,11 @@ else if (instruction.opcode ==
                         "temporal de cantidad");
                 }
 
-                if (instruction.value <= 0 ||
-                    static_cast<std::uint64_t>(
-                        instruction.value) >
-                        KOLIBRI_FILE_IO_MAX_BYTES)
+                if (instruction.value <= 0)
                 {
                     throw std::runtime_error(
                         "K++ X86Backend: capacidad FILE_WRITE "
-                        "fuera del rango 1..65536");
+                        "debe ser al menos 1");
                 }
 
                 // ------------------------------------------------

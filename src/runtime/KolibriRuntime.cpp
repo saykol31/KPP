@@ -318,6 +318,37 @@ KolibriRuntime::emitGraphicsRuntime(
 
 // ============================================================
 // FILE I/O RUNTIME — KOLIBRIOS
+//
+// KPP_FILE_IO_CYCLE1_BLOCK_RUNTIME
+//
+// Procesamiento de archivos mediante bloques de 64 KiB.
+//
+// WRITE:
+//     SF70.2 una sola vez: crear/truncar archivo.
+//     SF70.3 en cada iteración: escribir bloque.
+//
+// READ:
+//     SF70.0 en cada iteración.
+//
+// Se conservan:
+//     - ABI interna.
+//     - Bloque de parámetros de 25 bytes.
+//     - Scratch de 65536 bytes.
+//     - Cuatro puntos de parche de fase 2.
+//
+// Registros:
+//     ESI = base del bloque de parámetros.
+//     EDI = base del scratch.
+//
+// Variables locales (marco reservado con SUB ESP, 24):
+//
+//     [ESP + 00] = total / done
+//     [ESP + 04] = remaining
+//     [ESP + 08] = chunk / bytes recibidos
+//     [ESP + 12] = cursor del array int32_t
+//     [ESP + 16] = indicador EOF (READ)
+//     [ESP + 20] = tamaño solicitado del bloque (READ)
+//
 // ============================================================
 
 KolibriFileIoRuntimeResult
@@ -328,8 +359,11 @@ KolibriRuntime::emitFileIoRuntime(
 
     using BranchList = std::vector<std::size_t>;
 
+    constexpr std::uint32_t BLOCK =
+        KOLIBRI_FILE_IO_MAX_BYTES;
+
     // --------------------------------------------------------
-    // HELPERS DE CODIFICACIÓN X86
+    // HELPERS DE EMISIÓN
     // --------------------------------------------------------
 
     const auto emitJcc =
@@ -337,7 +371,6 @@ KolibriRuntime::emitFileIoRuntime(
         {
             emitter.emitByte(0x0F);
             emitter.emitByte(condition);
-
             return emitter.emitRel32Placeholder();
         };
 
@@ -345,7 +378,6 @@ KolibriRuntime::emitFileIoRuntime(
         [&emitter]()
         {
             emitter.emitByte(0xE9);
-
             return emitter.emitRel32Placeholder();
         };
 
@@ -373,7 +405,6 @@ KolibriRuntime::emitFileIoRuntime(
     const auto emitLoadEaxEsp =
         [&emitter](std::uint8_t displacement)
         {
-            // MOV EAX, [ESP + disp8]
             emitter.emitByte(0x8B);
             emitter.emitByte(0x44);
             emitter.emitByte(0x24);
@@ -383,7 +414,6 @@ KolibriRuntime::emitFileIoRuntime(
     const auto emitLoadEcxEsp =
         [&emitter](std::uint8_t displacement)
         {
-            // MOV ECX, [ESP + disp8]
             emitter.emitByte(0x8B);
             emitter.emitByte(0x4C);
             emitter.emitByte(0x24);
@@ -393,45 +423,65 @@ KolibriRuntime::emitFileIoRuntime(
     const auto emitLoadEdxEsp =
         [&emitter](std::uint8_t displacement)
         {
-            // MOV EDX, [ESP + disp8]
             emitter.emitByte(0x8B);
             emitter.emitByte(0x54);
             emitter.emitByte(0x24);
             emitter.emitByte(displacement);
         };
 
-    const auto emitLoadEsiEsp =
+    const auto emitLoadEbxEsp =
         [&emitter](std::uint8_t displacement)
         {
-            // MOV ESI, [ESP + disp8]
             emitter.emitByte(0x8B);
-            emitter.emitByte(0x74);
+            emitter.emitByte(0x5C);
             emitter.emitByte(0x24);
             emitter.emitByte(displacement);
         };
 
-    const auto emitLoadEdiEsp =
+    const auto emitStoreEaxEsp =
         [&emitter](std::uint8_t displacement)
         {
-            // MOV EDI, [ESP + disp8]
-            emitter.emitByte(0x8B);
-            emitter.emitByte(0x7C);
+            emitter.emitByte(0x89);
+            emitter.emitByte(0x44);
             emitter.emitByte(0x24);
             emitter.emitByte(displacement);
         };
 
-    const auto emitMovEbxImm32Placeholder =
-        [&emitter]()
+    const auto emitStoreEbxEsp =
+        [&emitter](std::uint8_t displacement)
         {
-            // MOV EBX, imm32
-            emitter.emitByte(0xBB);
-            return emitter.emitImm32Placeholder();
+            emitter.emitByte(0x89);
+            emitter.emitByte(0x5C);
+            emitter.emitByte(0x24);
+            emitter.emitByte(displacement);
+        };
+
+    const auto emitStoreImmEsp =
+        [&emitter](
+            std::uint8_t displacement,
+            std::uint32_t value)
+        {
+            emitter.emitByte(0xC7);
+            emitter.emitByte(0x44);
+            emitter.emitByte(0x24);
+            emitter.emitByte(displacement);
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 8));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 16));
+
+            emitter.emitByte(
+                static_cast<std::uint8_t>(value >> 24));
         };
 
     const auto emitMovEsiImm32Placeholder =
         [&emitter]()
         {
-            // MOV ESI, imm32
             emitter.emitByte(0xBE);
             return emitter.emitImm32Placeholder();
         };
@@ -439,19 +489,17 @@ KolibriRuntime::emitFileIoRuntime(
     const auto emitMovEdiImm32Placeholder =
         [&emitter]()
         {
-            // MOV EDI, imm32
             emitter.emitByte(0xBF);
             return emitter.emitImm32Placeholder();
         };
 
-    const auto emitMovDwordEbxDispImm32 =
+    const auto emitMovDwordEsiDispImm32 =
         [&emitter](
             std::uint8_t displacement,
             std::uint32_t value)
         {
-            // MOV DWORD [EBX + disp8], imm32
             emitter.emitByte(0xC7);
-            emitter.emitByte(0x43);
+            emitter.emitByte(0x46);
             emitter.emitByte(displacement);
 
             emitter.emitByte(
@@ -475,16 +523,26 @@ KolibriRuntime::emitFileIoRuntime(
             emitter.emitByte(0x56); // PUSH ESI
             emitter.emitByte(0x57); // PUSH EDI
 
-            // Guardar argumentos.
+            // Guardar argumentos originales.
             emitter.emitPushEax();
             emitter.emitByte(0x51); // PUSH ECX
             emitter.emitByte(0x52); // PUSH EDX
+
+            // Reservar 24 bytes de variables locales.
+            emitter.emitByte(0x83);
+            emitter.emitByte(0xEC);
+            emitter.emitByte(0x18);
         };
 
     const auto emitCommonEpilogue =
         [&emitter]()
         {
-            // Descartar EDX, ECX y EAX guardados.
+            // Liberar variables locales.
+            emitter.emitByte(0x83);
+            emitter.emitByte(0xC4);
+            emitter.emitByte(0x18);
+
+            // Descartar argumentos guardados.
             emitter.emitByte(0x83);
             emitter.emitByte(0xC4);
             emitter.emitByte(0x0C);
@@ -510,56 +568,59 @@ KolibriRuntime::emitFileIoRuntime(
     emitCommonPrologue();
 
     /*
-     * Distribución de pila después del prólogo:
+     * Distribución de pila:
      *
-     * [ESP + 00] = EDX original: capacidad
-     * [ESP + 04] = ECX original: cantidad
-     * [ESP + 08] = EAX original: ruta
-     * [ESP + 12] = EDI preservado
-     * [ESP + 16] = ESI preservado
-     * [ESP + 20] = EBX preservado: array
-     * [ESP + 24] = dirección de retorno
+     * [ESP + 00] = total escrito
+     * [ESP + 04] = bytes pendientes
+     * [ESP + 08] = tamaño del bloque
+     * [ESP + 12] = cursor del array
+     * [ESP + 16] = reservado
+     * [ESP + 20] = reservado
+     *
+     * [ESP + 24] = EDX original: capacidad
+     * [ESP + 28] = ECX original: cantidad
+     * [ESP + 32] = EAX original: ruta
+     * [ESP + 36] = EDI preservado
+     * [ESP + 40] = ESI preservado
+     * [ESP + 44] = EBX preservado: array
+     * [ESP + 48] = dirección de retorno
      */
 
+    // --------------------------------------------------------
+    // VALIDACIÓN DE ARGUMENTOS
+    // --------------------------------------------------------
+
     // Ruta no nula.
-    emitLoadEaxEsp(8);
+    emitLoadEaxEsp(32);
     emitter.emitCmpEaxImm32(0);
 
     writeFailureBranches.push_back(
         emitJcc(0x84)); // JE
 
     // Array no nulo.
-    emitLoadEaxEsp(20);
+    emitLoadEaxEsp(44);
     emitter.emitCmpEaxImm32(0);
 
     writeFailureBranches.push_back(
         emitJcc(0x84)); // JE
 
     // Cantidad >= 0.
-    emitLoadEcxEsp(4);
-    emitCmpRegImm32(0xF9, 0); // CMP ECX, 0
+    emitLoadEcxEsp(28);
+    emitCmpRegImm32(0xF9, 0);
 
     writeFailureBranches.push_back(
         emitJcc(0x8C)); // JL
 
     // Capacidad >= 0.
-    emitLoadEdxEsp(0);
-    emitCmpRegImm32(0xFA, 0); // CMP EDX, 0
+    emitLoadEdxEsp(24);
+    emitCmpRegImm32(0xFA, 0);
 
     writeFailureBranches.push_back(
         emitJcc(0x8C)); // JL
 
-    // Capacidad <= 65536.
-    emitCmpRegImm32(
-        0xFA,
-        KOLIBRI_FILE_IO_MAX_BYTES);
-
-    writeFailureBranches.push_back(
-        emitJcc(0x87)); // JA
-
     // Cantidad <= capacidad.
-    emitLoadEcxEsp(4);
-    emitLoadEdxEsp(0);
+    emitLoadEcxEsp(28);
+    emitLoadEdxEsp(24);
 
     emitter.emitByte(0x39);
     emitter.emitByte(0xD1); // CMP ECX, EDX
@@ -568,121 +629,65 @@ KolibriRuntime::emitFileIoRuntime(
         emitJcc(0x87)); // JA
 
     // --------------------------------------------------------
-    // CONVERSIÓN ARRAY int32_t -> SCRATCH byte[]
+    // INICIALIZAR VARIABLES LOCALES
     // --------------------------------------------------------
 
-    emitLoadEsiEsp(20);
+    emitStoreImmEsp(0, 0);
+
+    emitLoadEaxEsp(28);
+    emitStoreEaxEsp(4);
+
+    emitLoadEaxEsp(44);
+    emitStoreEaxEsp(12);
+
+    // --------------------------------------------------------
+    // CARGAR BASES UNA SOLA VEZ
+    // --------------------------------------------------------
+
+    result.writeParamsAddressPatch =
+        emitMovEsiImm32Placeholder();
 
     result.writeScratchAddressPatch =
         emitMovEdiImm32Placeholder();
 
-    // EDX conserva la base del scratch.
-    //
-    // El bucle de conversión avanza EDI, así que la
-    // dirección que necesita el campo bufferAddress
-    // del bloque es la base, no el puntero avanzado.
-    // EDX ya no interviene tras las validaciones
-    // (cantidad y capacidad viven en la pila).
-    //
-    // MOV EDX, EDI
-    emitter.emitByte(0x89);
-    emitter.emitByte(0xFA);
-
-    emitLoadEcxEsp(4);
-
-    // Cantidad cero: no ejecutar el bucle.
-    emitter.emitByte(0x85);
-    emitter.emitByte(0xC9); // TEST ECX, ECX
-
-    const std::size_t writeCopySkip =
-        emitJcc(0x84); // JE
-
-    const std::size_t writeCopyLoop =
-        emitter.size();
-
-    // EAX = celda int32_t.
-    emitter.emitByte(0x8B);
-    emitter.emitByte(0x06); // MOV EAX, [ESI]
-
-    // Guardar el byte bajo.
-    emitter.emitByte(0x88);
-    emitter.emitByte(0x07); // MOV [EDI], AL
-
-    // Avanzar array: 4 bytes.
-    emitter.emitByte(0x83);
-    emitter.emitByte(0xC6);
-    emitter.emitByte(0x04);
-
-    // Avanzar scratch: 1 byte.
-    emitter.emitByte(0x47); // INC EDI
-
-    // Siguiente celda.
-    emitter.emitByte(0x49); // DEC ECX
-
-    const std::size_t writeLoopBack =
-        emitJcc(0x85); // JNZ
-
-    emitter.patchRel32(
-        writeLoopBack,
-        writeCopyLoop);
-
-    const std::size_t writeCopyDone =
-        emitter.size();
-
-    emitter.patchRel32(
-        writeCopySkip,
-        writeCopyDone);
-
-
     // --------------------------------------------------------
-    // ARMAR BLOQUE FUNCIÓN 70
+    // INICIALIZAR BLOQUE DE PARÁMETROS
     // --------------------------------------------------------
 
-    result.writeParamsAddressPatch =
-        emitMovEbxImm32Placeholder();
+    // Subfunción inicial: CREATE / REWRITE = 2.
+    emitMovDwordEsiDispImm32(0, 2);
 
-    // +00: subfunción WRITE = 2.
-    emitMovDwordEbxDispImm32(0, 2);
+    // Offset low.
+    emitMovDwordEsiDispImm32(4, 0);
 
-    // +04: offsetLow = 0.
-    emitMovDwordEbxDispImm32(4, 0);
+    // Offset high.
+    emitMovDwordEsiDispImm32(8, 0);
 
-    // +08: offsetHigh = 0.
-    emitMovDwordEbxDispImm32(8, 0);
+    // Crear archivo vacío.
+    emitMovDwordEsiDispImm32(12, 0);
 
-    // +12: cantidad.
-    emitLoadEcxEsp(4);
+    // Buffer nulo durante CREATE.
+    emitMovDwordEsiDispImm32(16, 0);
 
-    emitter.emitByte(0x89);
-    emitter.emitByte(0x4B);
-    emitter.emitByte(0x0C);
-
-    // +16: dirección del scratch.
-    //
-    // La base viene en EDX: EDI quedó avanzado
-    // por el bucle de conversión.
-    //
-    // MOV DWORD [EBX + 0x10], EDX
-    emitter.emitByte(0x89);
-    emitter.emitByte(0x53);
-    emitter.emitByte(0x10);
-
-    // +20: encoding RAW = 0.
+    // Encoding RAW.
     emitter.emitByte(0xC6);
-    emitter.emitByte(0x43);
+    emitter.emitByte(0x46);
     emitter.emitByte(0x14);
-    emitter.emitByte(0x00);
+    emitter.emitByte(0);
 
-    // +21: puntero de ruta.
-    emitLoadEaxEsp(8);
+    // Ruta.
+    emitLoadEaxEsp(32);
 
     emitter.emitByte(0x89);
-    emitter.emitByte(0x43);
+    emitter.emitByte(0x46);
     emitter.emitByte(0x15);
 
     // --------------------------------------------------------
-    // INT 0x40 — FUNCIÓN 70
+    // SF70.2 — CREAR / REESCRIBIR UNA SOLA VEZ
     // --------------------------------------------------------
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xF3); // MOV EBX, ESI
 
     emitter.emitMovEaxImm32(
         static_cast<std::int32_t>(
@@ -690,13 +695,183 @@ KolibriRuntime::emitFileIoRuntime(
 
     emitter.emitInt(0x40);
 
-    // EAX == 0 significa éxito.
     emitter.emitCmpEaxImm32(0);
 
     writeFailureBranches.push_back(
         emitJcc(0x85)); // JNE
 
-    // Retorno correcto.
+    // ========================================================
+    // BUCLE WRITE
+    // ========================================================
+
+    const std::size_t writeLoop =
+        emitter.size();
+
+    // Si remaining <= 0, terminar correctamente.
+    emitLoadEaxEsp(4);
+
+    emitter.emitByte(0x85);
+    emitter.emitByte(0xC0); // TEST EAX, EAX
+
+    const std::size_t writeFinishedBranch =
+        emitJcc(0x8E); // JLE
+
+    // --------------------------------------------------------
+    // chunk = min(remaining, 65536)
+    // --------------------------------------------------------
+
+    emitLoadEaxEsp(4);
+
+    emitCmpRegImm32(
+        0xF8,
+        BLOCK);
+
+    const std::size_t writeUseRemaining =
+        emitJcc(0x86); // JBE
+
+    emitter.emitMovEaxImm32(
+        static_cast<std::int32_t>(BLOCK));
+
+    const std::size_t writeChunkSelected =
+        emitter.size();
+
+    emitter.patchRel32(
+        writeUseRemaining,
+        writeChunkSelected);
+
+    emitStoreEaxEsp(8);
+
+    // --------------------------------------------------------
+    // CONVERSIÓN ARRAY int32_t -> SCRATCH
+    // --------------------------------------------------------
+
+    emitLoadEbxEsp(12);
+
+    // EDX = cursor scratch.
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xFA); // MOV EDX, EDI
+
+    emitLoadEcxEsp(8);
+
+    const std::size_t writeConvertLoop =
+        emitter.size();
+
+    // EAX = celda int32_t.
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x03); // MOV EAX, [EBX]
+
+    // Guardar byte bajo.
+    emitter.emitByte(0x88);
+    emitter.emitByte(0x02); // MOV [EDX], AL
+
+    // Array += 4.
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC3);
+    emitter.emitByte(0x04);
+
+    // Scratch += 1.
+    emitter.emitByte(0x42); // INC EDX
+
+    // ECX--.
+    emitter.emitByte(0x49); // DEC ECX
+
+    const std::size_t writeConvertBack =
+        emitJcc(0x85); // JNZ
+
+    emitter.patchRel32(
+        writeConvertBack,
+        writeConvertLoop);
+
+    // Guardar cursor actualizado del array.
+    emitStoreEbxEsp(12);
+
+    // --------------------------------------------------------
+    // PREPARAR SF70.3 — WRITE_FILE
+    // --------------------------------------------------------
+
+    // Subfunción WRITE_FILE = 3.
+    emitMovDwordEsiDispImm32(0, 3);
+
+    // OffsetLow = total escrito.
+    emitLoadEaxEsp(0);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x04);
+
+    // OffsetHigh = 0.
+    emitMovDwordEsiDispImm32(8, 0);
+
+    // ByteCount = chunk.
+    emitLoadEaxEsp(8);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x0C);
+
+    // BufferAddress = base scratch.
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x7E);
+    emitter.emitByte(0x10);
+
+    // --------------------------------------------------------
+    // INT 0x40 — SF70.3
+    // --------------------------------------------------------
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xF3); // MOV EBX, ESI
+
+    emitter.emitMovEaxImm32(
+        static_cast<std::int32_t>(
+            KOLIBRI_FILE_IO_FUNCTION));
+
+    emitter.emitInt(0x40);
+
+    // EAX != 0 significa error.
+    emitter.emitCmpEaxImm32(0);
+
+    writeFailureBranches.push_back(
+        emitJcc(0x85)); // JNE
+
+    // --------------------------------------------------------
+    // AVANZAR CONTADORES
+    // --------------------------------------------------------
+
+    // total += chunk.
+    emitLoadEaxEsp(0);
+
+    emitter.emitByte(0x03);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x08);
+
+    emitStoreEaxEsp(0);
+
+    // remaining -= chunk.
+    emitLoadEaxEsp(4);
+
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x08);
+
+    emitStoreEaxEsp(4);
+
+    // Siguiente bloque.
+    const std::size_t writeLoopBack =
+        emitJmp();
+
+    emitter.patchRel32(
+        writeLoopBack,
+        writeLoop);
+
+    // --------------------------------------------------------
+    // WRITE COMPLETADO
+    // --------------------------------------------------------
+
+    const std::size_t writeSuccess =
+        emitter.size();
+
     emitter.emitByte(0x31);
     emitter.emitByte(0xC0); // XOR EAX, EAX
 
@@ -712,10 +887,18 @@ KolibriRuntime::emitFileIoRuntime(
 
     emitter.emitMovEaxImm32(-1);
 
+    // --------------------------------------------------------
+    // EPÍLOGO WRITE
+    // --------------------------------------------------------
+
     const std::size_t writeEpilogue =
         emitter.size();
 
     emitCommonEpilogue();
+
+    emitter.patchRel32(
+        writeFinishedBranch,
+        writeSuccess);
 
     for (const std::size_t patch :
          writeFailureBranches)
@@ -742,98 +925,188 @@ KolibriRuntime::emitFileIoRuntime(
 
     BranchList readFailureBranches;
     BranchList readSuccessBranches;
-    BranchList readEofBranches;
 
     emitCommonPrologue();
 
     /*
-     * Distribución de pila:
+     * Variables locales:
      *
-     * [ESP + 00] = EDX original
-     * [ESP + 04] = ECX original: capacidad
-     * [ESP + 08] = EAX original: ruta
-     * [ESP + 12] = EDI preservado
-     * [ESP + 16] = ESI preservado
-     * [ESP + 20] = EBX preservado: array
-     * [ESP + 24] = dirección de retorno
+     * [ESP + 00] = total leído
+     * [ESP + 04] = remaining
+     * [ESP + 08] = chunk / bytes recibidos
+     * [ESP + 12] = cursor array
+     * [ESP + 16] = EOF
+     * [ESP + 20] = tamaño solicitado del bloque
+     *
+     * Argumentos:
+     *
+     * [ESP + 24] = EDX original: capacidad
+     * [ESP + 28] = ECX original: capacidad
+     * [ESP + 32] = EAX original: ruta
+     * [ESP + 44] = EBX original: array
      */
 
+    // --------------------------------------------------------
+    // VALIDACIÓN READ
+    // --------------------------------------------------------
+
     // Ruta no nula.
-    emitLoadEaxEsp(8);
+    emitLoadEaxEsp(32);
     emitter.emitCmpEaxImm32(0);
 
     readFailureBranches.push_back(
         emitJcc(0x84)); // JE
 
     // Array no nulo.
-    emitLoadEaxEsp(20);
+    emitLoadEaxEsp(44);
     emitter.emitCmpEaxImm32(0);
 
     readFailureBranches.push_back(
         emitJcc(0x84)); // JE
 
     // Capacidad > 0.
-    emitLoadEcxEsp(4);
+    emitLoadEcxEsp(28);
     emitCmpRegImm32(0xF9, 0);
 
     readFailureBranches.push_back(
         emitJcc(0x8E)); // JLE
 
-    // Capacidad <= 65536.
-    emitCmpRegImm32(
-        0xF9,
-        KOLIBRI_FILE_IO_MAX_BYTES);
+    // --------------------------------------------------------
+    // INICIALIZAR CONTADORES
+    // --------------------------------------------------------
 
-    readFailureBranches.push_back(
-        emitJcc(0x87)); // JA
+    emitStoreImmEsp(0, 0);
+
+    emitLoadEaxEsp(28);
+    emitStoreEaxEsp(4);
+
+    emitLoadEaxEsp(44);
+    emitStoreEaxEsp(12);
+
+    emitStoreImmEsp(16, 0);
 
     // --------------------------------------------------------
-    // ARMAR BLOQUE FUNCIÓN 70
+    // CARGAR BASES UNA SOLA VEZ
     // --------------------------------------------------------
 
     result.readParamsAddressPatch =
-        emitMovEbxImm32Placeholder();
-
-    // +00: subfunción READ = 0.
-    emitMovDwordEbxDispImm32(0, 0);
-
-    // +04: offsetLow = 0.
-    emitMovDwordEbxDispImm32(4, 0);
-
-    // +08: offsetHigh = 0.
-    emitMovDwordEbxDispImm32(8, 0);
-
-    // +12: capacidad solicitada.
-    emitLoadEcxEsp(4);
-
-    emitter.emitByte(0x89);
-    emitter.emitByte(0x4B);
-    emitter.emitByte(0x0C);
-
-    // +16: dirección scratch.
-    result.readScratchAddressPatch =
         emitMovEsiImm32Placeholder();
 
+    result.readScratchAddressPatch =
+        emitMovEdiImm32Placeholder();
+
+    // --------------------------------------------------------
+    // INICIALIZAR BLOQUE DE PARÁMETROS
+    // --------------------------------------------------------
+
+    // SF70.0 READ.
+    emitMovDwordEsiDispImm32(0, 0);
+
+    // OffsetLow.
+    emitMovDwordEsiDispImm32(4, 0);
+
+    // OffsetHigh.
+    emitMovDwordEsiDispImm32(8, 0);
+
+    // ByteCount.
+    emitMovDwordEsiDispImm32(12, 0);
+
+    // BufferAddress.
     emitter.emitByte(0x89);
-    emitter.emitByte(0x73);
+    emitter.emitByte(0x7E);
     emitter.emitByte(0x10);
 
-    // +20: encoding RAW = 0.
+    // Encoding RAW.
     emitter.emitByte(0xC6);
-    emitter.emitByte(0x43);
+    emitter.emitByte(0x46);
     emitter.emitByte(0x14);
-    emitter.emitByte(0x00);
+    emitter.emitByte(0);
 
-    // +21: puntero de ruta.
+    // Ruta.
+    emitLoadEaxEsp(32);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x15);
+
+    // ========================================================
+    // BUCLE READ
+    // ========================================================
+
+    const std::size_t readLoop =
+        emitter.size();
+
+    // Si remaining <= 0, terminar.
+    emitLoadEaxEsp(4);
+
+    emitter.emitByte(0x85);
+    emitter.emitByte(0xC0);
+
+    const std::size_t readFinishedBranch =
+        emitJcc(0x8E); // JLE
+
+    // --------------------------------------------------------
+    // chunk = min(remaining, 65536)
+    // --------------------------------------------------------
+
+    emitLoadEaxEsp(4);
+
+    emitCmpRegImm32(
+        0xF8,
+        BLOCK);
+
+    const std::size_t readUseRemaining =
+        emitJcc(0x86); // JBE
+
+    emitter.emitMovEaxImm32(
+        static_cast<std::int32_t>(BLOCK));
+
+    const std::size_t readChunkSelected =
+        emitter.size();
+
+    emitter.patchRel32(
+        readUseRemaining,
+        readChunkSelected);
+
+    emitStoreEaxEsp(8);
+
+    // Conservar también el tamaño solicitado en [ESP + 20]:
+    // [ESP + 8] se sobrescribirá con los bytes recibidos
+    // y la comparación de bloque corto necesita el pedido.
+    emitStoreEaxEsp(20);
+
+    // --------------------------------------------------------
+    // ACTUALIZAR BLOQUE DE PARÁMETROS
+    // --------------------------------------------------------
+
+    // OffsetLow = total leído.
+    emitLoadEaxEsp(0);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x04);
+
+    // OffsetHigh = 0.
+    emitMovDwordEsiDispImm32(8, 0);
+
+    // ByteCount = chunk.
     emitLoadEaxEsp(8);
 
     emitter.emitByte(0x89);
-    emitter.emitByte(0x43);
-    emitter.emitByte(0x15);
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x0C);
+
+    // BufferAddress permanece en scratch.
+
+    // Reiniciar indicador EOF.
+    emitStoreImmEsp(16, 0);
 
     // --------------------------------------------------------
-    // INT 0x40 — FUNCIÓN 70
+    // INT 0x40 — SF70.0
     // --------------------------------------------------------
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xF3); // MOV EBX, ESI
 
     emitter.emitMovEaxImm32(
         static_cast<std::int32_t>(
@@ -841,116 +1114,202 @@ KolibriRuntime::emitFileIoRuntime(
 
     emitter.emitInt(0x40);
 
-    // Código 6 = EOF: éxito corto.
-    //
-    // EBX trae los bytes realmente leídos, así que
-    // esta rama comparte el camino de validación
-    // y desempaquetado con EAX == 0.
+    // --------------------------------------------------------
+    // INTERPRETAR RESULTADO
+    // --------------------------------------------------------
+
+    // EAX == 6: EOF.
     emitter.emitCmpEaxImm32(
         static_cast<std::int32_t>(
             KOLIBRI_FILE_IO_EOF));
 
-    readEofBranches.push_back(
-        emitJcc(0x84)); // JE
+    const std::size_t readEofStatus =
+        emitJcc(0x84); // JE
 
-    // EAX == 0 significa lectura correcta.
+    // EAX == 0: lectura normal.
     emitter.emitCmpEaxImm32(0);
 
-    readFailureBranches.push_back(
-        emitJcc(0x85)); // JNE
+    const std::size_t readErrorStatus =
+        emitJcc(0x85); // JNE
+
+    // Saltar al procesamiento normal.
+    const std::size_t readNormalStatus =
+        emitJmp();
 
     // --------------------------------------------------------
-    // VALIDAR CANTIDAD DEVUELTA
-    //
-    // Punto común de EAX == 0 y EAX == 6 (EOF):
-    // EBX = bytes leídos en ambos casos.
+    // EOF
     // --------------------------------------------------------
 
-    const std::size_t readValidateCount =
+    const std::size_t readEofLabel =
         emitter.size();
 
-    emitLoadEcxEsp(4);
+    emitStoreImmEsp(16, 1);
 
-    // EBX = bytes leídos.
-    // ECX = capacidad solicitada.
-    emitter.emitByte(0x39);
-    emitter.emitByte(0xCB); // CMP EBX, ECX
+    const std::size_t readEofContinue =
+        emitJmp();
 
-    readFailureBranches.push_back(
-        emitJcc(0x87)); // JA
+    // --------------------------------------------------------
+    // ERROR DE SISTEMA
+    // --------------------------------------------------------
 
-    // Guardar el número de bytes leídos.
-    emitter.emitByte(0x89);
-    emitter.emitByte(0xDA); // MOV EDX, EBX
+    const std::size_t readError =
+        emitter.size();
 
-    // Si no hay bytes, devolver cero.
+    // Si ya hay datos, devolver el total parcial.
+    emitLoadEaxEsp(0);
+
     emitter.emitByte(0x85);
-    emitter.emitByte(0xD2); // TEST EDX, EDX
+    emitter.emitByte(0xC0);
 
-    const std::size_t readCopySkip =
+    const std::size_t readPartialBranch =
+        emitJcc(0x85); // JNZ
+
+    // Si no se leyó nada, devolver -1.
+    const std::size_t readNoDataFailure =
+        emitJmp();
+
+    // --------------------------------------------------------
+    // PROCESAMIENTO DE LECTURA
+    // --------------------------------------------------------
+
+    const std::size_t readProcess =
+        emitter.size();
+
+    // EBX contiene los bytes devueltos por SF70.0.
+    // Validar que no excedan el bloque solicitado.
+    emitLoadEaxEsp(8);
+
+    // CMP EBX, EAX.
+    emitter.emitByte(0x39);
+    emitter.emitByte(0xC3);
+
+    const std::size_t readInvalidCount =
+        emitJcc(0x87); // JA
+
+    // Guardar bytes realmente leídos.
+    emitStoreEbxEsp(8);
+
+    // Cero bytes: terminar sin entrar en conversión.
+    emitter.emitByte(0x85);
+    emitter.emitByte(0xDB); // TEST EBX, EBX
+
+    const std::size_t readZeroBytes =
         emitJcc(0x84); // JE
 
     // --------------------------------------------------------
-    // CONVERSIÓN SCRATCH byte[] -> ARRAY int32_t
-    //
-    // ESI ya contiene la base del scratch: se cargó
-    // una única vez al armar el bloque y su
-    // placeholder es el registrado en
-    // result.readScratchAddressPatch.
-    // INT 0x40 preserva ESI.
+    // CONVERSIÓN SCRATCH -> ARRAY int32_t
     // --------------------------------------------------------
 
-    emitLoadEdiEsp(20);
-
-    // Número de bytes a convertir.
+    // EDX = scratch base.
     emitter.emitByte(0x89);
-    emitter.emitByte(0xD1); // MOV ECX, EDX
+    emitter.emitByte(0xFA);
 
-    const std::size_t readCopyLoop =
+    // EBX = cursor array.
+    emitLoadEbxEsp(12);
+
+    // ECX = bytes recibidos.
+    emitLoadEcxEsp(8);
+
+    const std::size_t readConvertLoop =
         emitter.size();
 
-    // EAX = zero_extend(byte [ESI]).
+    // EAX = zero_extend(byte [EDX]).
     emitter.emitByte(0x0F);
     emitter.emitByte(0xB6);
-    emitter.emitByte(0x06);
+    emitter.emitByte(0x02);
 
-    // [EDI] = EAX.
+    // [EBX] = EAX.
     emitter.emitByte(0x89);
-    emitter.emitByte(0x07);
+    emitter.emitByte(0x03);
 
-    // Siguiente byte.
-    emitter.emitByte(0x46); // INC ESI
+    // Scratch += 1.
+    emitter.emitByte(0x42);
 
-    // Siguiente celda int32_t.
+    // Array += 4.
     emitter.emitByte(0x83);
-    emitter.emitByte(0xC7);
+    emitter.emitByte(0xC3);
     emitter.emitByte(0x04);
 
-    emitter.emitByte(0x49); // DEC ECX
+    // ECX--.
+    emitter.emitByte(0x49);
 
-    const std::size_t readLoopBack =
+    const std::size_t readConvertBack =
         emitJcc(0x85); // JNZ
 
     emitter.patchRel32(
-        readLoopBack,
-        readCopyLoop);
+        readConvertBack,
+        readConvertLoop);
 
-    const std::size_t readCopyDone =
-        emitter.size();
+    // Guardar cursor array.
+    emitStoreEbxEsp(12);
+
+    // --------------------------------------------------------
+    // ACTUALIZAR TOTAL Y REMAINING
+    // --------------------------------------------------------
+
+    // total += bytes recibidos.
+    emitLoadEaxEsp(0);
+
+    emitter.emitByte(0x03);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x08);
+
+    emitStoreEaxEsp(0);
+
+    // remaining -= bytes recibidos.
+    emitLoadEaxEsp(4);
+
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x08);
+
+    emitStoreEaxEsp(4);
+
+    // Si EOF, terminar.
+    emitLoadEaxEsp(16);
+
+    emitter.emitByte(0x85);
+    emitter.emitByte(0xC0);
+
+    const std::size_t readEofAfterCopy =
+        emitJcc(0x85); // JNZ
+
+    // Si bytes recibidos < tamaño solicitado ([ESP + 20]),
+    // lectura corta: EOF.
+    emitLoadEaxEsp(8);
+
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x14); // CMP EAX, [ESP + 20]
+
+    const std::size_t readShortBlock =
+        emitJcc(0x82); // JB
+
+    // Bloque completo: siguiente iteración.
+    const std::size_t readLoopBack =
+        emitJmp();
 
     emitter.patchRel32(
-        readCopySkip,
-        readCopyDone);
+        readLoopBack,
+        readLoop);
 
-    // EAX = bytes leídos.
-    emitter.emitByte(0x89);
-    emitter.emitByte(0xD0); // MOV EAX, EDX
+    // --------------------------------------------------------
+    // TERMINACIONES NORMALES
+    // --------------------------------------------------------
+
+    const std::size_t readSuccess =
+        emitter.size();
+
+    emitLoadEaxEsp(0);
 
     readSuccessBranches.push_back(
         emitJmp());
 
     // --------------------------------------------------------
-    // ERROR READ
+    // ERROR SIN DATOS
     // --------------------------------------------------------
 
     const std::size_t readFailure =
@@ -958,14 +1317,62 @@ KolibriRuntime::emitFileIoRuntime(
 
     emitter.emitMovEaxImm32(-1);
 
+    // --------------------------------------------------------
+    // EPÍLOGO READ
+    // --------------------------------------------------------
+
     const std::size_t readEpilogue =
         emitter.size();
 
     emitCommonEpilogue();
 
     // --------------------------------------------------------
-    // RESOLVER SALTOS
+    // RESOLVER SALTOS READ
     // --------------------------------------------------------
+
+    emitter.patchRel32(
+        readFinishedBranch,
+        readSuccess);
+
+    emitter.patchRel32(
+        readEofStatus,
+        readEofLabel);
+
+    emitter.patchRel32(
+        readEofContinue,
+        readProcess);
+
+    emitter.patchRel32(
+        readNormalStatus,
+        readProcess);
+
+    emitter.patchRel32(
+        readErrorStatus,
+        readError);
+
+    emitter.patchRel32(
+        readPartialBranch,
+        readSuccess);
+
+    emitter.patchRel32(
+        readNoDataFailure,
+        readFailure);
+
+    emitter.patchRel32(
+        readInvalidCount,
+        readError);
+
+    emitter.patchRel32(
+        readZeroBytes,
+        readSuccess);
+
+    emitter.patchRel32(
+        readEofAfterCopy,
+        readSuccess);
+
+    emitter.patchRel32(
+        readShortBlock,
+        readSuccess);
 
     for (const std::size_t patch :
          readFailureBranches)
@@ -973,14 +1380,6 @@ KolibriRuntime::emitFileIoRuntime(
         emitter.patchRel32(
             patch,
             readFailure);
-    }
-
-    for (const std::size_t patch :
-         readEofBranches)
-    {
-        emitter.patchRel32(
-            patch,
-            readValidateCount);
     }
 
     for (const std::size_t patch :
@@ -993,7 +1392,6 @@ KolibriRuntime::emitFileIoRuntime(
 
     return result;
 }
-
 
 // ============================================================
 // FIN FILE I/O RUNTIME

@@ -176,8 +176,9 @@ static_assert(
 //     Validaciones:
 //         cantidad >= 0
 //         cantidad <= capacidad
-//         cantidad <= KOLIBRI_FILE_IO_MAX_BYTES
-//         capacidad <= KOLIBRI_FILE_IO_MAX_BYTES
+//         cantidad y capacidad sin límite total: el
+//         runtime transfiere en bloques internos de
+//         hasta KOLIBRI_FILE_IO_MAX_BYTES bytes
 //
 //     Conversión:
 //         Una celda K++ produce un byte.
@@ -203,7 +204,8 @@ static_assert(
 //
 //     Validaciones:
 //         capacidad > 0
-//         capacidad <= KOLIBRI_FILE_IO_MAX_BYTES
+//         (sin límite total: el runtime lee en bloques
+//         internos de hasta KOLIBRI_FILE_IO_MAX_BYTES)
 //
 //     Lectura:
 //         Nunca solicitar más bytes que la capacidad.
@@ -224,7 +226,12 @@ static_assert(
 //         2 para escritura.
 //
 //     offsetLow / offsetHigh:
-//         0 para operaciones desde el comienzo del archivo.
+//         offsetLow = posición del bloque actual (bytes
+//         ya transferidos; 0 en el primer bloque) y
+//         offsetHigh = 0. En escritura, primero se crea
+//         o trunca el archivo con la subfunción 2 (cero
+//         bytes) y cada bloque de datos se escribe con
+//         la subfunción 3 (archivo existente, con offset).
 //
 //     byteCount:
 //         Cantidad solicitada.
