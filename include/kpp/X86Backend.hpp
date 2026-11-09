@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace kpp {
@@ -130,6 +131,38 @@ private:
         std::string,
         VariableLocation
     > variables;
+
+    // --------------------------------------------------------
+    // CICLO 2 — ALIAS DE ARRAYS POR NOMBRE
+    //
+    // Un único hueco en DATA por nombre de array para todo
+    // el programa: el primer DECLARE del nombre en cada
+    // función apunta al mismo almacenamiento, de modo que
+    // las tablas se comparten entre funciones.
+    //
+    // sharedArrayOffsets: nombre -> desplazamiento en DATA
+    // (lo crea el primer DECLARE que reserva el hueco).
+    // sharedArraySizes: nombre -> tamaño compartido, el
+    // mayor de los DECLARE que reservan (pre-pase).
+    // functionArrayNames: nombres ya declarados en la
+    // función actual; un DECLARE repetido dentro de la
+    // misma función es una sombra de bloque y conserva
+    // su hueco propio histórico.
+    // --------------------------------------------------------
+
+    std::unordered_map<
+        std::string,
+        std::size_t
+    > sharedArrayOffsets;
+
+    std::unordered_map<
+        std::string,
+        std::size_t
+    > sharedArraySizes;
+
+    std::unordered_set<
+        std::string
+    > functionArrayNames;
 
     // --------------------------------------------------------
     // VARIABLES POR FUNCIÓN

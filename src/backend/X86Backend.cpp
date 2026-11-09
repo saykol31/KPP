@@ -348,6 +348,11 @@ namespace kpp {
     void X86Backend::resetVariables()
     {
         variables.clear();
+
+        // CICLO 2: los nombres de array declarados son
+        // estado por función; los huecos compartidos
+        // (sharedArrayOffsets) viven para todo el programa.
+        functionArrayNames.clear();
     }
 
     std::size_t
@@ -692,6 +697,51 @@ X86Backend::generate(
 
     resetTemporaries();
     resetVariables();
+
+
+    // ========================================================
+    // CICLO 2 — PRE-PASE DE ARRAYS COMPARTIDOS
+    //
+    // Tamaño compartido de cada nombre de array: el mayor
+    // de sus DECLARE que reservan hueco (el primero de
+    // cada función; las sombras de bloque no cuentan).
+    // ========================================================
+
+    sharedArrayOffsets.clear();
+    sharedArraySizes.clear();
+
+    for (const auto& function : program.functions)
+    {
+        std::unordered_set<std::string> declaredHere;
+
+        for (const auto& instruction : function.instructions)
+        {
+            if (instruction.opcode == IROpcode::Declare &&
+                instruction.value > 0)
+            {
+                const std::string sourceName =
+                    instruction.name.substr(
+                        0,
+                        instruction.name.find('@'));
+
+                if (declaredHere.insert(sourceName).second)
+                {
+                    const std::size_t size =
+                        static_cast<std::size_t>(
+                            instruction.value);
+
+                    const auto it =
+                        sharedArraySizes.find(sourceName);
+
+                    if (it == sharedArraySizes.end() ||
+                        size > it->second)
+                    {
+                        sharedArraySizes[sourceName] = size;
+                    }
+                }
+            }
+        }
+    }
 
     // ========================================================
     // FUNCIÓN ACTUAL
@@ -1191,24 +1241,92 @@ X86Backend::generate(
                         stackOffset
                     };
                 }
+                else if (instruction.value > 0)
+                {
+                    // ------------------------------------------------
+                    // CICLO 2 — ARRAY EN DATA, CON ALIAS POR NOMBRE
+                    //
+                    // El primer DECLARE de un nombre en cada
+                    // función comparte un único hueco en DATA:
+                    // las funciones que declaran el mismo array
+                    // trabajan sobre el mismo almacenamiento.
+                    // Un DECLARE repetido dentro de la misma
+                    // función es una sombra de bloque y conserva
+                    // su hueco propio histórico.
+                    // ------------------------------------------------
+
+                    const std::string sourceName =
+                        instruction.name.substr(
+                            0,
+                            instruction.name.find('@'));
+
+                    const std::size_t declaredSize =
+                        static_cast<std::size_t>(
+                            instruction.value);
+
+                    if (!functionArrayNames
+                             .insert(sourceName)
+                             .second)
+                    {
+                        // Sombra dentro de la misma función.
+                        const std::size_t offset =
+                            allocateVariableData(
+                                data,
+                                declaredSize);
+
+                        declareVariable(
+                            instruction.name,
+                            offset,
+                            declaredSize);
+                    }
+                    else
+                    {
+                        const auto sharedIt =
+                            sharedArrayOffsets.find(
+                                sourceName);
+
+                        if (sharedIt !=
+                            sharedArrayOffsets.end())
+                        {
+                            // Alias: mismo hueco, sin reservar.
+                            declareVariable(
+                                instruction.name,
+                                sharedIt->second,
+                                declaredSize);
+                        }
+                        else
+                        {
+                            // Primera reserva del nombre: se
+                            // reserva el tamaño compartido
+                            // (el mayor declarado).
+                            const std::size_t offset =
+                                allocateVariableData(
+                                    data,
+                                    sharedArraySizes[
+                                        sourceName]);
+
+                            sharedArrayOffsets[
+                                sourceName] = offset;
+
+                            declareVariable(
+                                instruction.name,
+                                offset,
+                                declaredSize);
+                        }
+                    }
+                }
                 else
                 {
-                    // Arrays y variables de main permanecen en DATA.
+                    // Variables de main permanecen en DATA.
                     const std::size_t offset =
                         allocateVariableData(
                             data,
-                            instruction.value > 0
-                                ? static_cast<std::size_t>(
-                                      instruction.value)
-                                : 1);
+                            1);
 
                     declareVariable(
                         instruction.name,
                         offset,
-                        instruction.value > 0
-                            ? static_cast<std::size_t>(
-                                  instruction.value)
-                            : 0);
+                        0);
                 }
             }
 

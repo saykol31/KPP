@@ -1,0 +1,17 @@
+int escribe() {
+    int t[4];
+    t[0] = 72;
+    return 0;
+}
+
+int lee() {
+    int t[4];
+    print_int(t[0]);
+    return 0;
+}
+
+int main() {
+    int a = escribe();
+    int b = lee();
+    return 0;
+}
