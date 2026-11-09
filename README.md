@@ -775,6 +775,27 @@ El script ya clasifica 84 pruebas positivas y 12 negativas correctamente. El ún
 
 No la marques como PASS ni la elimines: si la excluimos sin control, podríamos dejar de detectar cuándo el backend cambia de comportamiento.
 
+### Comportamiento vigente: arreglos locales por función
+
+**Estado:** comportamiento actual del backend; el alias por nombre
+está previsto como ciclo 2 de la consolidación de Stage 0.
+
+Cada función que declara un arreglo recibe su propio espacio en
+DATA, aunque otra función declare un arreglo con el mismo nombre:
+los arreglos **no se comparten entre funciones**. La identidad del
+IR se numera por función y el backend asigna un hueco independiente
+a cada declaración.
+
+**Prueba de referencia:** `projects/sonda_tablas.kpp` — `escribe()`
+guarda `72` en su `t[0]`; `lee()` declara su propio `t[4]` e imprime
+`t[0]`. El resultado es `0`, no `72` (deducido del código emitido:
+las dos declaraciones reciben bases distintas en DATA).
+
+Las tablas que el compilador Stage 1 necesita compartir entre
+funciones (tokens, símbolos) requerirán la regla de alias por
+nombre: el primer `DECLARE` de un nombre reserva el hueco en DATA
+y los siguientes `DECLARE` del mismo nombre apuntan a él.
+
 ------------------------------------------------------------------------
 
 ## Llamadas al sistema de KolibriOS
@@ -888,6 +909,45 @@ operativo relevantes para un futuro runtime K++.
 > de implementar llamadas de sistema, deben verificarse los parámetros,
 > registros, convenciones y versiones aplicables en la documentación de
 > KolibriOS. No debe usarse como sustituto de esa referencia técnica.
+
+### Comportamiento verificado de la función 70
+
+Lo siguiente no viene de la tabla anterior: está verificado contra
+`sysfuncs.txt` 0.7.7.0 y con sondas ejecutadas en KolibriOS real
+(2026-11-08). Es el comportamiento sobre el que se construye el
+runtime de E/S por bloques del ciclo 1.
+
+-   **La subfunción 2 (`CREATE_FILE`) no admite offset.** Sus
+    campos +04/+08 son reservados y siempre reescribe el archivo
+    desde el byte 0. Por eso el runtime escribe por bloques así:
+    una llamada a la subfunción 2 con cero bytes crea o trunca el
+    archivo, y cada bloque de datos se escribe con la
+    **subfunción 3 (`WRITE_FILE`)**, que sí lleva el offset en +04
+    y exige que el archivo ya exista.
+-   **La subfunción 0 (`READ_FILE`) devuelve EOF con código 6.**
+    Al llegar al final del archivo, EAX = 6 y EBX = bytes
+    realmente leídos: una lectura corta con código 6 es el final
+    normal, no un error. En éxito completo, EAX = 0 y EBX = bytes
+    leídos.
+-   **Una lectura por archivo y proceso.** Tras leer un archivo,
+    cualquier segunda lectura de la misma ruta en el mismo
+    proceso devuelve error (-1) sin tocar el búfer del llamador —
+    aunque el archivo se reescriba entre medias y aunque se lean
+    otros archivos antes. Leer archivos *distintos* sí funciona,
+    y las escrituras son idempotentes (crear y reescribir el
+    mismo archivo siempre funciona). Regla de diseño para
+    programas K++: **leer cada archivo una vez por corrida y
+    quedarse el contenido en memoria**. El síntoma visible fue en
+    la ventana: el runtime re-ejecuta `main` tras cada *redraw*,
+    y esa segunda pasada convertía los resultados ya impresos en
+    `4294967295` (-1 impreso sin signo) en los programas que leen
+    un archivo.
+
+**Pruebas de referencia:** `projects/file_io_stage1.kpp` y
+`projects/file_io_bloques.kpp` (70 000 bytes, escritura y lectura
+de ida y vuelta), además de las sondas de campo de lectura
+repetida del 2026-11-08 (un archivo dos veces, dos archivos
+distintos y lectura–reescritura–lectura).
 
 ------------------------------------------------------------------------
 
