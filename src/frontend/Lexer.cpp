@@ -623,12 +623,25 @@ Lexer::tokenize()
 
 
         // ====================================================
-        // /
+        // /  o  // comentario de línea
         // ====================================================
 
         if (c == '/')
         {
             advance();
+
+            // // = comentario hasta fin de línea (sin token)
+            if (peek() == '/')
+            {
+                while (
+                    peek() != '\n'
+                    && peek() != '\0')
+                {
+                    advance();
+                }
+
+                continue;
+            }
 
             tokens.push_back({
                 TokenType::Divide,
