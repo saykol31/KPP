@@ -215,7 +215,7 @@ struct IRInstruction
     //   auxiliary = temporal con cantidad de bytes
     //   value     = capacidad del array
     //   result    = temporal de retorno
-    std::string auxiliary;
+    std::string auxiliary = "";
 };
 
 // ============================================================
