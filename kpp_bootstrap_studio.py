@@ -16,9 +16,17 @@
 #          |                      |
 #          v                      v
 #      RAW / BIN             DISASSEMBLY
-#                                 |
-#                                 v
-#                         payload i386 32-bit
+#          |                      |
+#          v                      v
+#   MOVER BINARIO         payload i386 32-bit
+#          |
+#          v
+#   imagen persistente
+#   de KolibriOS
+#   (AUTORUN.DAT)
+#          |
+#          v
+#   EJECUTAR -> QEMU
 #
 # OUTPUT:
 #
@@ -51,6 +59,7 @@
 # ============================================================
 
 import os
+import shutil
 import subprocess
 import threading
 import queue
@@ -111,6 +120,35 @@ DEFAULT_FILE = (
     / "lexer"
     / "Lexer.kpp"
 )
+
+# ------------------------------------------------------------
+# KOLIBRIOS
+#
+# Imagen persistente y parámetros de QEMU: los mismos valores
+# que la configuración de asm_env.sh (Mini Entorno ASM).
+# La ruta de la imagen es configuración de cada máquina, no
+# código: se puede sobreescribir con KPP_KOLIBRIOS_IMAGE.
+# ------------------------------------------------------------
+
+KOLIBRIOS_IMAGE = Path(
+    os.environ.get(
+        "KPP_KOLIBRIOS_IMAGE",
+        str(
+            Path.home()
+            / "VirtualBox VMs"
+            / "kolibriOS"
+            / "KPP-KOLIBRI.img"
+        )
+    )
+)
+
+# Partición FAT32 de la imagen:
+# sector inicial 2048 * 512 bytes = 1048576
+KOLIBRIOS_OFFSET = 2048 * 512
+
+# Memoria para QEMU
+KOLIBRIOS_QEMU_MEM = "256"
+
 
 # ------------------------------------------------------------
 # CABECERA BINARIA K++
@@ -523,6 +561,34 @@ class KPPBootstrapStudio(tk.Tk):
             top,
             "▶  RUN",
             self.run_program
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+            pady=14
+        )
+
+        # ----------------------------------------------------
+        # MOVER BINARIO
+        # ----------------------------------------------------
+
+        self._make_button(
+            top,
+            "📦  MOVER BINARIO",
+            self.move_binary
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+            pady=14
+        )
+
+        # ----------------------------------------------------
+        # EJECUTAR
+        # ----------------------------------------------------
+
+        self._make_button(
+            top,
+            "🚀  EJECUTAR",
+            self.execute_kolibrios
         ).pack(
             side=tk.LEFT,
             padx=4,
@@ -2944,6 +3010,551 @@ class KPPBootstrapStudio(tk.Tk):
 
         self.compile_program(
             from_run=True
+        )
+
+    # ========================================================
+    # KOLIBRIOS - NOMBRE 8.3
+    #
+    # La misma regla que asm_env.sh (Mini Entorno ASM):
+    #
+    #   - pasar a mayúsculas
+    #   - todo carácter fuera de [A-Z0-9_$-] se vuelve "_"
+    #   - si pasa de 8 caracteres: los 6 primeros más un
+    #     sufijo de 2 hex con el cksum del nombre original
+    #     (suma % 256), calculado por el mismo cksum del
+    #     sistema que usa el Bash
+    # ========================================================
+
+    def _kolibri_name(
+        self,
+        nombre
+    ):
+
+        validos = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$-"
+
+        name = "".join(
+            c if c in validos else "_"
+            for c in nombre.upper()
+        )
+
+        if len(name) > 8:
+
+            resultado = subprocess.run(
+                ["cksum"],
+                input=nombre.encode(),
+                stdout=subprocess.PIPE,
+                check=True
+            )
+
+            suma = int(
+                resultado.stdout.split()[0]
+            )
+
+            name = name[:6] + f"{suma % 256:02X}"
+
+        return name
+
+    # ========================================================
+    # KOLIBRIOS - HERRAMIENTA EXTERNA
+    #
+    # mtools sin entrada interactiva: en una ventana nadie
+    # puede responder a un "overwrite?" del terminal.
+    # ========================================================
+
+    def _kolibri_run(
+        self,
+        args
+    ):
+
+        return subprocess.run(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=60
+        )
+
+    # ========================================================
+    # KOLIBRIOS - MOVER BINARIO
+    #
+    # La misma lógica que la opción KolibriOS de asm_env.sh,
+    # paso a paso:
+    #
+    #   1. verificar la imagen FAT32 (offset 1048576)
+    #   2. copiar el BIN con su nombre 8.3, sin extensión
+    #   3. extraer AUTORUN.DAT
+    #   4. registrar /SYS/<NOMBRE> "" 100 sin duplicar
+    #   5. escribir AUTORUN.DAT en la imagen
+    #   6. verificar: raíz de la imagen + cola de AUTORUN
+    #
+    # Los temporales se limpian siempre (finally), igual que
+    # el Bash los borra en cada salida de error.
+    # ========================================================
+
+    def move_binary(self):
+
+        if self.process is not None:
+
+            self.log(
+                "[WARNING] Ya existe una compilación en ejecución.",
+                "warning"
+            )
+
+            return
+
+        stem = self.current_file.stem
+
+        bin_file = OUTPUT_DIR / f"{stem}.bin"
+
+        if not bin_file.exists():
+
+            self.log(
+                f"[ERROR] No existe el BIN: {bin_file}",
+                "error"
+            )
+
+            self.log(
+                "[ERROR] Primero compila el programa.",
+                "error"
+            )
+
+            return
+
+        for cmd in ("mcopy", "mdir", "mtype", "cksum"):
+
+            if shutil.which(cmd) is None:
+
+                self.log(
+                    f"[ERROR] Falta el comando: {cmd}",
+                    "error"
+                )
+
+                self.log(
+                    "[INFO] Instálalo con: sudo apt install mtools",
+                    "info"
+                )
+
+                return
+
+        nombre = self._kolibri_name(stem)
+
+        mtools_image = f"{KOLIBRIOS_IMAGE}@@{KOLIBRIOS_OFFSET}"
+
+        tmp_bin = OUTPUT_DIR / nombre
+
+        autorun_tmp = OUTPUT_DIR / f"AUTORUN_{nombre}_tmp.DAT"
+
+        self.log(
+            "============================================================",
+            "info"
+        )
+
+        self.log(
+            "[KOLIBRIOS] Mover binario",
+            "info"
+        )
+
+        self.log(
+            f"[FUENTE]  {self.current_file.name}",
+            "info"
+        )
+
+        self.log(
+            f"[BIN]     {bin_file}",
+            "info"
+        )
+
+        self.log(
+            f"[NOMBRE]  {nombre} (sin extensión, como lo recibe KolibriOS)",
+            "info"
+        )
+
+        self.log(
+            f"[IMAGEN]  {KOLIBRIOS_IMAGE}",
+            "info"
+        )
+
+        try:
+
+            if not KOLIBRIOS_IMAGE.exists():
+
+                self.log(
+                    "[ERROR] No existe la imagen persistente:",
+                    "error"
+                )
+
+                self.log(
+                    f"  {KOLIBRIOS_IMAGE}",
+                    "error"
+                )
+
+                return
+
+            shutil.copyfile(
+                bin_file,
+                tmp_bin
+            )
+
+            # ------------------------------------------------
+            # 1. VERIFICAR IMAGEN
+            # ------------------------------------------------
+
+            self.log(
+                "1. Verificando imagen...",
+                "info"
+            )
+
+            r = self._kolibri_run(
+                ["mdir", "-i", mtools_image, "::"]
+            )
+
+            if r.returncode != 0:
+
+                self.log(
+                    "[ERROR] No se pudo abrir la partición FAT32.",
+                    "error"
+                )
+
+                return
+
+            self.log(
+                "✔ Imagen FAT32 accesible.",
+                "ok"
+            )
+
+            # ------------------------------------------------
+            # 2. COPIAR BIN
+            # ------------------------------------------------
+
+            self.log(
+                "2. Copiando BIN a KolibriOS...",
+                "info"
+            )
+
+            r = self._kolibri_run(
+                [
+                    "mcopy",
+                    "-o",
+                    "-i", mtools_image,
+                    str(tmp_bin),
+                    f"::{nombre}"
+                ]
+            )
+
+            if r.returncode != 0:
+
+                self.log(
+                    "[ERROR] No se pudo copiar el BIN.",
+                    "error"
+                )
+
+                return
+
+            self.log(
+                "✔ BIN incorporado.",
+                "ok"
+            )
+
+            # ------------------------------------------------
+            # 3. EXTRAER AUTORUN.DAT
+            # ------------------------------------------------
+
+            self.log(
+                "3. Preparando AUTORUN.DAT...",
+                "info"
+            )
+
+            autorun_tmp.unlink(
+                missing_ok=True
+            )
+
+            r = self._kolibri_run(
+                [
+                    "mcopy",
+                    "-i", mtools_image,
+                    "::/KOLIBRIOS/SETTINGS/AUTORUN.DAT",
+                    str(autorun_tmp)
+                ]
+            )
+
+            if r.returncode != 0:
+
+                self.log(
+                    "[ERROR] No se pudo extraer AUTORUN.DAT.",
+                    "error"
+                )
+
+                return
+
+            self.log(
+                "✔ AUTORUN.DAT extraído.",
+                "ok"
+            )
+
+            # ------------------------------------------------
+            # 4. REGISTRAR EN AUTORUN
+            # ------------------------------------------------
+
+            self.log(
+                "4. Configurando AUTORUN...",
+                "info"
+            )
+
+            texto = autorun_tmp.read_bytes().decode(
+                "latin-1"
+            )
+
+            texto = texto.replace(
+                "\r\n",
+                "\n"
+            ).replace(
+                "\r",
+                "\n"
+            )
+
+            linea = f'/SYS/{nombre} "" 100'
+
+            lineas = texto.split("\n")
+
+            if linea in lineas:
+
+                self.log(
+                    "✔ El programa ya estaba registrado en AUTORUN.",
+                    "ok"
+                )
+
+                self.log(
+                    "  No se agregó una entrada duplicada.",
+                    "ok"
+                )
+
+            else:
+
+                if "### Mini Entorno ASM ###" not in lineas:
+
+                    texto += "\n### Mini Entorno ASM ###\n"
+
+                texto += linea + "\n"
+
+                self.log(
+                    "✔ AUTORUN configurado.",
+                    "ok"
+                )
+
+            autorun_tmp.write_bytes(
+                texto.encode("latin-1")
+            )
+
+            # ------------------------------------------------
+            # 5. ESCRIBIR AUTORUN.DAT
+            # ------------------------------------------------
+
+            self.log(
+                "5. Escribiendo AUTORUN.DAT en la imagen...",
+                "info"
+            )
+
+            r = self._kolibri_run(
+                [
+                    "mcopy",
+                    "-o",
+                    str(autorun_tmp),
+                    "-i", mtools_image,
+                    "::/KOLIBRIOS/SETTINGS/AUTORUN.DAT"
+                ]
+            )
+
+            if r.returncode != 0:
+
+                self.log(
+                    "[ERROR] No se pudo escribir AUTORUN.DAT.",
+                    "error"
+                )
+
+                return
+
+            self.log(
+                "✔ AUTORUN.DAT actualizado.",
+                "ok"
+            )
+
+            autorun_tmp.unlink(
+                missing_ok=True
+            )
+
+            # ------------------------------------------------
+            # 6. VERIFICAR
+            # ------------------------------------------------
+
+            self.log(
+                "6. Verificando imagen...",
+                "info"
+            )
+
+            self.log(
+                "Contenido de la raíz:",
+                "info"
+            )
+
+            r = self._kolibri_run(
+                ["mdir", "-i", mtools_image, "::"]
+            )
+
+            for linea_dir in r.stdout.decode("latin-1").splitlines():
+
+                self.log(
+                    linea_dir,
+                    "info"
+                )
+
+            self.log(
+                "Últimas líneas de AUTORUN.DAT:",
+                "info"
+            )
+
+            r = self._kolibri_run(
+                [
+                    "mtype",
+                    "-i", mtools_image,
+                    "::/KOLIBRIOS/SETTINGS/AUTORUN.DAT"
+                ]
+            )
+
+            ultimas = r.stdout.decode("latin-1").splitlines()[-8:]
+
+            for linea_autorun in ultimas:
+
+                self.log(
+                    linea_autorun,
+                    "info"
+                )
+
+            self.status_label.configure(
+                text="KOLIBRIOS OK",
+                fg=GREEN
+            )
+
+            self.log(
+                "============================================================",
+                "ok"
+            )
+
+            self.log(
+                "KOLIBRIOS LISTO.",
+                "ok"
+            )
+
+            self.log(
+                f"[PROGRAMA] {nombre}",
+                "ok"
+            )
+
+            self.log(
+                "El programa será ejecutado automáticamente por KolibriOS.",
+                "ok"
+            )
+
+            self.log(
+                "============================================================",
+                "ok"
+            )
+
+        except Exception as error:
+
+            self.log(
+                f"[ERROR] Mover binario: {error}",
+                "error"
+            )
+
+        finally:
+
+            tmp_bin.unlink(
+                missing_ok=True
+            )
+
+            autorun_tmp.unlink(
+                missing_ok=True
+            )
+
+    # ========================================================
+    # KOLIBRIOS - EJECUTAR (QEMU)
+    #
+    # Arranca la imagen persistente en QEMU con los mismos
+    # parámetros que asm_env.sh. El programa registrado en
+    # AUTORUN.DAT se ejecuta solo al arrancar KolibriOS.
+    # QEMU queda en su propia sesión: cerrar el Studio no
+    # lo cierra.
+    # ========================================================
+
+    def execute_kolibrios(self):
+
+        if shutil.which("qemu-system-i386") is None:
+
+            self.log(
+                "[ERROR] Falta el comando: qemu-system-i386",
+                "error"
+            )
+
+            self.log(
+                "[INFO] Instálalo con: sudo apt install qemu-system-x86",
+                "info"
+            )
+
+            return
+
+        if not KOLIBRIOS_IMAGE.exists():
+
+            self.log(
+                "[ERROR] No existe la imagen persistente:",
+                "error"
+            )
+
+            self.log(
+                f"  {KOLIBRIOS_IMAGE}",
+                "error"
+            )
+
+            return
+
+        comando = [
+            "qemu-system-i386",
+            "-enable-kvm",
+            "-cpu", "host",
+            "-m", KOLIBRIOS_QEMU_MEM,
+            "-drive", f"file={KOLIBRIOS_IMAGE},format=raw,if=ide",
+            "-boot", "c",
+            "-display", "gtk"
+        ]
+
+        try:
+
+            proceso = subprocess.Popen(
+                comando,
+                start_new_session=True
+            )
+
+        except OSError as error:
+
+            self.log(
+                f"[ERROR] No se pudo lanzar QEMU: {error}",
+                "error"
+            )
+
+            return
+
+        self.status_label.configure(
+            text="QEMU KOLIBRIOS",
+            fg=CYAN
+        )
+
+        self.log(
+            "[EJECUTAR] KolibriOS arrancando en QEMU...",
+            "ok"
+        )
+
+        self.log(
+            f"[QEMU] PID {proceso.pid} — imagen: {KOLIBRIOS_IMAGE}",
+            "info"
         )
 
     # ========================================================
