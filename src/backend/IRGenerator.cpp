@@ -1104,18 +1104,17 @@ void IRGenerator::generateStatement(
                 function);
 
         // ----------------------------------------------------
-        // PRUEBA DE FUEGO
+        // RETURN normal: el valor vuelve al llamador y no
+        // se muestra en pantalla.
         //
-        // Mostrar expresiones enteras antes de retornar.
+        // Hasta el 2026-11-11 aquí vivía la PRUEBA DE FUEGO:
+        // un PrintInteger de depuración que imprimía cada
+        // return no literal para poder ver los valores
+        // internos mientras el compilador se construía.
+        // Cumplió su función; retirado por decisión de
+        // Esequiel. Lo que el programa quiere enseñar, lo
+        // enseña con print_int.
         // ----------------------------------------------------
-
-        function.instructions.push_back({
-            IROpcode::PrintInteger,
-            "",
-            temporary,
-            "",
-            0
-        });
 
         function.instructions.push_back({
             IROpcode::Return,
