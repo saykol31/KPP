@@ -3075,6 +3075,79 @@ class KPPBootstrapStudio(tk.Tk):
         )
 
     # ========================================================
+    # KOLIBRIOS - GUARDA DE UN SOLO ESCRITOR
+    #
+    # La imagen es un disco FAT: no admite dos escritores.
+    # Con QEMU abierto, KolibriOS guarda la FAT en caché con
+    # la foto vieja; si mtools escribe desde fuera en ese
+    # momento, las dos versiones se pisan y el sistema de
+    # archivos se rasga (incidente del 2026-11-11).
+    #
+    # Regla: con QEMU abierto no se mueve ningún binario y
+    # no se abre un segundo QEMU. Primero se apaga KolibriOS
+    # desde su propio menú; QEMU se cierra solo y sus
+    # escrituras aterrizan completas.
+    # ========================================================
+
+    def _qemu_con_imagen(self):
+
+        ruta = str(
+            KOLIBRIOS_IMAGE
+        )
+
+        try:
+
+            cmdlines = list(
+                Path("/proc").glob(
+                    "[0-9]*/cmdline"
+                )
+            )
+
+        except OSError:
+
+            return False
+
+        for cmdline in cmdlines:
+
+            try:
+
+                args = cmdline.read_bytes().split(
+                    b"\x00"
+                )
+
+            except OSError:
+
+                continue
+
+            if not args or not args[0]:
+
+                continue
+
+            programa = Path(
+                args[0].decode(
+                    "latin-1",
+                    errors="replace"
+                )
+            ).name
+
+            if not programa.startswith(
+                "qemu-system"
+            ):
+
+                continue
+
+            for arg in args[1:]:
+
+                if ruta in arg.decode(
+                    "latin-1",
+                    errors="replace"
+                ):
+
+                    return True
+
+        return False
+
+    # ========================================================
     # KOLIBRIOS - MOVER BINARIO
     #
     # La misma lógica que la opción KolibriOS de asm_env.sh,
@@ -3092,6 +3165,25 @@ class KPPBootstrapStudio(tk.Tk):
     # ========================================================
 
     def move_binary(self):
+
+        if self._qemu_con_imagen():
+
+            self.log(
+                "[ERROR] QEMU está abierto con esta imagen.",
+                "error"
+            )
+
+            self.log(
+                "  Con KolibriOS en marcha no se toca la imagen desde fuera: la FAT no admite dos escritores.",
+                "error"
+            )
+
+            self.log(
+                "  Apaga KolibriOS desde su menú — QEMU se cierra solo — y vuelve a pulsar MOVER BINARIO.",
+                "error"
+            )
+
+            return
 
         if self.process is not None:
 
@@ -3535,6 +3627,20 @@ class KPPBootstrapStudio(tk.Tk):
     # ========================================================
 
     def execute_kolibrios(self):
+
+        if self._qemu_con_imagen():
+
+            self.log(
+                "[ERROR] Ya hay un QEMU abierto con esta imagen.",
+                "error"
+            )
+
+            self.log(
+                "  Dos QEMU sobre la misma imagen la corrompen: cierra primero ese KolibriOS (apágalo desde su menú).",
+                "error"
+            )
+
+            return
 
         if shutil.which("qemu-system-i386") is None:
 
