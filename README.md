@@ -2,7 +2,7 @@
 
 Compilador del lenguaje K++ para KolibriOS. Traduce programas
 `.kpp` a ejecutables nativos de KolibriOS con cabecera MENUET01:
-sin intérprete y sin runtime externo, del fuente al binario
+sin intérprete ni máquina virtual, del fuente al binario
 plano x86.
 
 El compilador tiene frontend propio (lexer, parser, analizador
@@ -14,7 +14,7 @@ escritor de ejecutables.
 K++ is a native compiler for **KolibriOS**, the tiny x86 operating
 system forked from MenuetOS. It translates `.kpp` source files into
 flat native KolibriOS executables (MENUET01 header): no interpreter,
-no external runtime, straight from source to x86 binary. Stage 0,
+no virtual machine, straight from source to x86 binary. Stage 0,
 written in C++, is complete — its own lexer, parser, semantic
 analyzer, IR, x86 backend and executable writer, with a 71-test
 suite fully green. Stage 1 is the self-hosting rewrite in K++
