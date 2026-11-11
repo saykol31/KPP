@@ -15,15 +15,15 @@ los resultados esperados y su estado de validación.
 
 | Archivo | Objetivo | Resultado esperado | Estado |
 |---|---|---|---|
-| test_function_call_variables.kpp | Pasar variables como argumentos | Retorno 30 | APROBADA |
-| test_function_call_expression.kpp | Usar una expresión en un argumento | Retorno 35 | APROBADA |
-| test_function_call_two_expressions.kpp | Usar expresiones en ambos argumentos | Retorno 55 | APROBADA |
-| test_function_call_forward.kpp | Llamar a una función definida después de main | Imprimir 20 | APROBADA |
-| test_function_call_store.kpp | Guardar el retorno en una variable | Retorno 0, sin impresión explícita | APROBADA |
-| test_function_call_print.kpp | Imprimir el retorno de una llamada | Imprimir 10 | APROBADA |
-| test_function_call_noprint.kpp | Retornar directamente el resultado de una llamada | Retorno 10 | APROBADA |
-| test_function_parameters_use.kpp | Usar parámetros en una suma | Retorno 30 | APROBADA |
-| test_una_sola_llamada.kpp | Llamada simple con dos argumentos | Imprimir 30 | APROBADA |
+| L16.02_call_variables.kpp | Pasar variables como argumentos | Retorno 30 | APROBADA |
+| L16.03_call_expression.kpp | Usar una expresión en un argumento | Retorno 35 | APROBADA |
+| L16.04_call_two_expressions.kpp | Usar expresiones en ambos argumentos | Retorno 55 | APROBADA |
+| L16.05_call_forward.kpp | Llamar a una función definida después de main | Imprimir 20 | APROBADA |
+| L16.06_call_store.kpp | Guardar el retorno en una variable | Retorno 0, sin impresión explícita | APROBADA |
+| L16.07_call_print.kpp | Imprimir el retorno de una llamada | Imprimir 10 | APROBADA |
+| L16.08_call_noprint.kpp | Retornar directamente el resultado de una llamada | Retorno 10 | APROBADA |
+| L05.04_parametros_uso.kpp | Usar parámetros en una suma | Retorno 30 | APROBADA |
+| L05.05_una_llamada.kpp | Llamada simple con dos argumentos | Imprimir 30 | APROBADA |
 
 ## Comprobaciones realizadas
 

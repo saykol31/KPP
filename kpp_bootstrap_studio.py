@@ -70,8 +70,15 @@ from tkinter import messagebox
 
 APP_NAME = "K++ Bootstrap Studio"
 
+# La raíz del repo sale de la ubicación de este script: el Studio
+# vive en la raíz, así se encuentra solo en cualquier clon
+# (MX: ~/C/KPP, Surface: ~/Home/KPP). La variable de entorno
+# KPP_ROOT la sobreescribe si hace falta, como ASM_HOME en asm_env.sh.
 KPP_ROOT = Path(
-    "/home/saykol/C/KPP"
+    os.environ.get(
+        "KPP_ROOT",
+        str(Path(__file__).resolve().parent)
+    )
 )
 
 KPP_BIN = (
@@ -99,7 +106,10 @@ int main() {
 
 DEFAULT_FILE = (
     KPP_ROOT
-    / "bootstrap.kpp"
+    / "compiler"
+    / "kpp"
+    / "lexer"
+    / "Lexer.kpp"
 )
 
 # ------------------------------------------------------------

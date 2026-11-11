@@ -1,0 +1,10 @@
+int main()
+{
+    int x = 42;
+    // nota
+    if (x == 42)
+    {
+        print("HOLA");
+    }
+    return 0;
+}

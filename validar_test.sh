@@ -27,16 +27,17 @@ fi
 # Solo pruebas conocidas que deben fallar.
 # Las rutas son relativas a la raíz del repositorio.
 NEGATIVOS=(
-    "projects/test_l14_1_error_sintactico.kpp"
-    "projects/test_l14_2_variable_no_declarada.kpp"
-    "projects/test_l14_3_tipos_incompatibles.kpp"
-    "projects/test_l14_4_asignacion_incompatible.kpp"
-    "projects/test_enum_invalido.kpp"
-    "projects/test_struct_duplicado.kpp"
-    "projects/test_struct_campo_duplicado.kpp"
-    "projects/function_parameters_bad_count.kpp"
-    "projects/function_parameters_bad_extra.kpp"
-    "projects/test_l13_struct_campo_inexistente.kpp"
+    "projects/L14.01_error_neg_sintactico.kpp"
+    "projects/L14.02_variable_neg_no_declarada.kpp"
+    "projects/L14.03_tipos_neg_incompatibles.kpp"
+    "projects/L14.04_asignacion_neg_incompatible.kpp"
+    "projects/L08.04_enum_neg_invalido.kpp"
+    "projects/L07.05_struct_neg_duplicado.kpp"
+    "projects/L07.06_campo_neg_duplicado.kpp"
+    "projects/L05.06_parametros_neg_count.kpp"
+    "projects/L05.07_parametros_neg_extra.kpp"
+    "projects/L13.02_campo_neg_inexistente.kpp"
+    "projects/L17.05_indice_neg_fuera_de_rango.kpp"
 
 )
 

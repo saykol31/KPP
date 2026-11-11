@@ -1,0 +1,7 @@
+# Generados: se reconstruyen, no se versionan
+build/
+bin/
+Output/
+
+# Respaldos fechados de los parches
+*.backup-*
