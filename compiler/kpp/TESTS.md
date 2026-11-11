@@ -73,3 +73,19 @@ se decida formalmente el cambio.
 4. Mantener las pruebas organizadas en `compiler/kpp/`.
 5. Mantener los archivos generados de `Output/` y `build/` fuera de los
    commits de documentación y pruebas, salvo decisión explícita.
+
+## Serie P — sujetos de prueba de Stage 1
+
+Los programas de prueba creados para Stage 1 (el compilador escrito
+en K++) forman la serie P: P00, P01, P02… La serie L (L00–L18, en
+`projects/`) es la batería de Stage 0 y queda cerrada; la serie P es
+la de Stage 1, para distinguir de un vistazo a qué etapa sirve cada
+programa.
+
+| Sujeto | Archivo | Qué prueba | Aceptación | Estado |
+|---|---|---|---|---|
+| P00 | `compiler/kpp/lexer/FUENTE.KPP` | Es la fuente que lee el Lexer de Stage 1 al correr en KolibriOS | EXPECTED.txt: 27 tokens, 0 errores | PENDIENTE (campo) |
+
+P00 conserva el nombre FUENTE.KPP: no es una etiqueta, es el nombre
+literal que el Lexer pasa a `file_read`. Su número de serie es P00;
+el archivo no se renombra.
