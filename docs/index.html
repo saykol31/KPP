@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>K++ — Compilador nativo para KolibriOS</title>
-<meta name="description" content="K++ es un lenguaje de programación y su compilador para KolibriOS. Traduce programas .kpp a ejecutables nativos con cabecera MENUET01, sin intérprete y sin runtime externo.">
+<meta name="description" content="K++ es un lenguaje de programación y su compilador para KolibriOS. Traduce programas .kpp a ejecutables nativos con cabecera MENUET01, sin intérprete y sin máquina virtual.">
 <!-- GOOGLE-SITE-VERIFICATION: pegar aqui la etiqueta meta cuando se cree la propiedad -->
 <!-- BING-SITE-VERIFICATION: pegar aqui la etiqueta meta de Bing Webmaster -->
 <!-- YANDEX-SITE-VERIFICATION: pegar aqui la etiqueta meta de Yandex Webmaster -->
@@ -83,10 +83,10 @@ footer{padding:28px 0 42px;color:#7a7872;font-size:13px;display:flex;justify-con
 <header><div class="wrap nav"><div class="logo">K<span>++</span></div><nav class="nav-links"><a href="#que-es" data-i18n="nav_what">Qué es</a><a href="#arquitectura" data-i18n="nav_arch">Arquitectura</a><a href="#estado" data-i18n="nav_status">Estado</a><a href="#recursos" data-i18n="nav_res">Recursos</a></nav><div class="nav-actions"><button class="lang-btn" id="langBtn" onclick="toggleLang()">English</button><a class="btn btn-dark" style="padding:9px 14px;font-size:13px" href="https://github.com/saykol31/KPP">GitHub ↗</a></div></div></header>
 <main class="wrap">
 <div class="hero">
-<span class="badge-top" data-i18n="badge">● Nativo · x86 · Sin runtime</span>
+<span class="badge-top" data-i18n="badge">● Nativo · x86 · Sin intérprete</span>
 <h1>K<em>++</em></h1>
 <p class="subtitle"><b>Compilador nativo para KolibriOS</b> · Native compiler for KolibriOS · Компилятор для KolibriOS</p>
-<p class="desc" data-i18n="desc"><b>K++ es un lenguaje de programación y su compilador para KolibriOS</b>, el sistema operativo x86 bifurcado de MenuetOS. Traduce programas <b>.kpp</b> a ejecutables nativos de KolibriOS con cabecera <b>MENUET01</b>: sin intérprete y sin runtime externo, del fuente al binario plano x86.</p>
+<p class="desc" data-i18n="desc"><b>K++ es un lenguaje de programación y su compilador para KolibriOS</b>, el sistema operativo x86 bifurcado de MenuetOS. Traduce programas <b>.kpp</b> a ejecutables nativos de KolibriOS con cabecera <b>MENUET01</b>: sin intérprete ni máquina virtual, del fuente al binario plano x86.</p>
 <div class="btns">
 <a class="btn btn-dark" href="https://github.com/saykol31/KPP" data-i18n="btn_repo">Repositorio en GitHub ↗</a>
 <a class="btn btn-gold" href="https://github.com/saykol31/KPP/blob/master/Manual_KPP.pdf" data-i18n="btn_manual">Manual del lenguaje (PDF, v1.0) ↓</a>
@@ -132,8 +132,8 @@ footer{padding:28px 0 42px;color:#7a7872;font-size:13px;display:flex;justify-con
 <section id="que-es">
 <p class="kicker" data-i18n="why_kicker">Por qué K++</p><h2 data-i18n="why_h2">Hecho para correr nativo</h2>
 <div class="grid3">
-<div class="feat"><div style="font-size:26px">⚡</div><h3 data-i18n="f1_h">Nativo de verdad</h3><p data-i18n="f1_p">Del fuente al binario plano x86. Sin intérprete, sin capa intermedia, sin sorpresas al correr.</p></div>
-<div class="feat"><div style="font-size:26px">📦</div><h3 data-i18n="f2_h">Sin dependencias</h3><p data-i18n="f2_p">Sin runtime externo. El ejecutable que sale es el que KolibriOS corre, con cabecera MENUET01.</p></div>
+<div class="feat"><div style="font-size:26px">⚡</div><h3 data-i18n="f1_h">Nativo de verdad</h3><p data-i18n="f1_p">Del fuente al binario plano x86. Sin intérprete ni máquina virtual, sin sorpresas al correr.</p></div>
+<div class="feat"><div style="font-size:26px">📦</div><h3 data-i18n="f2_h">Sin dependencias</h3><p data-i18n="f2_p">El ejecutable que sale es el que KolibriOS corre, con cabecera MENUET01 y el runtime propio de K++.</p></div>
 <div class="feat"><div style="font-size:26px">🖥️</div><h3 data-i18n="f3_h">Hecho para KolibriOS</h3><p data-i18n="f3_p">Pensado para el sistema x86 bifurcado de MenuetOS, no un port genérico adaptado a la fuerza.</p></div>
 </div>
 <div class="terminal"><div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:8px;color:#777;font-size:12px">terminal — KolibriOS</span></div><div class="term-body"><span class="dim">$</span> kpp programa.kpp<br><span class="gold" data-i18n="term_ok">✓ Compilado con Stage 0</span> <span class="dim" data-i18n="term_out">→ programa (MENUET01, ejecutable KolibriOS)</span><br><span class="dim">$</span> ./programa<br><span class="dim" data-i18n="term_run">Corriendo nativo en KolibriOS...</span></div></div>
@@ -152,8 +152,8 @@ en: {
   nav_arch: "Architecture",
   nav_status: "Status",
   nav_res: "Resources",
-  badge: "● Native · x86 · No runtime",
-  desc: "<b>K++ is a programming language and its compiler for KolibriOS</b>, the x86 operating system forked from MenuetOS. It translates <b>.kpp</b> programs into native KolibriOS executables with a <b>MENUET01</b> header: no interpreter and no external runtime, from source straight to the flat x86 binary.",
+  badge: "● Native · x86 · No interpreter",
+  desc: "<b>K++ is a programming language and its compiler for KolibriOS</b>, the x86 operating system forked from MenuetOS. It translates <b>.kpp</b> programs into native KolibriOS executables with a <b>MENUET01</b> header: no interpreter and no virtual machine, from source straight to the flat x86 binary.",
   btn_repo: "GitHub repository ↗",
   btn_manual: "Language manual (PDF, v1.0) ↓",
   mini_flat: "FLAT x86 BINARY",
@@ -185,9 +185,9 @@ en: {
   why_kicker: "Why K++",
   why_h2: "Built to run native",
   f1_h: "Truly native",
-  f1_p: "From source to the flat x86 binary. No interpreter, no intermediate layer, no surprises at run time.",
+  f1_p: "From source to the flat x86 binary. No interpreter, no virtual machine, no surprises at run time.",
   f2_h: "No dependencies",
-  f2_p: "No external runtime. The executable that comes out is the one KolibriOS runs, with a MENUET01 header.",
+  f2_p: "The executable that comes out is the one KolibriOS runs, with a MENUET01 header and the K++ runtime of its own.",
   f3_h: "Made for KolibriOS",
   f3_p: "Designed for the x86 system forked from MenuetOS, not a generic port forced to fit.",
   term_ok: "✓ Compiled with Stage 0",
