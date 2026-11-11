@@ -2943,6 +2943,11 @@ class KPPBootstrapStudio(tk.Tk):
             )
 
             self.log(
+                f"[KOLIBRIOS] {self._kolibri_name(bin_file.stem)} (así se verá dentro de KolibriOS)",
+                "ok"
+            )
+
+            self.log(
                 "============================================================",
                 "ok"
             )
