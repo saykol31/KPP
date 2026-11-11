@@ -1,77 +1,230 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>K++ — Compilador nativo para KolibriOS · Native compiler for KolibriOS</title>
-<meta name="description" content="K++ is a native compiler for KolibriOS: it translates .kpp programs into flat MENUET01 x86 executables, no interpreter, no external runtime. Self-hosting in progress. Compilador nativo para KolibriOS, en vías de autohospedaje.">
-<!-- Cuando existan las cuentas de webmaster, las etiquetas de
-     verificación van AQUÍ (una por buscador):
-     <meta name="google-site-verification" content="...">
-     <meta name="msvalidate.01" content="...">            (Bing/Yahoo)
-     <meta name="yandex-verification" content="...">      (Yandex)
--->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K++ — Compilador nativo para KolibriOS</title>
+<meta name="description" content="K++ es un lenguaje de programación y su compilador para KolibriOS. Traduce programas .kpp a ejecutables nativos con cabecera MENUET01, sin intérprete y sin runtime externo.">
+<!-- GOOGLE-SITE-VERIFICATION: pegar aqui la etiqueta meta cuando se cree la propiedad -->
+<!-- BING-SITE-VERIFICATION: pegar aqui la etiqueta meta de Bing Webmaster -->
+<!-- YANDEX-SITE-VERIFICATION: pegar aqui la etiqueta meta de Yandex Webmaster -->
 <style>
-  body { background:#14161a; color:#e8e6e1; font-family: Georgia, 'Times New Roman', serif;
-         margin:0; padding:2.2em 1.1em 3em; line-height:1.55; }
-  main { max-width: 44em; margin: 0 auto; }
-  h1 { font-size: 2.5em; margin: 0 0 .1em; }
-  h1 .plus { color:#d8a03c; }
-  .sub { color:#b9b4a8; margin-top:0; }
-  h2 { margin-top: 1.7em; font-size: 1.25em; color:#d8a03c; }
-  a { color:#7db4e8; }
-  code { background:#23262c; padding:.05em .35em; border-radius:.25em; font-size:.92em; }
-  .btn { display:inline-block; margin:.4em .5em .4em 0; padding:.55em 1em; border:1px solid #d8a03c;
-         color:#e8e6e1; text-decoration:none; border-radius:.35em; }
-  .btn:hover { background:#23262c; }
-  footer { margin-top:3em; color:#8a8578; font-size:.9em; }
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0a0f;--card:#13131a;--card2:#1a1a24;--gold:#f5b83d;--gold2:#ffcf5c;--text:#f2f0e8;--muted:#a8a5a0;--line:#26262f;--green:#22c55e;--green-bg:#12281a}
+body{background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.6}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+header{position:sticky;top:0;z-index:10;background:rgba(10,10,15,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:64px}
+.logo{font-weight:900;font-size:24px;letter-spacing:-.5px}.logo span{color:var(--gold)}
+.nav-links{display:flex;gap:26px;font-size:14px;color:var(--muted)}
+.nav-links a:hover{color:#fff}
+.nav-actions{display:flex;gap:10px;align-items:center}
+.lang-btn{cursor:pointer;background:#17171f;color:#fff;border:1px solid var(--line);padding:9px 14px;font-size:13px;border-radius:10px;font-weight:700;font-family:inherit}
+.lang-btn:hover{border-color:var(--gold);color:var(--gold2)}
+.badge-top{display:inline-flex;gap:8px;align-items:center;background:#1c1a12;border:1px solid #3a2f14;color:#ffcf7a;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase}
+.hero{padding:72px 0 42px;text-align:left}
+.hero h1{font-size:88px;line-height:.9;letter-spacing:-4px;font-weight:900;margin:18px 0 14px}
+.hero h1 em{font-style:normal;background:linear-gradient(90deg,#fff,#f5b83d);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.subtitle{font-size:19px;color:#d8d5cd;max-width:760px}
+.subtitle b{color:#fff}
+.desc{margin-top:18px;color:var(--muted);font-size:17px;max-width:820px;line-height:1.7}
+.desc b{color:#e8e6e0}
+.btns{display:flex;gap:14px;flex-wrap:wrap;margin-top:28px}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:13px 20px;border-radius:10px;font-weight:700;font-size:15px;border:1px solid var(--line)}
+.btn-gold{background:var(--gold);color:#14100a;border-color:var(--gold)}
+.btn-gold:hover{background:var(--gold2)}
+.btn-dark{background:#17171f;color:#fff}
+.btn-dark:hover{border-color:#555}
+.mini-badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.mini{font-size:12px;font-weight:700;letter-spacing:.4px;border:1px solid var(--line);background:#12121a;padding:7px 10px;border-radius:999px;color:#c9c6be}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:38px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px}
+.stat b{font-size:36px;line-height:1;display:block}
+.stat span{color:var(--muted);font-size:13px;display:block;margin-top:6px}
+.stat .gold{color:var(--gold)}
+section{padding:44px 0;border-top:1px solid var(--line);scroll-margin-top:80px}
+h2{font-size:30px;letter-spacing:-.8px;margin-bottom:8px}
+.kicker{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:1.4px;text-transform:uppercase;margin-bottom:8px}
+.lead{color:var(--muted);max-width:760px}
+.pipeline{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:26px}
+.step{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 12px;text-align:center}
+.step i{font-style:normal;font-size:22px}
+.step b{display:block;margin:8px 0 4px;font-size:14px}
+.step p{font-size:12px;color:var(--muted);line-height:1.4}
+.arrow{align-self:center;text-align:center;color:var(--gold);font-weight:900}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px}
+.card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.pill{font-size:11px;font-weight:800;letter-spacing:.8px;padding:6px 10px;border-radius:999px}
+.pill-ok{background:var(--green-bg);color:#7bf0a8;border:1px solid #1e4a2e}
+.pill-run{background:#2a220f;color:#ffcf5c;border:1px solid #4a3a12}
+.card h3{font-size:22px;margin-bottom:10px}
+.card p{color:#c9c6be;font-size:15px;line-height:1.7}
+.meta{margin-top:16px;background:#0f0f15;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px;color:#d8d5cd}
+.progress{height:8px;background:#24242e;border-radius:999px;overflow:hidden;margin-top:14px}
+.progress div{height:100%;width:32%;background:linear-gradient(90deg,#f5b83d,#ffcf5c);border-radius:999px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:24px}
+.feat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}
+.feat h3{font-size:18px;margin:10px 0 8px}
+.feat p{color:var(--muted);font-size:14px;line-height:1.6}
+.terminal{background:#0d0d12;border:1px solid #2a2a33;border-radius:16px;overflow:hidden;margin-top:22px}
+.term-head{display:flex;gap:7px;padding:12px 16px;border-bottom:1px solid #222}
+.dot{width:11px;height:11px;border-radius:50%;background:#333}.dot:nth-child(1){background:#ff5f57}.dot:nth-child(2){background:#febc2e}.dot:nth-child(3){background:#28c840}
+.term-body{padding:20px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;line-height:1.8;color:#e8e6e0}
+.term-body .dim{color:#8a877f}.term-body .gold{color:var(--gold)}
+footer{padding:28px 0 42px;color:#7a7872;font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;border-top:1px solid var(--line);margin-top:10px}
+@media(max-width:820px){
+.hero h1{font-size:62px}.stats{grid-template-columns:1fr 1fr}.pipeline{grid-template-columns:1fr 1fr}.grid2,.grid3{grid-template-columns:1fr}.nav-links{display:none}
+}
 </style>
 </head>
 <body>
-<main>
-  <h1>K<span class="plus">++</span></h1>
-  <p class="sub">Compilador nativo para KolibriOS · Native compiler for KolibriOS · Компилятор для KolibriOS</p>
-
-  <p>K++ es un lenguaje de programación y su compilador para
-  <a href="https://kolibrios.org">KolibriOS</a>, el sistema operativo x86
-  bifurcado de MenuetOS. Traduce programas <code>.kpp</code> a ejecutables
-  nativos de KolibriOS con cabecera MENUET01: sin intérprete y sin runtime
-  externo, del fuente al binario plano x86.</p>
-
-  <p>
-    <a class="btn" href="https://github.com/saykol31/KPP">Repositorio en GitHub</a>
-    <a class="btn" href="https://github.com/saykol31/KPP/blob/master/Manual_KPP.pdf">Manual del lenguaje (PDF, v1.0)</a>
-  </p>
-
-  <h2>Estado</h2>
-  <p><strong>Stage 0 — completo.</strong> El compilador escrito en C++, con
-  frontend propio (lexer, parser, analizador semántico), representación
-  intermedia (IR), backend x86 y escritor de ejecutables. Su batería de
-  pruebas pasa entera: 60 positivas, 11 negativas, 0 fallos.</p>
-  <p><strong>Stage 1 — en curso.</strong> El compilador reescrito en el
-  propio K++ (autohospedaje). Su primera pieza, el lexer, ya compila con
-  Stage 0 y corrió en KolibriOS real: prueba de campo aprobada el
-  2026-11-11 (27 tokens, 0 errores).</p>
-
-  <h2>In English</h2>
-  <p>K++ is a programming language and its native compiler for KolibriOS.
-  It compiles <code>.kpp</code> source files into flat native executables
-  (MENUET01 header) — no interpreter, no external runtime. The C++
-  compiler (Stage 0) is complete; the self-hosting rewrite in K++ itself
-  (Stage 1) is under way, and its lexer has already run on real
-  KolibriOS. Source, tests and the Spanish language manual live in the
-  <a href="https://github.com/saykol31/KPP">GitHub repository</a>.</p>
-
-  <h2>По-русски</h2>
-  <p>K++ — язык программирования и его родной компилятор для KolibriOS.
-  Программы <code>.kpp</code> переводятся в плоские исполняемые файлы
-  (заголовок MENUET01) без интерпретатора и внешнего рантайма.
-  Компилятор на C++ (Stage 0) завершён; идёт переписывание на самом
-  K++ (Stage 1, self-hosting) — лексер уже работает в настоящем
-  KolibriOS. Исходники, тесты и руководство — в
-  <a href="https://github.com/saykol31/KPP">репозитории на GitHub</a>.</p>
-
-  <footer>Un proyecto de Esequiel Pena Perez (saykol31) · Houston, Texas.</footer>
+<header><div class="wrap nav"><div class="logo">K<span>++</span></div><nav class="nav-links"><a href="#que-es" data-i18n="nav_what">Qué es</a><a href="#arquitectura" data-i18n="nav_arch">Arquitectura</a><a href="#estado" data-i18n="nav_status">Estado</a><a href="#recursos" data-i18n="nav_res">Recursos</a></nav><div class="nav-actions"><button class="lang-btn" id="langBtn" onclick="toggleLang()">English</button><a class="btn btn-dark" style="padding:9px 14px;font-size:13px" href="https://github.com/saykol31/KPP">GitHub ↗</a></div></div></header>
+<main class="wrap">
+<div class="hero">
+<span class="badge-top" data-i18n="badge">● Nativo · x86 · Sin runtime</span>
+<h1>K<em>++</em></h1>
+<p class="subtitle"><b>Compilador nativo para KolibriOS</b> · Native compiler for KolibriOS · Компилятор для KolibriOS</p>
+<p class="desc" data-i18n="desc"><b>K++ es un lenguaje de programación y su compilador para KolibriOS</b>, el sistema operativo x86 bifurcado de MenuetOS. Traduce programas <b>.kpp</b> a ejecutables nativos de KolibriOS con cabecera <b>MENUET01</b>: sin intérprete y sin runtime externo, del fuente al binario plano x86.</p>
+<div class="btns">
+<a class="btn btn-dark" href="https://github.com/saykol31/KPP" data-i18n="btn_repo">Repositorio en GitHub ↗</a>
+<a class="btn btn-gold" href="https://github.com/saykol31/KPP/blob/master/Manual_KPP.pdf" data-i18n="btn_manual">Manual del lenguaje (PDF, v1.0) ↓</a>
+</div>
+<div class="mini-badges"><span class="mini">MENUET01</span><span class="mini" data-i18n="mini_flat">BINARIO PLANO x86</span><span class="mini" data-i18n="mini_interp">SIN INTÉRPRETE</span><span class="mini">KOLIBRIOS</span></div>
+<div class="stats">
+<div class="stat"><b class="gold">60</b><span data-i18n="stat_pos">pruebas positivas</span></div>
+<div class="stat"><b>11</b><span data-i18n="stat_neg">pruebas negativas</span></div>
+<div class="stat"><b style="color:#22c55e">0</b><span data-i18n="stat_fail">fallos</span></div>
+<div class="stat"><b class="gold">27 tokens</b><span data-i18n="stat_field">en prueba real · 0 errores</span></div>
+</div>
+</div>
+<section id="arquitectura">
+<p class="kicker" data-i18n="arch_kicker">Arquitectura</p><h2 data-i18n="arch_h2">Del fuente al binario</h2>
+<p class="lead" data-i18n="arch_lead">Un pipeline completo, sin dependencias externas. Así convierte K++ tu código en un ejecutable que KolibriOS puede correr directo.</p>
+<div class="pipeline">
+<div class="step"><i>📄</i><b>.kpp</b><p data-i18n="step_src">Tu fuente</p></div>
+<div class="step"><i>🔍</i><b>Lexer</b><p data-i18n="step_lexer">27 tokens, 0 errores</p></div>
+<div class="step"><i>🌳</i><b>Parser</b><p data-i18n="step_parser">Estructura</p></div>
+<div class="step"><i>🧠</i><b data-i18n="step_sem_name">Semántico</b><p data-i18n="step_sem">Valida tipos</p></div>
+<div class="step"><i>⚙️</i><b>IR</b><p data-i18n="step_ir">Representación intermedia</p></div>
+<div class="step"><i>💻</i><b>Backend x86</b><p data-i18n="step_back">Código nativo</p></div>
+<div class="step" style="border-color:#3a2f14;background:#1c1a12"><i>🚀</i><b>MENUET01</b><p data-i18n="step_out">Ejecutable KolibriOS</p></div>
+</div>
+</section>
+<section id="estado">
+<p class="kicker" data-i18n="status_kicker">Estado del proyecto</p><h2 data-i18n="status_h2">En qué va K++ hoy</h2>
+<div class="grid2">
+<div class="card">
+<div class="card-top"><h3>Stage 0</h3><span class="pill pill-ok" data-i18n="s0_pill">✓ COMPLETO</span></div>
+<p data-i18n="s0_p">El compilador escrito en C++, con frontend propio (lexer, parser, analizador semántico), representación intermedia (IR), backend x86 y escritor de ejecutables. Su batería de pruebas pasa entera: <b style="color:#fff">60 positivas, 11 negativas, 0 fallos.</b></p>
+<div class="meta" data-i18n="s0_meta">✓ Batería completa · 71 pruebas · 0 fallos</div>
+</div>
+<div class="card" style="border-color:#3a2f14">
+<div class="card-top"><h3>Stage 1</h3><span class="pill pill-run" data-i18n="s1_pill">◐ EN CURSO</span></div>
+<p data-i18n="s1_p">El compilador reescrito en el propio K++ (autohospedaje). Su primera pieza, el lexer, ya compila con Stage 0 y corrió en KolibriOS real: prueba de campo aprobada el <b style="color:#fff">2026-11-11</b> (27 tokens, 0 errores).</p>
+<div class="meta" data-i18n="s1_meta">🧪 Prueba de campo en KolibriOS real · 2026-11-11 · Lexer autohospedado</div>
+<div class="progress"><div></div></div>
+<p style="font-size:12px;color:#8a877f;margin-top:8px" data-i18n="s1_prog">Progreso: Lexer completado — siguiente: Parser en K++</p>
+</div>
+</div>
+</section>
+<section id="que-es">
+<p class="kicker" data-i18n="why_kicker">Por qué K++</p><h2 data-i18n="why_h2">Hecho para correr nativo</h2>
+<div class="grid3">
+<div class="feat"><div style="font-size:26px">⚡</div><h3 data-i18n="f1_h">Nativo de verdad</h3><p data-i18n="f1_p">Del fuente al binario plano x86. Sin intérprete, sin capa intermedia, sin sorpresas al correr.</p></div>
+<div class="feat"><div style="font-size:26px">📦</div><h3 data-i18n="f2_h">Sin dependencias</h3><p data-i18n="f2_p">Sin runtime externo. El ejecutable que sale es el que KolibriOS corre, con cabecera MENUET01.</p></div>
+<div class="feat"><div style="font-size:26px">🖥️</div><h3 data-i18n="f3_h">Hecho para KolibriOS</h3><p data-i18n="f3_p">Pensado para el sistema x86 bifurcado de MenuetOS, no un port genérico adaptado a la fuerza.</p></div>
+</div>
+<div class="terminal"><div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:8px;color:#777;font-size:12px">terminal — KolibriOS</span></div><div class="term-body"><span class="dim">$</span> kpp programa.kpp<br><span class="gold" data-i18n="term_ok">✓ Compilado con Stage 0</span> <span class="dim" data-i18n="term_out">→ programa (MENUET01, ejecutable KolibriOS)</span><br><span class="dim">$</span> ./programa<br><span class="dim" data-i18n="term_run">Corriendo nativo en KolibriOS...</span></div></div>
+</section>
+<section id="recursos">
+<p class="kicker" data-i18n="res_kicker">Recursos</p><h2 data-i18n="res_h2">Empieza a usarlo</h2>
+<p class="lead" data-i18n="res_lead">Código, documentación y pruebas. Todo abierto.</p>
+<div class="btns"><a class="btn btn-dark" href="https://github.com/saykol31/KPP" data-i18n="res_repo">Ver Repositorio en GitHub ↗</a><a class="btn btn-gold" href="https://github.com/saykol31/KPP/blob/master/Manual_KPP.pdf" data-i18n="res_manual">Descargar Manual (PDF, v1.0)</a></div>
+</section>
+<footer><span><b style="color:#e8e6e0">K++</b> · <span data-i18n="foot_left">Compilador nativo para KolibriOS</span></span><span>KolibriOS / MenuetOS · x86 · MENUET01</span></footer>
 </main>
+<script>
+var I18N = {
+en: {
+  nav_what: "What it is",
+  nav_arch: "Architecture",
+  nav_status: "Status",
+  nav_res: "Resources",
+  badge: "● Native · x86 · No runtime",
+  desc: "<b>K++ is a programming language and its compiler for KolibriOS</b>, the x86 operating system forked from MenuetOS. It translates <b>.kpp</b> programs into native KolibriOS executables with a <b>MENUET01</b> header: no interpreter and no external runtime, from source straight to the flat x86 binary.",
+  btn_repo: "GitHub repository ↗",
+  btn_manual: "Language manual (PDF, v1.0) ↓",
+  mini_flat: "FLAT x86 BINARY",
+  mini_interp: "NO INTERPRETER",
+  stat_pos: "positive tests",
+  stat_neg: "negative tests",
+  stat_fail: "failures",
+  stat_field: "in a real field test · 0 errors",
+  arch_kicker: "Architecture",
+  arch_h2: "From source to binary",
+  arch_lead: "A complete pipeline, with no external dependencies. This is how K++ turns your code into an executable KolibriOS can run directly.",
+  step_src: "Your source",
+  step_lexer: "27 tokens, 0 errors",
+  step_parser: "Structure",
+  step_sem_name: "Semantic",
+  step_sem: "Type checking",
+  step_ir: "Intermediate representation",
+  step_back: "Native code",
+  step_out: "KolibriOS executable",
+  status_kicker: "Project status",
+  status_h2: "Where K++ stands today",
+  s0_pill: "✓ COMPLETE",
+  s0_p: "The compiler written in C++, with its own frontend (lexer, parser, semantic analyzer), intermediate representation (IR), x86 backend and executable writer. Its test suite passes in full: <b style=\"color:#fff\">60 positive, 11 negative, 0 failures.</b>",
+  s0_meta: "✓ Full suite · 71 tests · 0 failures",
+  s1_pill: "◐ IN PROGRESS",
+  s1_p: "The compiler rewritten in K++ itself (self-hosting). Its first piece, the lexer, already compiles with Stage 0 and ran on real KolibriOS: field test approved on <b style=\"color:#fff\">2026-11-11</b> (27 tokens, 0 errors).",
+  s1_meta: "🧪 Field test on real KolibriOS · 2026-11-11 · Self-hosted lexer",
+  s1_prog: "Progress: Lexer done — next: Parser in K++",
+  why_kicker: "Why K++",
+  why_h2: "Built to run native",
+  f1_h: "Truly native",
+  f1_p: "From source to the flat x86 binary. No interpreter, no intermediate layer, no surprises at run time.",
+  f2_h: "No dependencies",
+  f2_p: "No external runtime. The executable that comes out is the one KolibriOS runs, with a MENUET01 header.",
+  f3_h: "Made for KolibriOS",
+  f3_p: "Designed for the x86 system forked from MenuetOS, not a generic port forced to fit.",
+  term_ok: "✓ Compiled with Stage 0",
+  term_out: "→ program (MENUET01, KolibriOS executable)",
+  term_run: "Running native on KolibriOS...",
+  res_kicker: "Resources",
+  res_h2: "Start using it",
+  res_lead: "Code, documentation and tests. All open.",
+  res_repo: "View GitHub Repository ↗",
+  res_manual: "Download Manual (PDF, v1.0)",
+  foot_left: "Native compiler for KolibriOS"
+}
+};
+var cur = "es";
+function setLang(lang) {
+  cur = lang;
+  document.documentElement.lang = lang;
+  document.getElementById("langBtn").textContent = (lang === "es") ? "English" : "Spanish";
+  document.title = (lang === "es") ? "K++ — Compilador nativo para KolibriOS" : "K++ — Native compiler for KolibriOS";
+  var els = document.querySelectorAll("[data-i18n]");
+  for (var i = 0; i < els.length; i++) {
+    var key = els[i].getAttribute("data-i18n");
+    if (lang === "en") {
+      if (!els[i].hasAttribute("data-es-html")) els[i].setAttribute("data-es-html", els[i].innerHTML);
+      if (I18N.en[key]) els[i].innerHTML = I18N.en[key];
+    } else {
+      if (els[i].hasAttribute("data-es-html")) els[i].innerHTML = els[i].getAttribute("data-es-html");
+    }
+  }
+  try { localStorage.setItem("kpp-lang", lang); } catch (e) {}
+}
+function toggleLang() { setLang(cur === "es" ? "en" : "es"); }
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem("kpp-lang"); } catch (e) {}
+  if (saved === "en") setLang("en");
+})();
+</script>
 </body>
 </html>
