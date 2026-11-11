@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://saykol31.github.io/KPP/sitemap.xml

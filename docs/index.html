@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K++ — Compilador nativo para KolibriOS · Native compiler for KolibriOS</title>
+<meta name="description" content="K++ is a native compiler for KolibriOS: it translates .kpp programs into flat MENUET01 x86 executables, no interpreter, no external runtime. Self-hosting in progress. Compilador nativo para KolibriOS, en vías de autohospedaje.">
+<!-- Cuando existan las cuentas de webmaster, las etiquetas de
+     verificación van AQUÍ (una por buscador):
+     <meta name="google-site-verification" content="...">
+     <meta name="msvalidate.01" content="...">            (Bing/Yahoo)
+     <meta name="yandex-verification" content="...">      (Yandex)
+-->
+<style>
+  body { background:#14161a; color:#e8e6e1; font-family: Georgia, 'Times New Roman', serif;
+         margin:0; padding:2.2em 1.1em 3em; line-height:1.55; }
+  main { max-width: 44em; margin: 0 auto; }
+  h1 { font-size: 2.5em; margin: 0 0 .1em; }
+  h1 .plus { color:#d8a03c; }
+  .sub { color:#b9b4a8; margin-top:0; }
+  h2 { margin-top: 1.7em; font-size: 1.25em; color:#d8a03c; }
+  a { color:#7db4e8; }
+  code { background:#23262c; padding:.05em .35em; border-radius:.25em; font-size:.92em; }
+  .btn { display:inline-block; margin:.4em .5em .4em 0; padding:.55em 1em; border:1px solid #d8a03c;
+         color:#e8e6e1; text-decoration:none; border-radius:.35em; }
+  .btn:hover { background:#23262c; }
+  footer { margin-top:3em; color:#8a8578; font-size:.9em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>K<span class="plus">++</span></h1>
+  <p class="sub">Compilador nativo para KolibriOS · Native compiler for KolibriOS · Компилятор для KolibriOS</p>
+
+  <p>K++ es un lenguaje de programación y su compilador para
+  <a href="https://kolibrios.org">KolibriOS</a>, el sistema operativo x86
+  bifurcado de MenuetOS. Traduce programas <code>.kpp</code> a ejecutables
+  nativos de KolibriOS con cabecera MENUET01: sin intérprete y sin runtime
+  externo, del fuente al binario plano x86.</p>
+
+  <p>
+    <a class="btn" href="https://github.com/saykol31/KPP">Repositorio en GitHub</a>
+    <a class="btn" href="https://github.com/saykol31/KPP/blob/master/Manual_KPP.pdf">Manual del lenguaje (PDF, v1.0)</a>
+  </p>
+
+  <h2>Estado</h2>
+  <p><strong>Stage 0 — completo.</strong> El compilador escrito en C++, con
+  frontend propio (lexer, parser, analizador semántico), representación
+  intermedia (IR), backend x86 y escritor de ejecutables. Su batería de
+  pruebas pasa entera: 60 positivas, 11 negativas, 0 fallos.</p>
+  <p><strong>Stage 1 — en curso.</strong> El compilador reescrito en el
+  propio K++ (autohospedaje). Su primera pieza, el lexer, ya compila con
+  Stage 0 y corrió en KolibriOS real: prueba de campo aprobada el
+  2026-11-11 (27 tokens, 0 errores).</p>
+
+  <h2>In English</h2>
+  <p>K++ is a programming language and its native compiler for KolibriOS.
+  It compiles <code>.kpp</code> source files into flat native executables
+  (MENUET01 header) — no interpreter, no external runtime. The C++
+  compiler (Stage 0) is complete; the self-hosting rewrite in K++ itself
+  (Stage 1) is under way, and its lexer has already run on real
+  KolibriOS. Source, tests and the Spanish language manual live in the
+  <a href="https://github.com/saykol31/KPP">GitHub repository</a>.</p>
+
+  <h2>По-русски</h2>
+  <p>K++ — язык программирования и его родной компилятор для KolibriOS.
+  Программы <code>.kpp</code> переводятся в плоские исполняемые файлы
+  (заголовок MENUET01) без интерпретатора и внешнего рантайма.
+  Компилятор на C++ (Stage 0) завершён; идёт переписывание на самом
+  K++ (Stage 1, self-hosting) — лексер уже работает в настоящем
+  KolibriOS. Исходники, тесты и руководство — в
+  <a href="https://github.com/saykol31/KPP">репозитории на GitHub</a>.</p>
+
+  <footer>Un proyecto de Esequiel Pena Perez (saykol31) · Houston, Texas.</footer>
+</main>
+</body>
+</html>
