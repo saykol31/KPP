@@ -3215,6 +3215,18 @@ class KPPBootstrapStudio(tk.Tk):
                     "error"
                 )
 
+                detalle = r.stdout.decode(
+                    "latin-1",
+                    errors="replace"
+                ).strip()
+
+                if detalle:
+
+                    self.log(
+                        f"[DETALLE] {detalle}",
+                        "error"
+                    )
+
                 return
 
             self.log(
@@ -3247,6 +3259,18 @@ class KPPBootstrapStudio(tk.Tk):
                     "[ERROR] No se pudo copiar el BIN.",
                     "error"
                 )
+
+                detalle = r.stdout.decode(
+                    "latin-1",
+                    errors="replace"
+                ).strip()
+
+                if detalle:
+
+                    self.log(
+                        f"[DETALLE] {detalle}",
+                        "error"
+                    )
 
                 return
 
@@ -3283,6 +3307,18 @@ class KPPBootstrapStudio(tk.Tk):
                     "[ERROR] No se pudo extraer AUTORUN.DAT.",
                     "error"
                 )
+
+                detalle = r.stdout.decode(
+                    "latin-1",
+                    errors="replace"
+                ).strip()
+
+                if detalle:
+
+                    self.log(
+                        f"[DETALLE] {detalle}",
+                        "error"
+                    )
 
                 return
 
@@ -3370,6 +3406,18 @@ class KPPBootstrapStudio(tk.Tk):
                     "[ERROR] No se pudo escribir AUTORUN.DAT.",
                     "error"
                 )
+
+                detalle = r.stdout.decode(
+                    "latin-1",
+                    errors="replace"
+                ).strip()
+
+                if detalle:
+
+                    self.log(
+                        f"[DETALLE] {detalle}",
+                        "error"
+                    )
 
                 return
 
