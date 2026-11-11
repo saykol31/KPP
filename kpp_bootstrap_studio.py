@@ -3675,6 +3675,54 @@ class KPPBootstrapStudio(tk.Tk):
 
             return
 
+        # ------------------------------------------------
+        # GUARDA: EL BINARIO DEBE ESTAR DENTRO
+        #
+        # EJECUTAR solo arranca KolibriOS; no copia nada.
+        # Sin esta comprobación, el botón abre un KolibriOS
+        # donde el programa actual no existe, y el usuario
+        # lo busca en vano (pasó el 2026-11-11 con
+        # L03_016C). El orden del ciclo es COMPILAR ->
+        # MOVER BINARIO -> EJECUTAR.
+        # ------------------------------------------------
+
+        if self.current_file is not None and shutil.which(
+            "mdir"
+        ) is not None:
+
+            nombre = self._kolibri_name(
+                self.current_file.stem
+            )
+
+            mtools_image = f"{KOLIBRIOS_IMAGE}@@{KOLIBRIOS_OFFSET}"
+
+            r = self._kolibri_run(
+                [
+                    "mdir",
+                    "-i", mtools_image,
+                    f"::{nombre}"
+                ]
+            )
+
+            if r.returncode != 0:
+
+                self.log(
+                    f"[ERROR] {nombre} todavía no está dentro de la imagen.",
+                    "error"
+                )
+
+                self.log(
+                    "  EJECUTAR solo arranca KolibriOS: no copia nada.",
+                    "error"
+                )
+
+                self.log(
+                    "  El orden es COMPILAR -> MOVER BINARIO -> EJECUTAR: pulsa MOVER BINARIO y después EJECUTAR.",
+                    "error"
+                )
+
+                return
+
         comando = [
             "qemu-system-i386",
             "-enable-kvm",
