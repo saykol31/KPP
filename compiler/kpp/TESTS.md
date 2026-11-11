@@ -84,7 +84,7 @@ programa.
 
 | Sujeto | Archivo | Qué prueba | Aceptación | Estado |
 |---|---|---|---|---|
-| P00 | `compiler/kpp/lexer/FUENTE.KPP` | Es la fuente que lee el Lexer de Stage 1 al correr en KolibriOS | EXPECTED.txt: 27 tokens, 0 errores | PENDIENTE (campo) |
+| P00 | `compiler/kpp/lexer/FUENTE.KPP` | Es la fuente que lee el Lexer de Stage 1 al correr en KolibriOS | EXPECTED.txt: 27 tokens, 0 errores | APROBADA en campo (2026-11-11, Surface, imagen 0.7.7.0+8929, vía Studio) |
 
 P00 conserva el nombre FUENTE.KPP: no es una etiqueta, es el nombre
 literal que el Lexer pasa a `file_read`. Su número de serie es P00;
