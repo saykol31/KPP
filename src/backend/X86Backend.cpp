@@ -349,6 +349,13 @@ namespace kpp {
     {
         variables.clear();
 
+        // Los escalares globales (DATA) estan visibles en
+        // todas las funciones: se siembran tras cada limpieza.
+        for (const auto& global : globalVariables)
+        {
+            variables[global.first] = global.second;
+        }
+
         // CICLO 2: los nombres de array declarados son
         // estado por función; los huecos compartidos
         // (sharedArrayOffsets) viven para todo el programa.
@@ -740,6 +747,32 @@ X86Backend::generate(
                     }
                 }
             }
+        }
+    }
+
+    // ========================================================
+    // VARIABLES GLOBALES — ESCALARES COMPARTIDOS EN DATA
+    //
+    // Cada Declare global reserva una celda en DATA y queda
+    // registrado para todo el programa; resetVariables() lo
+    // siembra en el mapa de trabajo de cada funcion.
+    // ========================================================
+
+    globalVariables.clear();
+
+    for (const auto& instruction : program.globals)
+    {
+        if (instruction.opcode == IROpcode::Declare)
+        {
+            const std::size_t offset =
+                allocateVariableData(data);
+
+            globalVariables[instruction.name] = {
+                offset,
+                false,
+                0,
+                0
+            };
         }
     }
 

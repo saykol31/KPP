@@ -132,6 +132,14 @@ private:
         VariableLocation
     > variables;
 
+    // Variables globales: escalares compartidos con
+    // residencia en DATA, visibles en todas las funciones.
+    // resetVariables() los siembra en el mapa de trabajo.
+    std::unordered_map<
+        std::string,
+        VariableLocation
+    > globalVariables;
+
     // --------------------------------------------------------
     // CICLO 2 — ALIAS DE ARRAYS POR NOMBRE
     //
