@@ -1,0 +1,48 @@
+// SemanticAnalyzer.kpp — Stage 1, pieza 3 (analizador semantico), arranque.
+// Tabla de clases de nodo: las clases del AST de Stage 0 (include/kpp/AST.hpp)
+// traducidas a un enum de K++.
+// DIFERENCIA CON STAGE 0: alli NO existe este enum. El AST es una jerarquia
+// de clases y el SemanticAnalyzer.cpp reparte el trabajo con dynamic_cast:
+// la clase del nodo ES su clase. K++ no tiene clases ni herencia, asi que
+// en Stage 1 la clase del nodo pasa a ser un dato: un codigo entero en un
+// arreglo paralelo (node_kind[]), y el reparto sera una cadena de if con
+// estos nombres: node_kind[i] == NodeKind::IfStatement.
+// CONTRATO NUEVO, nace aqui: el orden lo fija esta lista y queda congelado
+// con la misma regla de TokenType — un nodo nuevo va AL FINAL, nunca en el
+// medio. El Parser.kpp llevara una copia IDENTICA de este enum cuando
+// empiece a emitir nodos: es la tabla que emisor y consumidor comparten.
+// Solo son clases de nodo las que en AST.hpp heredan de ASTNode, Expression
+// o Statement. Parameter, StructField y EnumValue son piezas internas de
+// otros nodos, no nodos: no estan en la lista.
+
+enum NodeKind
+{
+    // DECLARACIONES
+    Program,
+    FunctionDeclaration,
+    StructDeclaration,
+    EnumDeclaration,
+
+    // SENTENCIAS
+    Block,
+    VariableDeclaration,
+    AssignmentStatement,
+    IfStatement,
+    WhileStatement,
+    ReturnStatement,
+    PrintStatement,
+    PrintIntegerStatement,
+
+    // EXPRESIONES
+    IntegerLiteral,
+    StringLiteral,
+    VariableExpression,
+    ArrayAccessExpression,
+    CallExpression,
+    BinaryExpression
+};
+
+int main()
+{
+    return 0;
+}
