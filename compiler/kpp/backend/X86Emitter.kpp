@@ -1,0 +1,25 @@
+// X86Emitter.kpp — Stage 1, backend, arranque.
+// La maquina de escribir del backend: convierte cada orden en bytes.
+// Su .hpp (218 lineas) no trae ninguna tabla: en vez de una maquina
+// generica de registros, Stage 0 eligio metodos concretos con nombre
+// (emitMovEaxEbx, emitPushEbp, emitJeRel32...) y los registros van
+// dentro del nombre. Los codigos de registro solo asoman en
+// emitMovRegImm32 (opcode B8+reg) y en las ubicaciones de temporales
+// del X86Backend (EAX = 0, EBX = 3). Por eso esta pieza, como
+// BinaryWriter, nace sin enum: inventarle uno iria contra su diseno.
+// Sus dos familias de metodos:
+//   1. Emision directa: el byte queda escrito y cerrado.
+//   2. Placeholder + parche: emitXxxPlaceholder() escribe el hueco y
+//      devuelve su offset; patch32 y patchRel32 lo rellenan despues.
+//      Es la mitad baja de la maquinaria de parches del X86Backend:
+//      el backend guarda las listas, el emitter guarda los huecos.
+// Su unico estado es el vector de bytes (machineCode), que en
+// Stage 1 sera el arreglo de codigo compartido por nombre.
+// Dato que cierra una historia: el emitter SI tiene emitJneRel32 y
+// su Placeholder — la maquina sabe escribir el salto not-zero.
+// El JumpIfNotZero aplazado vive en el backend, no en esta pieza.
+
+int main()
+{
+    return 0;
+}
