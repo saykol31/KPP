@@ -1,0 +1,39 @@
+// ExecutableWriter.kpp — Stage 1, backend, arranque.
+// Traduce KolibriExecutableWriter de Stage 0 (27 lineas de .hpp, 202 de .cpp).
+// Su trabajo: anteponer la cabecera MENUET01 de 36 bytes al codigo que
+// emite el X86Backend y volcar el conjunto a un archivo.
+// La cabecera, tal como la escribe Stage 0 (offsets en bytes):
+//   00  firma "MENUET01" (8 bytes: 77 69 78 85 69 84 48 49)
+//   08  version    = 1
+//   0C  start      = HeaderSize
+//   10  imageEnd   = HeaderSize + tamano del codigo
+//   14  memoryEnd  = stackTop
+//   18  stackTop   = imageEnd + StackSize
+//   1C  parameters = 0
+//   20  path       = 0
+// Cada campo tras la firma es un u32 little-endian (su write32).
+// Las constantes del modulo van juntas en un enum con valores explicitos
+// (sintaxis verificada en la bateria L08): es la tabla de esta pieza.
+// Nota: en Stage 0 este escritor vuelca el archivo por su cuenta con
+// ofstream, sin pasar por BinaryWriter; en Stage 1 el conjunto ya
+// construido lo escribira BinaryWriter.kpp con file_write.
+
+enum Menuet01
+{
+    HeaderSize = 36,
+    StackSize = 4096,
+    Version = 1,
+    OffSignature = 0,
+    OffVersion = 8,
+    OffStart = 12,
+    OffImageEnd = 16,
+    OffMemoryEnd = 20,
+    OffStackTop = 24,
+    OffParameters = 28,
+    OffPath = 32
+};
+
+int main()
+{
+    return 0;
+}
