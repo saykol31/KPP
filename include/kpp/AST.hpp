@@ -332,6 +332,9 @@ struct Program : ASTNode
     std::vector<std::unique_ptr<FunctionDeclaration>> functions;
     std::vector<std::unique_ptr<StructDeclaration>> structs;
     std::vector<std::unique_ptr<EnumDeclaration>> enums;
+
+    // Escalares compartidos a nivel de programa (residen en DATA).
+    std::vector<std::unique_ptr<VariableDeclaration>> globals;
 };
 
 
