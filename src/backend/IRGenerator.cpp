@@ -308,6 +308,18 @@ IRProgram IRGenerator::generate(
         }
     }
 
+    for (const auto& global :
+         program.globals)
+    {
+        ir.globals.push_back({
+            IROpcode::Declare,
+            global->name,
+            "",
+            "",
+            global->arraySize
+        });
+    }
+
     for (const auto& function :
          program.functions)
     {

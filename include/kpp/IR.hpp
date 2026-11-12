@@ -235,6 +235,10 @@ struct IRFunction
 
 struct IRProgram
 {
+    // Declaraciones a nivel de programa (escalares
+    // compartidos): hoy, un Declare por variable global.
+    std::vector<IRInstruction> globals;
+
     std::vector<IRFunction> functions;
 };
 
