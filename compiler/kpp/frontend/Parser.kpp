@@ -1,13 +1,40 @@
-// Parser.kpp — Stage 1, pieza 2 (parser), arranque.
-// Tabla de tokens: el enum TokenType de include/kpp/Token.hpp (Stage 0)
-// traducido 1:1 a un enum de K++. Los valores NO se escriben a mano:
-// salen del ORDEN de declaracion (0, 1, 2, ...), igual que en C++.
-// CONTRATO: el orden es sagrado. Un token nuevo va AL FINAL de la lista,
-// nunca en el medio — mover un miembro renumera todos los que siguen y
-// rompe la correspondencia con el Lexer y con EXPECTED.txt.
-// Acceso con ambito, como en Stage 0: TokenType::KwIf, TokenType::LBrace.
-// Verificado contra la bateria L08: enum con acceso ::, valores desde 0
-// y aritmetica/comparacion como enteros.
+// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 1.
+// Traduccion de src/frontend/Parser.cpp (Stage 0) a K++, en el
+// estilo de subrutinas con estado compartido:
+//
+//   - El cursor de Stage 0 (Parser::position, un miembro de la
+//     clase) aqui es un escalar compartido en DATA: int pos;
+//     Todas las subrutinas lo leen y lo mueven a pelo, como en
+//     un GOSUB de MSX BASIC. Es el primer consumidor real de
+//     los escalares compartidos (bateria L19).
+//   - current/check/match/advance/expect de Stage 0 pasan a
+//     subrutinas: actual(), es(), consume(), espera().
+//   - Los tokens llegan en arreglos paralelos compartidos por
+//     nombre (tipo/tinicio/tlargo), el formato del Lexer.
+//     En esta rebanada la tabla es LITERAL: los 27 tokens de
+//     FUENTE.KPP segun EXPECTED.txt (pieza 1, P00 sellada).
+//     La rebanada de acople la sustituira por la salida real
+//     del Lexer sin tocar a los consumidores.
+//   - Los nodos salen en arreglos paralelos (nkind/nini/nfin:
+//     clase del nodo y su rango de tokens), con la copia
+//     identica de NodeKind que pide el contrato de
+//     SemanticAnalyzer.kpp.
+//   - Las expresiones todavia NO se analizan: se saltan por
+//     conteo (hasta el ';' o el ')' que cierra). La cadena de
+//     precedencia de Stage 0 (parseLogicalOr ... parsePrimary)
+//     llega en su propia rebanada.
+//
+// Aceptacion de la rebanada (en campo, Studio):
+//   1 funcion, 4 sentencias (3 del cuerpo + el print anidado),
+//   0 errores, 27 tokens consumidos.
+//
+// Tabla de tokens: el enum TokenType de include/kpp/Token.hpp
+// (Stage 0) traducido 1:1. Los valores salen del ORDEN de
+// declaracion (0, 1, 2, ...), igual que en C++.
+// CONTRATO: el orden es sagrado. Un token nuevo va AL FINAL,
+// nunca en el medio — mover un miembro renumera los que
+// siguen y rompe la correspondencia con el Lexer y con
+// EXPECTED.txt. Acceso con ambito: TokenType::KwIf.
 
 enum TokenType
 {
@@ -71,7 +98,373 @@ enum TokenType
     Dot
 };
 
+// Tabla de clases de nodo: copia IDENTICA del enum de
+// SemanticAnalyzer.kpp (contrato entre emisor y consumidor).
+// El orden lo fija aquella lista; un nodo nuevo va AL FINAL.
+
+enum NodeKind
+{
+    // DECLARACIONES
+    Program,
+    FunctionDeclaration,
+    StructDeclaration,
+    EnumDeclaration,
+
+    // SENTENCIAS
+    Block,
+    VariableDeclaration,
+    AssignmentStatement,
+    IfStatement,
+    WhileStatement,
+    ReturnStatement,
+    PrintStatement,
+    PrintIntegerStatement,
+
+    // EXPRESIONES
+    IntegerLiteral,
+    StringLiteral,
+    VariableExpression,
+    ArrayAccessExpression,
+    CallExpression,
+    BinaryExpression
+};
+
+// ============================================================
+// ESTADO COMPARTIDO (DATA) — el corazon del estilo subrutina
+// ============================================================
+
+int pos;
+int ntok;
+int nnodos;
+int errores;
+int nfun;
+int nsent;
+
+// ============================================================
+// MAQUINARIA DEL CURSOR (Parser::current/check/match/expect)
+// ============================================================
+
+int actual()
+{
+    int tipo[32];
+    if (pos < ntok)
+    {
+        return tipo[pos];
+    }
+    return TokenType::EndOfFile;
+}
+
+int es(int t)
+{
+    if (actual() == t)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+int consume()
+{
+    int tipo[32];
+    int t = TokenType::EndOfFile;
+    if (pos < ntok)
+    {
+        t = tipo[pos];
+        pos = pos + 1;
+    }
+    return t;
+}
+
+int espera(int t)
+{
+    if (es(t) == 1)
+    {
+        int c = consume();
+        return 1;
+    }
+    errores = errores + 1;
+    return 0;
+}
+
+// ============================================================
+// NODOS
+// ============================================================
+
+int emite(int kind, int ini)
+{
+    int nkind[64];
+    int nini[64];
+    int nfin[64];
+    nkind[nnodos] = kind;
+    nini[nnodos] = ini;
+    nfin[nnodos] = pos;
+    nnodos = nnodos + 1;
+    return nnodos - 1;
+}
+
+// ============================================================
+// SALTO DE EXPRESIONES (provisional, por conteo)
+// ============================================================
+
+// Salta hasta el Semicolon del nivel actual SIN consumirlo:
+// las expresiones de esta rebanada no se analizan, se cuentan.
+int salta_expresion()
+{
+    int profundidad = 0;
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        if (pos >= ntok)
+        {
+            sigue = 0;
+        }
+        if (sigue == 1)
+        {
+            int t = actual();
+            if (t == TokenType::Semicolon)
+            {
+                if (profundidad == 0)
+                {
+                    sigue = 0;
+                }
+            }
+            if (sigue == 1)
+            {
+                if (t == TokenType::LParen)
+                {
+                    profundidad = profundidad + 1;
+                }
+                if (t == TokenType::RParen)
+                {
+                    profundidad = profundidad - 1;
+                }
+                int c = consume();
+            }
+        }
+    }
+    return 0;
+}
+
+// Salta el contenido de un parentesis ya abierto, hasta
+// consumir el RParen que lo cierra (condiciones del if).
+int salta_parentesis()
+{
+    int profundidad = 1;
+    while (profundidad > 0)
+    {
+        if (pos >= ntok)
+        {
+            profundidad = 0;
+            errores = errores + 1;
+        }
+        if (profundidad > 0)
+        {
+            int t = consume();
+            if (t == TokenType::LParen)
+            {
+                profundidad = profundidad + 1;
+            }
+            if (t == TokenType::RParen)
+            {
+                profundidad = profundidad - 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// ============================================================
+// SENTENCIAS (Parser::parseStatement, nucleo de la rebanada)
+// ============================================================
+
+int parse_sentencia()
+{
+    int ini = pos;
+    int t = actual();
+
+    // Declaracion de variable: int nombre [= expr];
+    if (t == TokenType::KwInt)
+    {
+        int c1 = consume();
+        int ok = espera(TokenType::Identifier);
+        if (es(TokenType::Assign) == 1)
+        {
+            int c2 = consume();
+            int s = salta_expresion();
+        }
+        int ok2 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::VariableDeclaration, ini);
+        nsent = nsent + 1;
+        return 1;
+    }
+
+    // if (condicion) bloque [else bloque]
+    if (t == TokenType::KwIf)
+    {
+        int c1 = consume();
+        int ok = espera(TokenType::LParen);
+        int s = salta_parentesis();
+        int n = emite(NodeKind::IfStatement, ini);
+        nsent = nsent + 1;
+        int b = parse_bloque();
+        if (es(TokenType::KwElse) == 1)
+        {
+            int c2 = consume();
+            int b2 = parse_bloque();
+        }
+        return 1;
+    }
+
+    // print ( expr );
+    if (t == TokenType::KwPrint)
+    {
+        int c1 = consume();
+        int ok = espera(TokenType::LParen);
+        int s = salta_parentesis();
+        int ok2 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::PrintStatement, ini);
+        nsent = nsent + 1;
+        return 1;
+    }
+
+    // return [expr];
+    if (t == TokenType::KwReturn)
+    {
+        int c1 = consume();
+        int s = salta_expresion();
+        int ok = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::ReturnStatement, ini);
+        nsent = nsent + 1;
+        return 1;
+    }
+
+    // Nada reconocido: error y avance para no ciclar.
+    errores = errores + 1;
+    int c3 = consume();
+    return 0;
+}
+
+// ============================================================
+// BLOQUES Y FUNCIONES (Parser::parseBlock / parseFunction)
+// ============================================================
+
+int parse_bloque()
+{
+    int ini = pos;
+    int ok = espera(TokenType::LBrace);
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        if (pos >= ntok)
+        {
+            sigue = 0;
+        }
+        if (es(TokenType::RBrace) == 1)
+        {
+            sigue = 0;
+        }
+        if (sigue == 1)
+        {
+            int s = parse_sentencia();
+        }
+    }
+    int ok2 = espera(TokenType::RBrace);
+    return 1;
+}
+
+int parse_funcion()
+{
+    int ini = pos;
+    int ok = espera(TokenType::KwInt);
+    int ok2 = espera(TokenType::Identifier);
+    int ok3 = espera(TokenType::LParen);
+    int ok4 = espera(TokenType::RParen);
+    int n = emite(NodeKind::FunctionDeclaration, ini);
+    nfun = nfun + 1;
+    int b = parse_bloque();
+    return 1;
+}
+
+// ============================================================
+// PROGRAMA (Parser::parse, nivel superior de la rebanada)
+// ============================================================
+
+int parse_programa()
+{
+    int ini = pos;
+    int n = emite(NodeKind::Program, ini);
+    while (pos < ntok)
+    {
+        if (es(TokenType::KwInt) == 1)
+        {
+            int f = parse_funcion();
+        }
+        if (es(TokenType::KwInt) == 0)
+        {
+            if (pos < ntok)
+            {
+                errores = errores + 1;
+                int c = consume();
+            }
+        }
+    }
+    return 1;
+}
+
+// ============================================================
+// TABLA LITERAL DE TOKENS — los 27 de FUENTE.KPP (EXPECTED.txt)
+// ============================================================
+
+int inicia_tokens()
+{
+    int tipo[32];
+    int tinicio[32];
+    int tlargo[32];
+
+    tipo[0] = TokenType::KwInt;       tinicio[0] = 0;    tlargo[0] = 3;
+    tipo[1] = TokenType::Identifier;  tinicio[1] = 4;    tlargo[1] = 4;
+    tipo[2] = TokenType::LParen;      tinicio[2] = 8;    tlargo[2] = 1;
+    tipo[3] = TokenType::RParen;      tinicio[3] = 9;    tlargo[3] = 1;
+    tipo[4] = TokenType::LBrace;      tinicio[4] = 11;   tlargo[4] = 1;
+    tipo[5] = TokenType::KwInt;       tinicio[5] = 17;   tlargo[5] = 3;
+    tipo[6] = TokenType::Identifier;  tinicio[6] = 21;   tlargo[6] = 1;
+    tipo[7] = TokenType::Assign;      tinicio[7] = 23;   tlargo[7] = 1;
+    tipo[8] = TokenType::Number;      tinicio[8] = 25;   tlargo[8] = 2;
+    tipo[9] = TokenType::Semicolon;   tinicio[9] = 27;   tlargo[9] = 1;
+    tipo[10] = TokenType::KwIf;       tinicio[10] = 45;  tlargo[10] = 2;
+    tipo[11] = TokenType::LParen;     tinicio[11] = 48;  tlargo[11] = 1;
+    tipo[12] = TokenType::Identifier; tinicio[12] = 49;  tlargo[12] = 1;
+    tipo[13] = TokenType::Equal;      tinicio[13] = 51;  tlargo[13] = 2;
+    tipo[14] = TokenType::Number;     tinicio[14] = 54;  tlargo[14] = 2;
+    tipo[15] = TokenType::RParen;     tinicio[15] = 56;  tlargo[15] = 1;
+    tipo[16] = TokenType::LBrace;     tinicio[16] = 62;  tlargo[16] = 1;
+    tipo[17] = TokenType::KwPrint;    tinicio[17] = 72;  tlargo[17] = 5;
+    tipo[18] = TokenType::LParen;     tinicio[18] = 77;  tlargo[18] = 1;
+    tipo[19] = TokenType::String;     tinicio[19] = 78;  tlargo[19] = 6;
+    tipo[20] = TokenType::RParen;     tinicio[20] = 84;  tlargo[20] = 1;
+    tipo[21] = TokenType::Semicolon;  tinicio[21] = 85;  tlargo[21] = 1;
+    tipo[22] = TokenType::RBrace;     tinicio[22] = 91;  tlargo[22] = 1;
+    tipo[23] = TokenType::KwReturn;   tinicio[23] = 97;  tlargo[23] = 6;
+    tipo[24] = TokenType::Number;     tinicio[24] = 104; tlargo[24] = 1;
+    tipo[25] = TokenType::Semicolon;  tinicio[25] = 105; tlargo[25] = 1;
+    tipo[26] = TokenType::RBrace;     tinicio[26] = 107; tlargo[26] = 1;
+
+    ntok = 27;
+    pos = 0;
+    return 0;
+}
+
+// ============================================================
+// MAIN — la sonda de la rebanada
+// ============================================================
+
 int main()
 {
+    int a = inicia_tokens();
+    int p = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
     return 0;
 }
