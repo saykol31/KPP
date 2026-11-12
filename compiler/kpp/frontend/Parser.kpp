@@ -1,4 +1,4 @@
-// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 2.
+// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 3.
 // Traduccion de src/frontend/Parser.cpp (Stage 0) a K++, en el
 // estilo de subrutinas con estado compartido:
 //
@@ -25,11 +25,17 @@
 //     condiciones, argumentos de print, return y la
 //     asignacion. Los nodos de expresion cuelgan de los
 //     de sentencia por hijo1/hijo2/nsig.
+//   - Rebanada 3: la declaracion de funcion completa de
+//     Stage 0 — parametros int en tabla lateral (Parameter
+//     no es un NodeKind) — y la bifurcacion de parse():
+//     int nombre; es global, int nombre( es funcion,
+//     la misma bifurcacion que Stage 0 gano con L19.
 //
 // Aceptacion de la rebanada (en campo, Studio):
-//   1 funcion, 4 sentencias, 0 errores, 27 tokens consumidos,
-//   14 nodos, 1 expresion binaria (el == de la condicion),
-//   3 literales enteros (42, 42 y 0).
+//   Tabla de FUENTE: 1, 4, 0, 27, 14, 1, 3 (como en la
+//   rebanada 2). Tabla 2 (declaraciones): 2, 4, 0, 43,
+//   18, 2, 2 — funciones, sentencias, errores, tokens,
+//   nodos, parametros y FunctionDeclaration.
 //
 // Tabla de tokens: el enum TokenType de include/kpp/Token.hpp
 // (Stage 0) traducido 1:1. Los valores salen del ORDEN de
@@ -142,6 +148,7 @@ int nnodos;
 int errores;
 int nfun;
 int nsent;
+int npar;
 
 // ============================================================
 // MAQUINARIA DEL CURSOR (Parser::current/check/match/expect)
@@ -149,7 +156,7 @@ int nsent;
 
 int actual()
 {
-    int tipo[32];
+    int tipo[64];
     if (pos < ntok)
     {
         return tipo[pos];
@@ -168,7 +175,7 @@ int es(int t)
 
 int consume()
 {
-    int tipo[32];
+    int tipo[64];
     int t = TokenType::EndOfFile;
     if (pos < ntok)
     {
@@ -595,7 +602,7 @@ int parse_unario()
 
 int parse_primario()
 {
-    int tvalor[32];
+    int tvalor[64];
     int ini = pos;
     int t = actual();
 
@@ -895,16 +902,59 @@ int parse_bloque()
     return 1;
 }
 
+int pon_param(int tok)
+{
+    int partok[64];
+    partok[npar] = tok;
+    npar = npar + 1;
+    return 0;
+}
+
 int parse_funcion()
 {
     int ini = pos;
     int ok = espera(TokenType::KwInt);
+    int nombre = pos;
     int ok2 = espera(TokenType::Identifier);
     int ok3 = espera(TokenType::LParen);
-    int ok4 = espera(TokenType::RParen);
+
+    // Parametros: solamente int (FASE 4.2.1 de Stage 0).
+    // Parameter no es un NodeKind: los parametros viven
+    // en su tabla lateral partok, y la funcion guarda en
+    // hijo2 el inicio de los suyos y en nsig cuantos son.
+    int pini = npar;
+    if (es(TokenType::RParen) == 0)
+    {
+        int sigue = 1;
+        while (sigue == 1)
+        {
+            int ok4 = espera(TokenType::KwInt);
+            int ptok = pos;
+            int ok5 = espera(TokenType::Identifier);
+            int r = pon_param(ptok);
+            int seguir = 0;
+            if (es(TokenType::Comma) == 1)
+            {
+                int c = consume();
+                seguir = 1;
+            }
+            if (seguir == 0)
+            {
+                sigue = 0;
+            }
+        }
+    }
+    int ok6 = espera(TokenType::RParen);
+
     int n = emite(NodeKind::FunctionDeclaration, ini);
+    int a = pon_val(n, nombre);
+    int b = pon_hijo2(n, pini);
+    int c = pon_sig(n, npar - pini);
     nfun = nfun + 1;
-    int b = parse_bloque();
+
+    int bloque = nnodos;
+    int bl = parse_bloque();
+    int d = pon_hijo1(n, bloque);
     return 1;
 }
 
@@ -912,23 +962,61 @@ int parse_funcion()
 // PROGRAMA (Parser::parse, nivel superior de la rebanada)
 // ============================================================
 
+// mira(salto, t): el checkAhead de Stage 0 — el tipo del
+// token que esta `salto` posiciones adelante, sin consumir.
+int mira(int salto, int t)
+{
+    int tipo[64];
+    if (pos + salto < ntok)
+    {
+        if (tipo[pos + salto] == t)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// int nombre; a nivel de programa: el escalar compartido
+// (parseGlobalVariable de Stage 0, la bifurcacion de L19).
+int parse_global()
+{
+    int ini = pos;
+    int c = consume();
+    int nombre = pos;
+    int ok = espera(TokenType::Identifier);
+    int ok2 = espera(TokenType::Semicolon);
+    int n = emite(NodeKind::VariableDeclaration, ini);
+    int a = pon_val(n, nombre);
+    return 1;
+}
+
 int parse_programa()
 {
     int ini = pos;
     int n = emite(NodeKind::Program, ini);
     while (pos < ntok)
     {
+        int hecho = 0;
         if (es(TokenType::KwInt) == 1)
         {
-            int f = parse_funcion();
-        }
-        if (es(TokenType::KwInt) == 0)
-        {
-            if (pos < ntok)
+            // La bifurcacion de Stage 0 (parse()):
+            // int nombre;  -> variable global
+            // int nombre(  -> funcion
+            if (mira(2, TokenType::Semicolon) == 1)
             {
-                errores = errores + 1;
-                int c = consume();
+                int g = parse_global();
             }
+            if (mira(2, TokenType::Semicolon) == 0)
+            {
+                int f = parse_funcion();
+            }
+            hecho = 1;
+        }
+        if (hecho == 0)
+        {
+            errores = errores + 1;
+            int c = consume();
         }
     }
     return 1;
@@ -940,10 +1028,10 @@ int parse_programa()
 
 int inicia_tokens()
 {
-    int tipo[32];
-    int tinicio[32];
-    int tlargo[32];
-    int tvalor[32];
+    int tipo[64];
+    int tinicio[64];
+    int tlargo[64];
+    int tvalor[64];
 
     tipo[0] = TokenType::KwInt;       tinicio[0] = 0;    tlargo[0] = 3;
     tipo[1] = TokenType::Identifier;  tinicio[1] = 4;    tlargo[1] = 4;
@@ -985,6 +1073,97 @@ int inicia_tokens()
 }
 
 // ============================================================
+// TABLA LITERAL 2 — LA SONDA DE DECLARACIONES.
+//
+// int g;
+// int suma(int a, int b)
+// {
+//     return a + b;
+// }
+// int main()
+// {
+//     int r = suma(g, 3);
+//     print(r);
+//     return 0;
+// }
+//
+// Generada mecanicamente desde esa fuente: 43 tokens,
+// mismo formato que la tabla de FUENTE.
+// ============================================================
+
+int inicia_tokens2()
+{
+    int tipo[64];
+    int tinicio[64];
+    int tlargo[64];
+    int tvalor[64];
+
+    tipo[0] = TokenType::KwInt;       tinicio[0] = 0;     tlargo[0] = 3;
+    tipo[1] = TokenType::Identifier;  tinicio[1] = 4;     tlargo[1] = 1;
+    tipo[2] = TokenType::Semicolon;   tinicio[2] = 5;     tlargo[2] = 1;
+    tipo[3] = TokenType::KwInt;       tinicio[3] = 7;     tlargo[3] = 3;
+    tipo[4] = TokenType::Identifier;  tinicio[4] = 11;    tlargo[4] = 4;
+    tipo[5] = TokenType::LParen;      tinicio[5] = 15;    tlargo[5] = 1;
+    tipo[6] = TokenType::KwInt;       tinicio[6] = 16;    tlargo[6] = 3;
+    tipo[7] = TokenType::Identifier;  tinicio[7] = 20;    tlargo[7] = 1;
+    tipo[8] = TokenType::Comma;       tinicio[8] = 21;    tlargo[8] = 1;
+    tipo[9] = TokenType::KwInt;       tinicio[9] = 23;    tlargo[9] = 3;
+    tipo[10] = TokenType::Identifier; tinicio[10] = 27;   tlargo[10] = 1;
+    tipo[11] = TokenType::RParen;     tinicio[11] = 28;   tlargo[11] = 1;
+    tipo[12] = TokenType::LBrace;     tinicio[12] = 30;   tlargo[12] = 1;
+    tipo[13] = TokenType::KwReturn;   tinicio[13] = 36;   tlargo[13] = 6;
+    tipo[14] = TokenType::Identifier; tinicio[14] = 43;   tlargo[14] = 1;
+    tipo[15] = TokenType::Plus;       tinicio[15] = 45;   tlargo[15] = 1;
+    tipo[16] = TokenType::Identifier; tinicio[16] = 47;   tlargo[16] = 1;
+    tipo[17] = TokenType::Semicolon;  tinicio[17] = 48;   tlargo[17] = 1;
+    tipo[18] = TokenType::RBrace;     tinicio[18] = 50;   tlargo[18] = 1;
+    tipo[19] = TokenType::KwInt;      tinicio[19] = 52;   tlargo[19] = 3;
+    tipo[20] = TokenType::Identifier; tinicio[20] = 56;   tlargo[20] = 4;
+    tipo[21] = TokenType::LParen;     tinicio[21] = 60;   tlargo[21] = 1;
+    tipo[22] = TokenType::RParen;     tinicio[22] = 61;   tlargo[22] = 1;
+    tipo[23] = TokenType::LBrace;     tinicio[23] = 63;   tlargo[23] = 1;
+    tipo[24] = TokenType::KwInt;      tinicio[24] = 69;   tlargo[24] = 3;
+    tipo[25] = TokenType::Identifier; tinicio[25] = 73;   tlargo[25] = 1;
+    tipo[26] = TokenType::Assign;     tinicio[26] = 75;   tlargo[26] = 1;
+    tipo[27] = TokenType::Identifier; tinicio[27] = 77;   tlargo[27] = 4;
+    tipo[28] = TokenType::LParen;     tinicio[28] = 81;   tlargo[28] = 1;
+    tipo[29] = TokenType::Identifier; tinicio[29] = 82;   tlargo[29] = 1;
+    tipo[30] = TokenType::Comma;      tinicio[30] = 83;   tlargo[30] = 1;
+    tipo[31] = TokenType::Number;     tinicio[31] = 85;   tlargo[31] = 1;
+    tipo[32] = TokenType::RParen;     tinicio[32] = 86;   tlargo[32] = 1;
+    tipo[33] = TokenType::Semicolon;  tinicio[33] = 87;   tlargo[33] = 1;
+    tipo[34] = TokenType::KwPrint;    tinicio[34] = 93;   tlargo[34] = 5;
+    tipo[35] = TokenType::LParen;     tinicio[35] = 98;   tlargo[35] = 1;
+    tipo[36] = TokenType::Identifier; tinicio[36] = 99;   tlargo[36] = 1;
+    tipo[37] = TokenType::RParen;     tinicio[37] = 100;  tlargo[37] = 1;
+    tipo[38] = TokenType::Semicolon;  tinicio[38] = 101;  tlargo[38] = 1;
+    tipo[39] = TokenType::KwReturn;   tinicio[39] = 107;  tlargo[39] = 6;
+    tipo[40] = TokenType::Number;     tinicio[40] = 114;  tlargo[40] = 1;
+    tipo[41] = TokenType::Semicolon;  tinicio[41] = 115;  tlargo[41] = 1;
+    tipo[42] = TokenType::RBrace;     tinicio[42] = 117;  tlargo[42] = 1;
+
+    tvalor[31] = 3;
+    tvalor[40] = 0;
+
+    ntok = 43;
+    pos = 0;
+    return 0;
+}
+
+// Deja el estado compartido como recien nacido, para
+// correr la segunda tabla en el mismo programa.
+int reinicia()
+{
+    pos = 0;
+    nnodos = 0;
+    errores = 0;
+    nfun = 0;
+    nsent = 0;
+    npar = 0;
+    return 0;
+}
+
+// ============================================================
 // MAIN — la sonda de la rebanada
 // ============================================================
 
@@ -999,5 +1178,16 @@ int main()
     print_int(nnodos);
     print_int(cuenta(NodeKind::BinaryExpression));
     print_int(cuenta(NodeKind::IntegerLiteral));
+
+    int r0 = reinicia();
+    int a2 = inicia_tokens2();
+    int p2 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(npar);
+    print_int(cuenta(NodeKind::FunctionDeclaration));
     return 0;
 }
