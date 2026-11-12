@@ -1,0 +1,56 @@
+// Runtime.kpp — Stage 1, runtime, arranque.
+// El runtime propio de K++ (KolibriRuntime de Stage 0): rutinas x86 que
+// el backend EMITE dentro de cada programa — no es una biblioteca
+// externa ni un interprete. Sus piezas:
+//   START y el bucle de eventos de KolibriOS (dibujar ventana, tecla,
+//   boton, redibujo), print de texto, print de enteros (EAX a decimal),
+//   salida del programa, y las rutinas internas de archivos
+//   kpp_file_write / kpp_file_read.
+// Como el backend, devuelve PARCHES: 5 del runtime grafico, las
+// entradas de file_read/file_write con 4 parches de direcciones
+// (scratch y bloque de parametros), y la lista de parches del cursor.
+// ABI interna de las rutinas de archivo:
+//   WRITE: EAX = ruta, EBX = arreglo, ECX = cantidad, EDX = capacidad
+//   READ:  EAX = ruta, EBX = arreglo, ECX = capacidad
+//   Retorno en EAX (0 exito, -1 error; en lectura, >= 0 bytes leidos).
+//   Se preservan EBX, ESI, EDI, EBP y ESP. Scratch compartido de
+//   65536 bytes; transferencia en bloques de hasta MaxBytes.
+//   Protocolo de escritura: subfuncion 2 con cero bytes crea/trunca,
+//   y cada bloque de datos va con la subfuncion 3 y su offset.
+//   EOF (6) en lectura es exito corto: se devuelve el conteo real.
+// Una celda int32 de K++ produce o recibe exactamente un byte.
+
+// Constantes de la E/S de archivos (los constexpr de KolibriRuntime.hpp;
+// SubWriteBlock no tiene constante nombrada en Stage 0: sale del texto
+// del contrato).
+enum KolibriFileIo
+{
+    Function = 70,
+    SubRead = 0,
+    SubWrite = 2,
+    SubWriteBlock = 3,
+    Eof = 6,
+    MaxBytes = 65536,
+    EncodingRaw = 0
+};
+
+// Bloque de parametros de la funcion 70: 25 bytes EMPAQUETADOS.
+// pathAddress va en +21, pegado al flag de 1 byte: sin relleno.
+// (En Stage 0 lo blindan static_asserts; aqui los offsets se escriben
+// a mano en el arreglo de bytes, y esta tabla es la referencia.)
+enum FileIoParams
+{
+    Size = 25,
+    OffSubfunction = 0,
+    OffOffsetLow = 4,
+    OffOffsetHigh = 8,
+    OffByteCount = 12,
+    OffBufferAddress = 16,
+    OffEncodingFlag = 20,
+    OffPathAddress = 21
+};
+
+int main()
+{
+    return 0;
+}
