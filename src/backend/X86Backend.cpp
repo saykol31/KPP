@@ -5577,11 +5577,17 @@ for (const auto& patch :
 
     if (!integerBufferPatches.empty())
     {
+        // El runtime espera EDI apuntando al FINAL
+        // del buffer: escribe el NUL en EDI-1 y los
+        // digitos hacia atras. La reserva es de 16
+        // bytes (15 digitos + NUL), asi que el imm32
+        // se parchea con base + 16, no con la base.
         const std::uint32_t
             integerBufferAddress =
                 dataBase +
                 static_cast<std::uint32_t>(
-                    integerBufferOffset);
+                    integerBufferOffset) +
+                16;
 
         for (const std::size_t patch :
              integerBufferPatches)
