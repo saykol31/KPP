@@ -1,0 +1,17 @@
+// BinaryWriter.kpp — Stage 1, backend, arranque.
+// El modulo mas pequeno de Stage 0: su .hpp tiene UNA sola funcion,
+//   bool write(filename, data)
+// que vuelca un vector de bytes a un archivo binario (crea/trunca,
+// escribe todo si hay datos, devuelve si quedo bien). 19 lineas de
+// header y 30 de .cpp: sin enums, sin tablas, sin constantes.
+// Por eso esta pieza nace SIN tabla: no hay nada que traducir de un
+// .hpp. Inventarle un enum seria bulto.
+// Su forma en Stage 1, cuando llegue su rebanada: escribir el arreglo
+// de codigo que emite el X86Backend con file_write (funcion 70,
+// subfuncion 2 = WRITE/CREATE/REWRITE del contrato de KolibriRuntime),
+// respetando la regla de bloques de 64 KiB de la E/S de K++.
+
+int main()
+{
+    return 0;
+}
