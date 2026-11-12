@@ -1,0 +1,77 @@
+// Parser.kpp — Stage 1, pieza 2 (parser), arranque.
+// Tabla de tokens: el enum TokenType de include/kpp/Token.hpp (Stage 0)
+// traducido 1:1 a un enum de K++. Los valores NO se escriben a mano:
+// salen del ORDEN de declaracion (0, 1, 2, ...), igual que en C++.
+// CONTRATO: el orden es sagrado. Un token nuevo va AL FINAL de la lista,
+// nunca en el medio — mover un miembro renumera todos los que siguen y
+// rompe la correspondencia con el Lexer y con EXPECTED.txt.
+// Acceso con ambito, como en Stage 0: TokenType::KwIf, TokenType::LBrace.
+// Verificado contra la bateria L08: enum con acceso ::, valores desde 0
+// y aritmetica/comparacion como enteros.
+
+enum TokenType
+{
+    // CONTROL
+    EndOfFile,
+
+    // LITERALES / IDENTIFICADORES
+    Identifier,
+    Number,
+    String,
+
+    // TIPOS / PALABRAS CLAVE
+    KwInt,
+    KwString,
+    KwStruct,
+    KwEnum,
+    KwReturn,
+    KwPrint,
+    KwIf,
+    KwElse,
+    KwWhile,
+
+    // ASIGNACION
+    Assign,
+
+    // OPERADORES ARITMETICOS
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+
+    // POTENCIA / RAIZ
+    Power,
+
+    // COMPARACION
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+
+    // LOGICOS
+    LogicalAnd,
+    LogicalOr,
+    LogicalNot,
+
+    // PARENTESIS / BLOQUES
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+
+    // SEPARADORES
+    Comma,
+    Semicolon,
+    ColonColon,
+    Dot
+};
+
+int main()
+{
+    return 0;
+}
