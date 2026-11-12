@@ -1,0 +1,16 @@
+int contador;
+
+int sube()
+{
+    contador = contador + 1;
+    return 0;
+}
+
+int main()
+{
+    int a = sube();
+    int b = sube();
+    int c = sube();
+    print_int(contador);
+    return 0;
+}

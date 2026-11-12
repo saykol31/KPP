@@ -1,0 +1,25 @@
+int pos;
+int total;
+
+int avanza()
+{
+    pos = pos + 1;
+    total = total + 10;
+    return 0;
+}
+
+int retrocede()
+{
+    pos = pos - 1;
+    return 0;
+}
+
+int main()
+{
+    int a = avanza();
+    int b = avanza();
+    int c = retrocede();
+    print_int(pos);
+    print_int(total);
+    return 0;
+}

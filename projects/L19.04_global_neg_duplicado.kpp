@@ -1,0 +1,7 @@
+int contador;
+int contador;
+
+int main()
+{
+    return 0;
+}
