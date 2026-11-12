@@ -1,4 +1,4 @@
-// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 1.
+// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 2.
 // Traduccion de src/frontend/Parser.cpp (Stage 0) a K++, en el
 // estilo de subrutinas con estado compartido:
 //
@@ -19,14 +19,17 @@
 //     clase del nodo y su rango de tokens), con la copia
 //     identica de NodeKind que pide el contrato de
 //     SemanticAnalyzer.kpp.
-//   - Las expresiones todavia NO se analizan: se saltan por
-//     conteo (hasta el ';' o el ')' que cierra). La cadena de
-//     precedencia de Stage 0 (parseLogicalOr ... parsePrimary)
-//     llega en su propia rebanada.
+//   - Rebanada 2: la cadena de expresiones de Stage 0 ya
+//     esta traducida (parse_or ... parse_primario) y las
+//     sentencias la usan de verdad: inicializadores,
+//     condiciones, argumentos de print, return y la
+//     asignacion. Los nodos de expresion cuelgan de los
+//     de sentencia por hijo1/hijo2/nsig.
 //
 // Aceptacion de la rebanada (en campo, Studio):
-//   1 funcion, 4 sentencias (3 del cuerpo + el print anidado),
-//   0 errores, 27 tokens consumidos.
+//   1 funcion, 4 sentencias, 0 errores, 27 tokens consumidos,
+//   14 nodos, 1 expresion binaria (el == de la condicion),
+//   3 literales enteros (42, 42 y 0).
 //
 // Tabla de tokens: el enum TokenType de include/kpp/Token.hpp
 // (Stage 0) traducido 1:1. Los valores salen del ORDEN de
@@ -187,90 +190,522 @@ int espera(int t)
 }
 
 // ============================================================
-// NODOS
+// NODOS.
+//
+// El nodo es un indice. Sus datos viven en arreglos
+// paralelos compartidos por nombre:
+//
+// nkind  clase del nodo (NodeKind).
+// nini   primer token del nodo.
+// nfin   token siguiente al ultimo del nodo.
+// nhijo1 hijo izquierdo / primer hijo / indice de arreglo.
+// nhijo2 hijo derecho / valor de una asignacion.
+// nsig   siguiente hermano (argumentos de una llamada).
+// nval   carga util: valor de un literal entero, codigo
+//        TokenType del operador de un nodo binario, o
+//        indice del token del nombre (variable, llamada).
 // ============================================================
 
 int emite(int kind, int ini)
 {
-    int nkind[64];
-    int nini[64];
-    int nfin[64];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nhijo2[256];
+    int nsig[256];
+    int nval[256];
     nkind[nnodos] = kind;
     nini[nnodos] = ini;
     nfin[nnodos] = pos;
+    nhijo1[nnodos] = 0 - 1;
+    nhijo2[nnodos] = 0 - 1;
+    nsig[nnodos] = 0 - 1;
+    nval[nnodos] = 0;
     nnodos = nnodos + 1;
     return nnodos - 1;
 }
 
+int pon_hijo1(int nodo, int hijo)
+{
+    int nhijo1[256];
+    nhijo1[nodo] = hijo;
+    return 0;
+}
+
+int pon_hijo2(int nodo, int hijo)
+{
+    int nhijo2[256];
+    nhijo2[nodo] = hijo;
+    return 0;
+}
+
+int pon_sig(int nodo, int hermano)
+{
+    int nsig[256];
+    nsig[nodo] = hermano;
+    return 0;
+}
+
+int pon_val(int nodo, int valor)
+{
+    int nval[256];
+    nval[nodo] = valor;
+    return 0;
+}
+
+int nodo_ini(int nodo)
+{
+    int nini[256];
+    if (nodo >= 0)
+    {
+        return nini[nodo];
+    }
+    return pos;
+}
+
+// Constructor de binarios: el BinaryExpression de Stage 0,
+// con el operador guardado como codigo TokenType en nval
+// (Stage 0 lo guarda como texto: "==", "+", ...).
+int emite_bin(int op, int izq, int der)
+{
+    int n = emite(NodeKind::BinaryExpression, nodo_ini(izq));
+    int a = pon_hijo1(n, izq);
+    int b = pon_hijo2(n, der);
+    int c = pon_val(n, op);
+    return n;
+}
+
+int emite_lit(int valor, int ini)
+{
+    int n = emite(NodeKind::IntegerLiteral, ini);
+    int a = pon_val(n, valor);
+    return n;
+}
+
+int cuenta(int kind)
+{
+    int nkind[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == kind)
+        {
+            total = total + 1;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
 // ============================================================
-// SALTO DE EXPRESIONES (provisional, por conteo)
+// CADENA DE EXPRESIONES.
+//
+// Traduccion nivel a nivel de la cadena de precedencia
+// de Parser.cpp (parseExpression ... parsePrimary).
+// Cada nivel es una subrutina que devuelve el indice del
+// nodo raiz de su subarbol, o -1 si no hubo expresion.
+//
+// PRECEDENCIA:
+//
+// 1.  ||
+// 2.  &&
+// 3.  == !=
+// 4.  < <= > >=
+// 5.  + -
+// 6.  * / %
+// 7.  ^
+// 8.  ! -
+// 9.  primarios
 // ============================================================
 
-// Salta hasta el Semicolon del nivel actual SIN consumirlo:
-// las expresiones de esta rebanada no se analizan, se cuentan.
-int salta_expresion()
+int parse_expresion()
 {
-    int profundidad = 0;
+    return parse_or();
+}
+
+// ============================================================
+// PARSE OR.
+//
+// a || b
+// ============================================================
+
+int parse_or()
+{
+    int izq = parse_and();
+    while (es(TokenType::LogicalOr) == 1)
+    {
+        int c = consume();
+        int der = parse_and();
+        izq = emite_bin(TokenType::LogicalOr, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE AND.
+//
+// a && b
+// ============================================================
+
+int parse_and()
+{
+    int izq = parse_igualdad();
+    while (es(TokenType::LogicalAnd) == 1)
+    {
+        int c = consume();
+        int der = parse_igualdad();
+        izq = emite_bin(TokenType::LogicalAnd, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE EQUALITY.
+//
+// a == b
+// a != b
+// ============================================================
+
+int parse_igualdad()
+{
+    int izq = parse_comparacion();
     int sigue = 1;
     while (sigue == 1)
     {
-        if (pos >= ntok)
+        int op = 0;
+        if (es(TokenType::Equal) == 1)
+        {
+            op = TokenType::Equal;
+        }
+        if (es(TokenType::NotEqual) == 1)
+        {
+            op = TokenType::NotEqual;
+        }
+        if (op == 0)
         {
             sigue = 0;
         }
         if (sigue == 1)
         {
-            int t = actual();
-            if (t == TokenType::Semicolon)
-            {
-                if (profundidad == 0)
-                {
-                    sigue = 0;
-                }
-            }
-            if (sigue == 1)
-            {
-                if (t == TokenType::LParen)
-                {
-                    profundidad = profundidad + 1;
-                }
-                if (t == TokenType::RParen)
-                {
-                    profundidad = profundidad - 1;
-                }
-                int c = consume();
-            }
+            int c = consume();
+            int der = parse_comparacion();
+            izq = emite_bin(op, izq, der);
         }
     }
-    return 0;
+    return izq;
 }
 
-// Salta el contenido de un parentesis ya abierto, hasta
-// consumir el RParen que lo cierra (condiciones del if).
-int salta_parentesis()
+// ============================================================
+// PARSE COMPARISON.
+//
+// a < b
+// a <= b
+// a > b
+// a >= b
+// ============================================================
+
+int parse_comparacion()
 {
-    int profundidad = 1;
-    while (profundidad > 0)
+    int izq = parse_termino();
+    int sigue = 1;
+    while (sigue == 1)
     {
-        if (pos >= ntok)
+        int op = 0;
+        if (es(TokenType::Less) == 1)
         {
-            profundidad = 0;
-            errores = errores + 1;
+            op = TokenType::Less;
         }
-        if (profundidad > 0)
+        if (es(TokenType::LessEqual) == 1)
         {
-            int t = consume();
-            if (t == TokenType::LParen)
-            {
-                profundidad = profundidad + 1;
-            }
-            if (t == TokenType::RParen)
-            {
-                profundidad = profundidad - 1;
-            }
+            op = TokenType::LessEqual;
+        }
+        if (es(TokenType::Greater) == 1)
+        {
+            op = TokenType::Greater;
+        }
+        if (es(TokenType::GreaterEqual) == 1)
+        {
+            op = TokenType::GreaterEqual;
+        }
+        if (op == 0)
+        {
+            sigue = 0;
+        }
+        if (sigue == 1)
+        {
+            int c = consume();
+            int der = parse_termino();
+            izq = emite_bin(op, izq, der);
         }
     }
-    return 0;
+    return izq;
+}
+
+// ============================================================
+// PARSE TERM.
+//
+// a + b
+// a - b
+// ============================================================
+
+int parse_termino()
+{
+    int izq = parse_factor();
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        int op = 0;
+        if (es(TokenType::Plus) == 1)
+        {
+            op = TokenType::Plus;
+        }
+        if (es(TokenType::Minus) == 1)
+        {
+            op = TokenType::Minus;
+        }
+        if (op == 0)
+        {
+            sigue = 0;
+        }
+        if (sigue == 1)
+        {
+            int c = consume();
+            int der = parse_factor();
+            izq = emite_bin(op, izq, der);
+        }
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE FACTOR.
+//
+// a * b
+// a / b
+// a % b
+// ============================================================
+
+int parse_factor()
+{
+    int izq = parse_potencia();
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        int op = 0;
+        if (es(TokenType::Multiply) == 1)
+        {
+            op = TokenType::Multiply;
+        }
+        if (es(TokenType::Divide) == 1)
+        {
+            op = TokenType::Divide;
+        }
+        if (es(TokenType::Modulo) == 1)
+        {
+            op = TokenType::Modulo;
+        }
+        if (op == 0)
+        {
+            sigue = 0;
+        }
+        if (sigue == 1)
+        {
+            int c = consume();
+            int der = parse_potencia();
+            izq = emite_bin(op, izq, der);
+        }
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE POWER.
+//
+// a ^ b
+//
+// La potencia se mantiene separada para poder darle
+// posteriormente asociatividad propia (nota de Stage 0).
+// ============================================================
+
+int parse_potencia()
+{
+    int izq = parse_unario();
+    while (es(TokenType::Power) == 1)
+    {
+        int c = consume();
+        int der = parse_unario();
+        izq = emite_bin(TokenType::Power, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE UNARY.
+//
+// !a
+// -a
+//
+// Stage 0 no tiene nodo unario: lo pliega a binario con
+// un cero a la izquierda (!x -> 0 ! x, -x -> 0 - x).
+// Esta traduccion conserva el pliegue.
+// ============================================================
+
+int parse_unario()
+{
+    if (es(TokenType::LogicalNot) == 1)
+    {
+        int ini = pos;
+        int c = consume();
+        int der = parse_unario();
+        int cero = emite_lit(0, ini);
+        return emite_bin(TokenType::LogicalNot, cero, der);
+    }
+    if (es(TokenType::Minus) == 1)
+    {
+        int ini = pos;
+        int c = consume();
+        int der = parse_unario();
+        int cero = emite_lit(0, ini);
+        return emite_bin(TokenType::Minus, cero, der);
+    }
+    return parse_primario();
+}
+
+// ============================================================
+// PARSE PRIMARY.
+//
+// 42
+// "HOLA"
+// x
+// x[0]
+// f(a, b)
+// p.campo
+// (x + 10)
+//
+// El nombre de una variable o llamada se guarda como
+// indice de su token en nval: el texto vive en la fuente
+// y se recupera por tinicio/tlargo cuando haga falta.
+//
+// PENDIENTE DE SU REBANADA: la constante de enum con ::
+// (Enum::Miembro), que en Stage 0 se pliega a literal
+// entero consultando la tabla de constantes del enum.
+// ============================================================
+
+int parse_primario()
+{
+    int tvalor[32];
+    int ini = pos;
+    int t = actual();
+
+    // Numero: el valor ya viene calculado en tvalor.
+    if (t == TokenType::Number)
+    {
+        int v = tvalor[pos];
+        int c = consume();
+        return emite_lit(v, ini);
+    }
+
+    // Cadena: nval guarda el indice del token.
+    if (t == TokenType::String)
+    {
+        int c = consume();
+        int n = emite(NodeKind::StringLiteral, ini);
+        int a = pon_val(n, ini);
+        return n;
+    }
+
+    // Identificador: variable, acceso, llamada o campo.
+    if (t == TokenType::Identifier)
+    {
+        int c = consume();
+
+        // Acceso a arreglo: x[indice]
+        if (es(TokenType::LBracket) == 1)
+        {
+            int c1 = consume();
+            int idx = parse_expresion();
+            int ok = espera(TokenType::RBracket);
+            int n = emite(NodeKind::ArrayAccessExpression, ini);
+            int a = pon_hijo1(n, idx);
+            int b = pon_val(n, ini);
+            return n;
+        }
+
+        // Llamada: f(a, b) — los argumentos cuelgan de
+        // hijo1 y se encadenan entre si por nsig.
+        if (es(TokenType::LParen) == 1)
+        {
+            int c1 = consume();
+            int n = emite(NodeKind::CallExpression, ini);
+            int b = pon_val(n, ini);
+            int primero = 0 - 1;
+            int ultimo = 0 - 1;
+            if (es(TokenType::RParen) == 0)
+            {
+                int sigue = 1;
+                while (sigue == 1)
+                {
+                    int arg = parse_expresion();
+                    if (primero == 0 - 1)
+                    {
+                        primero = arg;
+                        int a1 = pon_hijo1(n, arg);
+                    }
+                    if (ultimo != 0 - 1)
+                    {
+                        int a2 = pon_sig(ultimo, arg);
+                    }
+                    ultimo = arg;
+                    int seguir = 0;
+                    if (es(TokenType::Comma) == 1)
+                    {
+                        int c2 = consume();
+                        seguir = 1;
+                    }
+                    if (seguir == 0)
+                    {
+                        sigue = 0;
+                    }
+                }
+            }
+            int ok = espera(TokenType::RParen);
+            return n;
+        }
+
+        // Acceso a campo: p.campo — hijo1 guarda el
+        // indice del token del campo (no un nodo).
+        if (es(TokenType::Dot) == 1)
+        {
+            int c1 = consume();
+            int campo = pos;
+            int ok = espera(TokenType::Identifier);
+            int n = emite(NodeKind::VariableExpression, ini);
+            int a = pon_val(n, ini);
+            int b = pon_hijo1(n, campo);
+            return n;
+        }
+
+        // Variable simple.
+        int n = emite(NodeKind::VariableExpression, ini);
+        int a = pon_val(n, ini);
+        return n;
+    }
+
+    // Expresion entre parentesis: no emite nodo propio.
+    if (t == TokenType::LParen)
+    {
+        int c = consume();
+        int e = parse_expresion();
+        int ok = espera(TokenType::RParen);
+        return e;
+    }
+
+    // Nada reconocido: error y avance para no ciclar.
+    errores = errores + 1;
+    int c2 = consume();
+    return 0 - 1;
 }
 
 // ============================================================
@@ -282,29 +717,65 @@ int parse_sentencia()
     int ini = pos;
     int t = actual();
 
-    // Declaracion de variable: int nombre [= expr];
+    // Declaracion de variable: int nombre [N] [= expr];
+    // (tambien string). El inicializador, si lo hay, se
+    // analiza de verdad y cuelga de hijo1.
     if (t == TokenType::KwInt)
     {
         int c1 = consume();
         int ok = espera(TokenType::Identifier);
-        if (es(TokenType::Assign) == 1)
+        if (es(TokenType::LBracket) == 1)
         {
             int c2 = consume();
-            int s = salta_expresion();
+            int ok2 = espera(TokenType::Number);
+            int ok3 = espera(TokenType::RBracket);
         }
-        int ok2 = espera(TokenType::Semicolon);
+        int init = 0 - 1;
+        if (es(TokenType::Assign) == 1)
+        {
+            int c3 = consume();
+            init = parse_expresion();
+        }
+        int ok4 = espera(TokenType::Semicolon);
         int n = emite(NodeKind::VariableDeclaration, ini);
+        if (init != 0 - 1)
+        {
+            int a = pon_hijo1(n, init);
+        }
+        nsent = nsent + 1;
+        return 1;
+    }
+    if (t == TokenType::KwString)
+    {
+        int c1 = consume();
+        int ok = espera(TokenType::Identifier);
+        int init = 0 - 1;
+        if (es(TokenType::Assign) == 1)
+        {
+            int c3 = consume();
+            init = parse_expresion();
+        }
+        int ok4 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::VariableDeclaration, ini);
+        if (init != 0 - 1)
+        {
+            int a = pon_hijo1(n, init);
+        }
         nsent = nsent + 1;
         return 1;
     }
 
     // if (condicion) bloque [else bloque]
+    // La condicion ya no se salta: se analiza y cuelga
+    // de hijo1 del nodo If.
     if (t == TokenType::KwIf)
     {
         int c1 = consume();
         int ok = espera(TokenType::LParen);
-        int s = salta_parentesis();
+        int cond = parse_expresion();
+        int ok2 = espera(TokenType::RParen);
         int n = emite(NodeKind::IfStatement, ini);
+        int a = pon_hijo1(n, cond);
         nsent = nsent + 1;
         int b = parse_bloque();
         if (es(TokenType::KwElse) == 1)
@@ -315,14 +786,30 @@ int parse_sentencia()
         return 1;
     }
 
+    // while (condicion) bloque
+    if (t == TokenType::KwWhile)
+    {
+        int c1 = consume();
+        int ok = espera(TokenType::LParen);
+        int cond = parse_expresion();
+        int ok2 = espera(TokenType::RParen);
+        int n = emite(NodeKind::WhileStatement, ini);
+        int a = pon_hijo1(n, cond);
+        nsent = nsent + 1;
+        int b = parse_bloque();
+        return 1;
+    }
+
     // print ( expr );
     if (t == TokenType::KwPrint)
     {
         int c1 = consume();
         int ok = espera(TokenType::LParen);
-        int s = salta_parentesis();
-        int ok2 = espera(TokenType::Semicolon);
+        int e = parse_expresion();
+        int ok2 = espera(TokenType::RParen);
+        int ok3 = espera(TokenType::Semicolon);
         int n = emite(NodeKind::PrintStatement, ini);
+        int a = pon_hijo1(n, e);
         nsent = nsent + 1;
         return 1;
     }
@@ -331,16 +818,51 @@ int parse_sentencia()
     if (t == TokenType::KwReturn)
     {
         int c1 = consume();
-        int s = salta_expresion();
+        int e = 0 - 1;
+        if (es(TokenType::Semicolon) == 0)
+        {
+            e = parse_expresion();
+        }
         int ok = espera(TokenType::Semicolon);
         int n = emite(NodeKind::ReturnStatement, ini);
+        if (e != 0 - 1)
+        {
+            int a = pon_hijo1(n, e);
+        }
+        nsent = nsent + 1;
+        return 1;
+    }
+
+    // Asignacion: nombre = expr;  /  nombre[i] = expr;
+    // El nombre queda en nval (indice de su token); el
+    // indice, si lo hay, en hijo1; el valor en hijo2.
+    if (t == TokenType::Identifier)
+    {
+        int c1 = consume();
+        int idx = 0 - 1;
+        if (es(TokenType::LBracket) == 1)
+        {
+            int c2 = consume();
+            idx = parse_expresion();
+            int ok = espera(TokenType::RBracket);
+        }
+        int ok2 = espera(TokenType::Assign);
+        int valor = parse_expresion();
+        int ok3 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::AssignmentStatement, ini);
+        int a = pon_val(n, ini);
+        int b = pon_hijo2(n, valor);
+        if (idx != 0 - 1)
+        {
+            int c3 = pon_hijo1(n, idx);
+        }
         nsent = nsent + 1;
         return 1;
     }
 
     // Nada reconocido: error y avance para no ciclar.
     errores = errores + 1;
-    int c3 = consume();
+    int c4 = consume();
     return 0;
 }
 
@@ -352,6 +874,7 @@ int parse_bloque()
 {
     int ini = pos;
     int ok = espera(TokenType::LBrace);
+    int n = emite(NodeKind::Block, ini);
     int sigue = 1;
     while (sigue == 1)
     {
@@ -420,6 +943,7 @@ int inicia_tokens()
     int tipo[32];
     int tinicio[32];
     int tlargo[32];
+    int tvalor[32];
 
     tipo[0] = TokenType::KwInt;       tinicio[0] = 0;    tlargo[0] = 3;
     tipo[1] = TokenType::Identifier;  tinicio[1] = 4;    tlargo[1] = 4;
@@ -449,6 +973,12 @@ int inicia_tokens()
     tipo[25] = TokenType::Semicolon;  tinicio[25] = 105; tlargo[25] = 1;
     tipo[26] = TokenType::RBrace;     tinicio[26] = 107; tlargo[26] = 1;
 
+    // Valores de los tokens Number de la tabla (el Lexer
+    // los calculara al escanear los digitos; el resto de
+    // tvalor vale 0 porque la DATA nace en cero).
+    tvalor[8] = 42;
+    tvalor[14] = 42;
+
     ntok = 27;
     pos = 0;
     return 0;
@@ -466,5 +996,8 @@ int main()
     print_int(nsent);
     print_int(errores);
     print_int(pos);
+    print_int(nnodos);
+    print_int(cuenta(NodeKind::BinaryExpression));
+    print_int(cuenta(NodeKind::IntegerLiteral));
     return 0;
 }
