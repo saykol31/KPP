@@ -105,6 +105,16 @@ private:
 
     int lookupArraySize(
         const std::string& name) const;
+
+    // --------------------------------------------------------
+    // VARIABLES GLOBALES
+    //
+    // Escalares compartidos a nivel de programa (residen en
+    // DATA). lookupVariable cae a esta tabla cuando el nombre
+    // no esta en ningun scope: un local con el mismo nombre
+    // sombrea al global dentro de su funcion.
+    // --------------------------------------------------------
+    Scope globalVariables;
     // nombre de struct -> (nombre de campo -> tipo)
     std::unordered_map<
         std::string,

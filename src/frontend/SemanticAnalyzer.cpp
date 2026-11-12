@@ -47,6 +47,16 @@ SemanticAnalyzer::lookupVariable(
         }
     }
 
+    // Al agotar los scopes, la ultima palabra la tienen las
+    // variables globales (escalares compartidos en DATA).
+    auto global =
+        globalVariables.find(name);
+
+    if (global != globalVariables.end())
+    {
+        return &global->second;
+    }
+
     return nullptr;
 }
 
@@ -80,6 +90,7 @@ bool SemanticAnalyzer::analyze(
     functionNames.clear();
     functionDeclarations.clear();
     structFields.clear();
+    globalVariables.clear();
 
     // ========================================================
     // VALIDAR Y REGISTRAR DECLARACIONES STRUCT
@@ -171,6 +182,38 @@ bool SemanticAnalyzer::analyze(
     }
 
     bool hasMain = false;
+
+    // ========================================================
+    // REGISTRAR VARIABLES GLOBALES
+    //
+    // Escalares compartidos: viven en DATA y son visibles
+    // desde todas las funciones (lookupVariable cae a esta
+    // tabla tras agotar los scopes).
+    // ========================================================
+
+    for (const auto& global :
+         program.globals)
+    {
+        if (!global)
+        {
+            semanticErrors.push_back({
+                "declaración de variable global inválida"
+            });
+
+            continue;
+        }
+
+        if (!globalVariables.emplace(
+                global->name,
+                global->type).second)
+        {
+            semanticErrors.push_back({
+                "la variable global '" +
+                global->name +
+                "' está declarada más de una vez"
+            });
+        }
+    }
 
     // ========================================================
     // PRIMERA PASADA
