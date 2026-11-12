@@ -31,6 +31,10 @@ private:
 
     bool check(TokenType type) const;
 
+    bool checkAhead(
+        std::size_t offset,
+        TokenType type) const;
+
     const Token& advance();
 
     bool match(TokenType type);
@@ -52,6 +56,9 @@ private:
 
     std::unique_ptr<EnumDeclaration>
     parseEnum();
+
+    std::unique_ptr<VariableDeclaration>
+    parseGlobalVariable();
 
     // ========================================================
     // BLOQUE

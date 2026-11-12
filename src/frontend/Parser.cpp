@@ -42,6 +42,24 @@ bool Parser::check(TokenType type) const
 
 
 // ============================================================
+// CHECK AHEAD
+// ============================================================
+
+bool Parser::checkAhead(
+    std::size_t offset,
+    TokenType type) const
+{
+    std::size_t index =
+        position + offset;
+
+    if (index >= tokens.size())
+        return false;
+
+    return tokens[index].type == type;
+}
+
+
+// ============================================================
 // ADVANCE
 // ============================================================
 
@@ -137,6 +155,21 @@ Parser::parse()
 
         if (check(TokenType::KwInt))
         {
+            // ------------------------------------------------
+            // int nombre;  -> variable global
+            // int nombre(  -> funcion
+            // ------------------------------------------------
+
+            if (checkAhead(
+                    2,
+                    TokenType::Semicolon))
+            {
+                program->globals.push_back(
+                    parseGlobalVariable());
+
+                continue;
+            }
+
             program->functions.push_back(
                 parseFunction());
 
@@ -149,6 +182,59 @@ Parser::parse()
     }
 
     return program;
+}
+
+
+// ============================================================
+// PARSE GLOBAL VARIABLE
+//
+// int nombre;
+//
+// Declaracion de un escalar compartido a nivel de programa.
+// Sin inicializador y sin arreglos: los arreglos ya se
+// comparten por nombre desde dentro de las funciones.
+// ============================================================
+
+std::unique_ptr<VariableDeclaration>
+Parser::parseGlobalVariable()
+{
+    // --------------------------------------------------------
+    // int
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::KwInt,
+        "se esperaba 'int'");
+
+
+    // --------------------------------------------------------
+    // nombre de la variable global
+    // --------------------------------------------------------
+
+    if (!check(TokenType::Identifier))
+    {
+        throw std::runtime_error(
+            "K++: se esperaba nombre de variable global");
+    }
+
+    std::string name =
+        advance().text;
+
+
+    // --------------------------------------------------------
+    // ;
+    // --------------------------------------------------------
+
+    expect(
+        TokenType::Semicolon,
+        "se esperaba ';'");
+
+
+    return std::make_unique<VariableDeclaration>(
+        "int",
+        name,
+        nullptr,
+        0);
 }
 
 
