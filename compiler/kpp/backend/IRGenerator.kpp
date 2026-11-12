@@ -1,0 +1,113 @@
+// IRGenerator.kpp — Stage 1, backend, arranque.
+// Tabla de operaciones del IR: el enum IROpcode de include/kpp/IR.hpp
+// (Stage 0) traducido 1:1 a un enum de K++, en su orden exacto.
+// Los valores salen del ORDEN (0..56); el orden es el contrato entre el
+// IRGenerator y el X86Backend, en Stage 0 y en Stage 1. Regla de siempre:
+// una operacion nueva va AL FINAL, nunca en el medio.
+// Estado real en Stage 0, verificado en el codigo: el IRGenerator emite
+// los 57 codigos; el X86Backend atiende 31 por nombre — el bloque de
+// matematica (Pow..Integral, 16..38), PrintFloat, FunctionEnd y
+// JumpIfNotZero no aparecen en X86Backend.cpp.
+// La instruccion IR de Stage 0 (struct IRInstruction) tiene 6 campos:
+// opcode, name, operand, result, value y auxiliary. En Stage 1 viviran
+// en arreglos paralelos (ir_op[], ir_value[] y referencias de texto al
+// estilo del Lexer: inicio y largo sobre un fondo comun, sin copiar
+// cadenas). Cuando esta pieza empiece a traducir, llevara ademas una
+// copia identica del enum NodeKind: es su tabla de entrada.
+
+enum IROpcode
+{
+    // ESTRUCTURA DEL PROGRAMA
+    FunctionBegin,
+    FunctionEnd,
+
+    // CONSTANTES
+    Const,
+    StringConst,
+
+    // VARIABLES Y MEMORIA
+    Declare,
+    Store,
+    Load,
+    ArrayLoad,
+    ArrayStore,
+
+    // FILE I/O
+    FileRead,
+    FileWrite,
+
+    // ARITMETICA BASICA
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+
+    // POTENCIAS Y RAICES
+    Pow,
+    Sqrt,
+
+    // LOGARITMOS Y EXPONENCIALES
+    Log,
+    Log10,
+    Exp,
+
+    // TRIGONOMETRIA
+    Sin,
+    Cos,
+    Tan,
+    Cot,
+    Sec,
+    Csc,
+
+    // TRIGONOMETRIA INVERSA
+    Asin,
+    Acos,
+    Atan,
+
+    // FUNCIONES MATEMATICAS
+    Abs,
+    Floor,
+    Ceil,
+    Round,
+    Min,
+    Max,
+
+    // MATEMATICA AVANZADA
+    Factorial,
+    Sum,
+    Integral,
+
+    // FUNCIONES
+    Call,
+    Return,
+
+    // SALIDA
+    Print,
+    PrintInteger,
+    PrintFloat,
+
+    // COMPARACIONES
+    CompareEqual,
+    CompareNotEqual,
+    CompareLess,
+    CompareLessEqual,
+    CompareGreater,
+    CompareGreaterEqual,
+
+    // LOGICA
+    LogicalAnd,
+    LogicalOr,
+    LogicalNot,
+
+    // CONTROL DE FLUJO
+    Label,
+    Jump,
+    JumpIfZero,
+    JumpIfNotZero
+};
+
+int main()
+{
+    return 0;
+}
