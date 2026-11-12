@@ -1,0 +1,37 @@
+// X86Backend.kpp — Stage 1, backend, arranque.
+// El corazon: traduce el IR a bytes x86. Su .hpp incluye IR.hpp, asi
+// que su tabla de entrada es IROpcode (vive en IRGenerator.kpp; esta
+// pieza llevara su copia identica cuando empiece a traducir, como
+// emisor y consumidor de NodeKind se reparten la suya). De los 57
+// codigos atiende 31 por nombre; el resto quedo nombrado sin ejecutar
+// en Stage 0, por decision de su autor.
+// Lo que define a este modulo no es un enum: es su maquinaria de
+// PARCHES. Emite con huecos y los rellena en una pasada final, cuando
+// todas las posiciones se conocen. Stage 0 lleva SIETE listas:
+//   VariableLoadPatch    cargas de variable
+//   VariableStorePatch   guardados de variable
+//   TemporarySpillPatch  temporales derramados
+//   TemporaryReloadPatch temporales recargados
+//   StringConstPatch     constantes de cadena
+//   ControlFlowPatch     saltos a etiquetas (aqui vivio el trabajo
+//                        del JE de JumpIfZero: desplazamiento que se
+//                        parchea al final)
+//   FunctionCallPatch    CALL rel32 a funciones aun no generadas
+// Temporales: viven en registro (EAX = 0, EBX = 3) o derramados a
+// memoria (slots del marco EBP: -4, -8, -12...). Variables: offset
+// absoluto en DATA o locales de pila (EBP-relativas), con capacidad
+// si son arreglos; los arreglos se comparten por nombre entre
+// funciones y cada funcion guarda su propio contexto de variables,
+// para resolver incluso llamadas hacia adelante.
+// Su unico enum propio en Stage 0 es el Kind de TemporaryLocation:
+
+enum TemporaryLocationKind
+{
+    Register,
+    Memory
+};
+
+int main()
+{
+    return 0;
+}
