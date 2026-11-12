@@ -45,9 +45,9 @@ se cuentan en `errores`).
 
 ## Pasos en la MX (campo, por él)
 
-1. Copiar `Lexer.kpp` a `~/C/KPP/compiler/kpp/lexer/Lexer.kpp`
+1. Copiar `Lexer.kpp` a `~/C/KPP/compiler/kpp/frontend/Lexer.kpp`
    (sustituye el stub de 4 líneas; git lo tiene cubierto).
-2. Compilar con Stage 0: `./bin/kpp compiler/kpp/lexer/Lexer.kpp`
+2. Compilar con Stage 0: `./bin/kpp compiler/kpp/frontend/Lexer.kpp`
    (el compilador de la MX ya está en b35d47c, con `//`).
 3. Inyectar `Lexer.bin` con asm_env.sh opción 8, y `FUENTE.KPP`
    en la raíz de la imagen con:

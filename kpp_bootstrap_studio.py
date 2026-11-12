@@ -117,7 +117,7 @@ DEFAULT_FILE = (
     KPP_ROOT
     / "compiler"
     / "kpp"
-    / "lexer"
+    / "frontend"
     / "Lexer.kpp"
 )
 
