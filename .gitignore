@@ -5,3 +5,5 @@ Output/
 
 # Respaldos fechados de los parches
 *.backup-*
+*:Zone.Identifier
+*.bak-*
