@@ -239,7 +239,7 @@ int nconst;
 
 int actual()
 {
-    int tok_tipo[64];
+    int tok_tipo[256];
     if (pos < tok_count)
     {
         return tok_tipo[pos];
@@ -258,7 +258,7 @@ int es(int t)
 
 int consume()
 {
-    int tok_tipo[64];
+    int tok_tipo[256];
     int t = TokenType::EndOfFile;
     if (pos < tok_count)
     {
@@ -673,7 +673,7 @@ int visita(int nodo)
     int nhijo1[256];
     int nsig[256];
     int naux[256];
-    int tok_tipo[80];
+    int tok_tipo[256];
     int marca[256];
     if (nodo < 0)
     {
@@ -1044,7 +1044,7 @@ int parse_unario()
 
 int parse_primario()
 {
-    int tok_valor[64];
+    int tok_valor[256];
     int ini = pos;
     int t = actual();
 
@@ -1183,7 +1183,7 @@ int parse_primario()
 
 int parse_sentencia()
 {
-    int tok_valor[80];
+    int tok_valor[256];
     int ini = pos;
     int t = actual();
 
@@ -1545,7 +1545,12 @@ int parse_bloque()
 
 int pon_param(int tok)
 {
-    int partok[64];
+    int partok[256];
+    if (npar >= 256)
+    {
+        errores = errores + 1;
+        return 0;
+    }
     partok[npar] = tok;
     npar = npar + 1;
     return 0;
@@ -1615,8 +1620,13 @@ int parse_funcion()
 
 int pon_campo(int tipo, int tok)
 {
-    int campotipo[64];
-    int campotok[64];
+    int campotipo[256];
+    int campotok[256];
+    if (ncam >= 256)
+    {
+        errores = errores + 1;
+        return 0;
+    }
     campotipo[ncam] = tipo;
     campotok[ncam] = tok;
     ncam = ncam + 1;
@@ -1720,8 +1730,8 @@ int parse_estructura()
 
 int mismo_texto(int a, int b)
 {
-    int tok_inicio[64];
-    int tok_largo[64];
+    int tok_inicio[256];
+    int tok_largo[256];
     int fuente[1024];
     // Cada largo y cada caracter se lee primero a una
     // variable local y se compara despues, en
@@ -1755,9 +1765,14 @@ int mismo_texto(int a, int b)
 
 int pon_const(int etok, int tok, int valor)
 {
-    int constenum[64];
-    int constok[64];
-    int constvalor[64];
+    int constenum[256];
+    int constok[256];
+    int constvalor[256];
+    if (nconst >= 256)
+    {
+        errores = errores + 1;
+        return 0;
+    }
     constenum[nconst] = etok;
     constok[nconst] = tok;
     constvalor[nconst] = valor;
@@ -1772,9 +1787,9 @@ int pon_const(int etok, int tok, int valor)
 // limpio.
 int busca_const(int etok, int mtok)
 {
-    int constenum[64];
-    int constok[64];
-    int constvalor[64];
+    int constenum[256];
+    int constok[256];
+    int constvalor[256];
     int i = 0;
     while (i < nconst)
     {
@@ -1807,8 +1822,8 @@ int busca_const(int etok, int mtok)
 
 int es_print_int(int tok)
 {
-    int tok_inicio[80];
-    int tok_largo[80];
+    int tok_inicio[256];
+    int tok_largo[256];
     int fuente[1024];
     int largo = tok_largo[tok];
     if (largo != 9)
@@ -1888,8 +1903,8 @@ int es_print_int(int tok)
 
 int parse_enum()
 {
-    int tok_valor[64];
-    int constok[64];
+    int tok_valor[256];
+    int constok[256];
     int ini = pos;
     int ok = espera(TokenType::KwEnum);
     int nombre = pos;
@@ -1965,7 +1980,7 @@ int parse_enum()
 // token que esta `salto` posiciones adelante, sin consumir.
 int mira(int salto, int t)
 {
-    int tok_tipo[64];
+    int tok_tipo[256];
     if (pos + salto < tok_count)
     {
         if (tok_tipo[pos + salto] == t)
@@ -3003,6 +3018,104 @@ int carga_fuente9()
 // }
 // ============================================================
 
+// ============================================================
+// CARGA FUENTE11 — la sonda de las capacidades.
+//
+// Un enum de setenta constantes (C0..C69) y un main
+// minimo: la tabla de constantes pasa el viejo tope
+// de 64 y registra las setenta, sin errores.
+// ============================================================
+int carga_fuente11()
+{
+    int fuente[1024];
+    fuente[0] = 101;  fuente[1] = 110;  fuente[2] = 117;  fuente[3] = 109;  fuente[4] = 32;  fuente[5] = 71;  fuente[6] = 114;  fuente[7] = 97;
+    fuente[8] = 110;  fuente[9] = 100;  fuente[10] = 101;  fuente[11] = 10;  fuente[12] = 123;  fuente[13] = 10;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 32;  fuente[18] = 67;  fuente[19] = 48;  fuente[20] = 44;  fuente[21] = 10;  fuente[22] = 32;  fuente[23] = 32;
+    fuente[24] = 32;  fuente[25] = 32;  fuente[26] = 67;  fuente[27] = 49;  fuente[28] = 44;  fuente[29] = 10;  fuente[30] = 32;  fuente[31] = 32;
+    fuente[32] = 32;  fuente[33] = 32;  fuente[34] = 67;  fuente[35] = 50;  fuente[36] = 44;  fuente[37] = 10;  fuente[38] = 32;  fuente[39] = 32;
+    fuente[40] = 32;  fuente[41] = 32;  fuente[42] = 67;  fuente[43] = 51;  fuente[44] = 44;  fuente[45] = 10;  fuente[46] = 32;  fuente[47] = 32;
+    fuente[48] = 32;  fuente[49] = 32;  fuente[50] = 67;  fuente[51] = 52;  fuente[52] = 44;  fuente[53] = 10;  fuente[54] = 32;  fuente[55] = 32;
+    fuente[56] = 32;  fuente[57] = 32;  fuente[58] = 67;  fuente[59] = 53;  fuente[60] = 44;  fuente[61] = 10;  fuente[62] = 32;  fuente[63] = 32;
+    fuente[64] = 32;  fuente[65] = 32;  fuente[66] = 67;  fuente[67] = 54;  fuente[68] = 44;  fuente[69] = 10;  fuente[70] = 32;  fuente[71] = 32;
+    fuente[72] = 32;  fuente[73] = 32;  fuente[74] = 67;  fuente[75] = 55;  fuente[76] = 44;  fuente[77] = 10;  fuente[78] = 32;  fuente[79] = 32;
+    fuente[80] = 32;  fuente[81] = 32;  fuente[82] = 67;  fuente[83] = 56;  fuente[84] = 44;  fuente[85] = 10;  fuente[86] = 32;  fuente[87] = 32;
+    fuente[88] = 32;  fuente[89] = 32;  fuente[90] = 67;  fuente[91] = 57;  fuente[92] = 44;  fuente[93] = 10;  fuente[94] = 32;  fuente[95] = 32;
+    fuente[96] = 32;  fuente[97] = 32;  fuente[98] = 67;  fuente[99] = 49;  fuente[100] = 48;  fuente[101] = 44;  fuente[102] = 10;  fuente[103] = 32;
+    fuente[104] = 32;  fuente[105] = 32;  fuente[106] = 32;  fuente[107] = 67;  fuente[108] = 49;  fuente[109] = 49;  fuente[110] = 44;  fuente[111] = 10;
+    fuente[112] = 32;  fuente[113] = 32;  fuente[114] = 32;  fuente[115] = 32;  fuente[116] = 67;  fuente[117] = 49;  fuente[118] = 50;  fuente[119] = 44;
+    fuente[120] = 10;  fuente[121] = 32;  fuente[122] = 32;  fuente[123] = 32;  fuente[124] = 32;  fuente[125] = 67;  fuente[126] = 49;  fuente[127] = 51;
+    fuente[128] = 44;  fuente[129] = 10;  fuente[130] = 32;  fuente[131] = 32;  fuente[132] = 32;  fuente[133] = 32;  fuente[134] = 67;  fuente[135] = 49;
+    fuente[136] = 52;  fuente[137] = 44;  fuente[138] = 10;  fuente[139] = 32;  fuente[140] = 32;  fuente[141] = 32;  fuente[142] = 32;  fuente[143] = 67;
+    fuente[144] = 49;  fuente[145] = 53;  fuente[146] = 44;  fuente[147] = 10;  fuente[148] = 32;  fuente[149] = 32;  fuente[150] = 32;  fuente[151] = 32;
+    fuente[152] = 67;  fuente[153] = 49;  fuente[154] = 54;  fuente[155] = 44;  fuente[156] = 10;  fuente[157] = 32;  fuente[158] = 32;  fuente[159] = 32;
+    fuente[160] = 32;  fuente[161] = 67;  fuente[162] = 49;  fuente[163] = 55;  fuente[164] = 44;  fuente[165] = 10;  fuente[166] = 32;  fuente[167] = 32;
+    fuente[168] = 32;  fuente[169] = 32;  fuente[170] = 67;  fuente[171] = 49;  fuente[172] = 56;  fuente[173] = 44;  fuente[174] = 10;  fuente[175] = 32;
+    fuente[176] = 32;  fuente[177] = 32;  fuente[178] = 32;  fuente[179] = 67;  fuente[180] = 49;  fuente[181] = 57;  fuente[182] = 44;  fuente[183] = 10;
+    fuente[184] = 32;  fuente[185] = 32;  fuente[186] = 32;  fuente[187] = 32;  fuente[188] = 67;  fuente[189] = 50;  fuente[190] = 48;  fuente[191] = 44;
+    fuente[192] = 10;  fuente[193] = 32;  fuente[194] = 32;  fuente[195] = 32;  fuente[196] = 32;  fuente[197] = 67;  fuente[198] = 50;  fuente[199] = 49;
+    fuente[200] = 44;  fuente[201] = 10;  fuente[202] = 32;  fuente[203] = 32;  fuente[204] = 32;  fuente[205] = 32;  fuente[206] = 67;  fuente[207] = 50;
+    fuente[208] = 50;  fuente[209] = 44;  fuente[210] = 10;  fuente[211] = 32;  fuente[212] = 32;  fuente[213] = 32;  fuente[214] = 32;  fuente[215] = 67;
+    fuente[216] = 50;  fuente[217] = 51;  fuente[218] = 44;  fuente[219] = 10;  fuente[220] = 32;  fuente[221] = 32;  fuente[222] = 32;  fuente[223] = 32;
+    fuente[224] = 67;  fuente[225] = 50;  fuente[226] = 52;  fuente[227] = 44;  fuente[228] = 10;  fuente[229] = 32;  fuente[230] = 32;  fuente[231] = 32;
+    fuente[232] = 32;  fuente[233] = 67;  fuente[234] = 50;  fuente[235] = 53;  fuente[236] = 44;  fuente[237] = 10;  fuente[238] = 32;  fuente[239] = 32;
+    fuente[240] = 32;  fuente[241] = 32;  fuente[242] = 67;  fuente[243] = 50;  fuente[244] = 54;  fuente[245] = 44;  fuente[246] = 10;  fuente[247] = 32;
+    fuente[248] = 32;  fuente[249] = 32;  fuente[250] = 32;  fuente[251] = 67;  fuente[252] = 50;  fuente[253] = 55;  fuente[254] = 44;  fuente[255] = 10;
+    fuente[256] = 32;  fuente[257] = 32;  fuente[258] = 32;  fuente[259] = 32;  fuente[260] = 67;  fuente[261] = 50;  fuente[262] = 56;  fuente[263] = 44;
+    fuente[264] = 10;  fuente[265] = 32;  fuente[266] = 32;  fuente[267] = 32;  fuente[268] = 32;  fuente[269] = 67;  fuente[270] = 50;  fuente[271] = 57;
+    fuente[272] = 44;  fuente[273] = 10;  fuente[274] = 32;  fuente[275] = 32;  fuente[276] = 32;  fuente[277] = 32;  fuente[278] = 67;  fuente[279] = 51;
+    fuente[280] = 48;  fuente[281] = 44;  fuente[282] = 10;  fuente[283] = 32;  fuente[284] = 32;  fuente[285] = 32;  fuente[286] = 32;  fuente[287] = 67;
+    fuente[288] = 51;  fuente[289] = 49;  fuente[290] = 44;  fuente[291] = 10;  fuente[292] = 32;  fuente[293] = 32;  fuente[294] = 32;  fuente[295] = 32;
+    fuente[296] = 67;  fuente[297] = 51;  fuente[298] = 50;  fuente[299] = 44;  fuente[300] = 10;  fuente[301] = 32;  fuente[302] = 32;  fuente[303] = 32;
+    fuente[304] = 32;  fuente[305] = 67;  fuente[306] = 51;  fuente[307] = 51;  fuente[308] = 44;  fuente[309] = 10;  fuente[310] = 32;  fuente[311] = 32;
+    fuente[312] = 32;  fuente[313] = 32;  fuente[314] = 67;  fuente[315] = 51;  fuente[316] = 52;  fuente[317] = 44;  fuente[318] = 10;  fuente[319] = 32;
+    fuente[320] = 32;  fuente[321] = 32;  fuente[322] = 32;  fuente[323] = 67;  fuente[324] = 51;  fuente[325] = 53;  fuente[326] = 44;  fuente[327] = 10;
+    fuente[328] = 32;  fuente[329] = 32;  fuente[330] = 32;  fuente[331] = 32;  fuente[332] = 67;  fuente[333] = 51;  fuente[334] = 54;  fuente[335] = 44;
+    fuente[336] = 10;  fuente[337] = 32;  fuente[338] = 32;  fuente[339] = 32;  fuente[340] = 32;  fuente[341] = 67;  fuente[342] = 51;  fuente[343] = 55;
+    fuente[344] = 44;  fuente[345] = 10;  fuente[346] = 32;  fuente[347] = 32;  fuente[348] = 32;  fuente[349] = 32;  fuente[350] = 67;  fuente[351] = 51;
+    fuente[352] = 56;  fuente[353] = 44;  fuente[354] = 10;  fuente[355] = 32;  fuente[356] = 32;  fuente[357] = 32;  fuente[358] = 32;  fuente[359] = 67;
+    fuente[360] = 51;  fuente[361] = 57;  fuente[362] = 44;  fuente[363] = 10;  fuente[364] = 32;  fuente[365] = 32;  fuente[366] = 32;  fuente[367] = 32;
+    fuente[368] = 67;  fuente[369] = 52;  fuente[370] = 48;  fuente[371] = 44;  fuente[372] = 10;  fuente[373] = 32;  fuente[374] = 32;  fuente[375] = 32;
+    fuente[376] = 32;  fuente[377] = 67;  fuente[378] = 52;  fuente[379] = 49;  fuente[380] = 44;  fuente[381] = 10;  fuente[382] = 32;  fuente[383] = 32;
+    fuente[384] = 32;  fuente[385] = 32;  fuente[386] = 67;  fuente[387] = 52;  fuente[388] = 50;  fuente[389] = 44;  fuente[390] = 10;  fuente[391] = 32;
+    fuente[392] = 32;  fuente[393] = 32;  fuente[394] = 32;  fuente[395] = 67;  fuente[396] = 52;  fuente[397] = 51;  fuente[398] = 44;  fuente[399] = 10;
+    fuente[400] = 32;  fuente[401] = 32;  fuente[402] = 32;  fuente[403] = 32;  fuente[404] = 67;  fuente[405] = 52;  fuente[406] = 52;  fuente[407] = 44;
+    fuente[408] = 10;  fuente[409] = 32;  fuente[410] = 32;  fuente[411] = 32;  fuente[412] = 32;  fuente[413] = 67;  fuente[414] = 52;  fuente[415] = 53;
+    fuente[416] = 44;  fuente[417] = 10;  fuente[418] = 32;  fuente[419] = 32;  fuente[420] = 32;  fuente[421] = 32;  fuente[422] = 67;  fuente[423] = 52;
+    fuente[424] = 54;  fuente[425] = 44;  fuente[426] = 10;  fuente[427] = 32;  fuente[428] = 32;  fuente[429] = 32;  fuente[430] = 32;  fuente[431] = 67;
+    fuente[432] = 52;  fuente[433] = 55;  fuente[434] = 44;  fuente[435] = 10;  fuente[436] = 32;  fuente[437] = 32;  fuente[438] = 32;  fuente[439] = 32;
+    fuente[440] = 67;  fuente[441] = 52;  fuente[442] = 56;  fuente[443] = 44;  fuente[444] = 10;  fuente[445] = 32;  fuente[446] = 32;  fuente[447] = 32;
+    fuente[448] = 32;  fuente[449] = 67;  fuente[450] = 52;  fuente[451] = 57;  fuente[452] = 44;  fuente[453] = 10;  fuente[454] = 32;  fuente[455] = 32;
+    fuente[456] = 32;  fuente[457] = 32;  fuente[458] = 67;  fuente[459] = 53;  fuente[460] = 48;  fuente[461] = 44;  fuente[462] = 10;  fuente[463] = 32;
+    fuente[464] = 32;  fuente[465] = 32;  fuente[466] = 32;  fuente[467] = 67;  fuente[468] = 53;  fuente[469] = 49;  fuente[470] = 44;  fuente[471] = 10;
+    fuente[472] = 32;  fuente[473] = 32;  fuente[474] = 32;  fuente[475] = 32;  fuente[476] = 67;  fuente[477] = 53;  fuente[478] = 50;  fuente[479] = 44;
+    fuente[480] = 10;  fuente[481] = 32;  fuente[482] = 32;  fuente[483] = 32;  fuente[484] = 32;  fuente[485] = 67;  fuente[486] = 53;  fuente[487] = 51;
+    fuente[488] = 44;  fuente[489] = 10;  fuente[490] = 32;  fuente[491] = 32;  fuente[492] = 32;  fuente[493] = 32;  fuente[494] = 67;  fuente[495] = 53;
+    fuente[496] = 52;  fuente[497] = 44;  fuente[498] = 10;  fuente[499] = 32;  fuente[500] = 32;  fuente[501] = 32;  fuente[502] = 32;  fuente[503] = 67;
+    fuente[504] = 53;  fuente[505] = 53;  fuente[506] = 44;  fuente[507] = 10;  fuente[508] = 32;  fuente[509] = 32;  fuente[510] = 32;  fuente[511] = 32;
+    fuente[512] = 67;  fuente[513] = 53;  fuente[514] = 54;  fuente[515] = 44;  fuente[516] = 10;  fuente[517] = 32;  fuente[518] = 32;  fuente[519] = 32;
+    fuente[520] = 32;  fuente[521] = 67;  fuente[522] = 53;  fuente[523] = 55;  fuente[524] = 44;  fuente[525] = 10;  fuente[526] = 32;  fuente[527] = 32;
+    fuente[528] = 32;  fuente[529] = 32;  fuente[530] = 67;  fuente[531] = 53;  fuente[532] = 56;  fuente[533] = 44;  fuente[534] = 10;  fuente[535] = 32;
+    fuente[536] = 32;  fuente[537] = 32;  fuente[538] = 32;  fuente[539] = 67;  fuente[540] = 53;  fuente[541] = 57;  fuente[542] = 44;  fuente[543] = 10;
+    fuente[544] = 32;  fuente[545] = 32;  fuente[546] = 32;  fuente[547] = 32;  fuente[548] = 67;  fuente[549] = 54;  fuente[550] = 48;  fuente[551] = 44;
+    fuente[552] = 10;  fuente[553] = 32;  fuente[554] = 32;  fuente[555] = 32;  fuente[556] = 32;  fuente[557] = 67;  fuente[558] = 54;  fuente[559] = 49;
+    fuente[560] = 44;  fuente[561] = 10;  fuente[562] = 32;  fuente[563] = 32;  fuente[564] = 32;  fuente[565] = 32;  fuente[566] = 67;  fuente[567] = 54;
+    fuente[568] = 50;  fuente[569] = 44;  fuente[570] = 10;  fuente[571] = 32;  fuente[572] = 32;  fuente[573] = 32;  fuente[574] = 32;  fuente[575] = 67;
+    fuente[576] = 54;  fuente[577] = 51;  fuente[578] = 44;  fuente[579] = 10;  fuente[580] = 32;  fuente[581] = 32;  fuente[582] = 32;  fuente[583] = 32;
+    fuente[584] = 67;  fuente[585] = 54;  fuente[586] = 52;  fuente[587] = 44;  fuente[588] = 10;  fuente[589] = 32;  fuente[590] = 32;  fuente[591] = 32;
+    fuente[592] = 32;  fuente[593] = 67;  fuente[594] = 54;  fuente[595] = 53;  fuente[596] = 44;  fuente[597] = 10;  fuente[598] = 32;  fuente[599] = 32;
+    fuente[600] = 32;  fuente[601] = 32;  fuente[602] = 67;  fuente[603] = 54;  fuente[604] = 54;  fuente[605] = 44;  fuente[606] = 10;  fuente[607] = 32;
+    fuente[608] = 32;  fuente[609] = 32;  fuente[610] = 32;  fuente[611] = 67;  fuente[612] = 54;  fuente[613] = 55;  fuente[614] = 44;  fuente[615] = 10;
+    fuente[616] = 32;  fuente[617] = 32;  fuente[618] = 32;  fuente[619] = 32;  fuente[620] = 67;  fuente[621] = 54;  fuente[622] = 56;  fuente[623] = 44;
+    fuente[624] = 10;  fuente[625] = 32;  fuente[626] = 32;  fuente[627] = 32;  fuente[628] = 32;  fuente[629] = 67;  fuente[630] = 54;  fuente[631] = 57;
+    fuente[632] = 10;  fuente[633] = 125;  fuente[634] = 59;  fuente[635] = 10;  fuente[636] = 105;  fuente[637] = 110;  fuente[638] = 116;  fuente[639] = 32;
+    fuente[640] = 109;  fuente[641] = 97;  fuente[642] = 105;  fuente[643] = 110;  fuente[644] = 40;  fuente[645] = 41;  fuente[646] = 10;  fuente[647] = 123;
+    fuente[648] = 10;  fuente[649] = 32;  fuente[650] = 32;  fuente[651] = 32;  fuente[652] = 32;  fuente[653] = 114;  fuente[654] = 101;  fuente[655] = 116;
+    fuente[656] = 117;  fuente[657] = 114;  fuente[658] = 110;  fuente[659] = 32;  fuente[660] = 48;  fuente[661] = 59;  fuente[662] = 10;  fuente[663] = 125;
+    fuente[664] = 10;
+    total = 665;
+    return 0;
+}
+
 int carga_fuente10()
 {
     int fuente[1024];
@@ -3192,6 +3305,18 @@ int main()
     int cf10 = carga_fuente10();
     int es10 = escanea();
     int p10 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(alcanzables());
+    int r9 = reinicia();
+    int cf11 = carga_fuente11();
+    int es11 = escanea();
+    int p11 = parse_programa();
     print_int(nfun);
     print_int(nsent);
     print_int(errores);
