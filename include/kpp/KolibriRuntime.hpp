@@ -436,15 +436,28 @@ public:
     const std::vector<std::size_t>&
     lineCountPatches() const;
 
+    // Konsole: la cabeza circular de escritura y la
+    // primera línea visible (esta última se llena
+    // desde la rebanada 3; en la 2 solo se reserva).
+    const std::vector<std::size_t>&
+    lineHeadPatches() const;
+
+    const std::vector<std::size_t>&
+    firstVisiblePatches() const;
+
     const std::vector<std::size_t>&
     repaintCursorPatches() const;
 
 private:
 
-    // Anota la línea recién dibujada en el buffer de
-    // líneas. Al entrar, EDX apunta al texto y la
-    // longitud de dibujo es la que usó la función 4
-    // (40 en textos, 16 en enteros).
+    // Konsole (rebanada 2): anota la línea en el
+    // buffer CIRCULAR de 512 registros, en la ranura
+    // lineHead; la cabeza avanza y al llegar a 512
+    // vuelve a 0 (la ranura más vieja se reutiliza)
+    // y lineCount se queda en 512. Al entrar, EDX
+    // apunta al texto y la longitud de dibujo es la
+    // que usó la función 4 (40 en textos, 16 en
+    // enteros).
     void
     emitRecordLine(
         X86Emitter& emitter,
@@ -467,6 +480,8 @@ private:
 
     std::vector<std::size_t> lineBufferPatchList;
     std::vector<std::size_t> lineCountPatchList;
+    std::vector<std::size_t> lineHeadPatchList;
+    std::vector<std::size_t> firstVisiblePatchList;
     std::vector<std::size_t> repaintCursorPatchList;
 };
 

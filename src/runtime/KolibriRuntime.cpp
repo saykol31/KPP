@@ -41,6 +41,29 @@ KolibriRuntime::emitGraphicsRuntime(
         emitter.emitMovMemEax32Placeholder());
 
     // ========================================================
+    // KONSOLE — MÁSCARA DE EVENTOS (rebanada 1)
+    //
+    // Función 40 de KolibriOS: el programa pide los
+    // eventos que quiere recibir. 0x27 = REDRAW (0x01)
+    // + KEY (0x02) + BUTTON (0x04) + MOUSE (0x20).
+    // El ratón entra ya en la máscara: sus eventos
+    // llegan al bucle y se consumen; el manejador de
+    // desplazamiento llega en la rebanada 4.
+    // ========================================================
+
+    // mov eax, 40
+    emitter.emitMovEaxImm32(40);
+
+    // mov ebx, 0x27
+    emitter.emitMovRegImm32(
+        0xBB,
+        0x27);
+
+    // int 0x40
+    emitter.emitInt(0x40);
+
+
+    // ========================================================
     // START
     // ========================================================
     //
@@ -116,6 +139,23 @@ KolibriRuntime::emitGraphicsRuntime(
     emitter.emitByte(0x84);
 
     const std::size_t buttonPatch =
+        emitter.emitRel32Placeholder();
+
+
+    // ========================================================
+    // EVENT 6 = MOUSE
+    //
+    // Konsole rebanada 1: el evento se reconoce y se
+    // consume (vuelve al bucle). El desplazamiento
+    // del historial se procesa en la rebanada 4.
+    // ========================================================
+
+    emitter.emitCmpEaxImm32(6);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t mousePatch =
         emitter.emitRel32Placeholder();
 
 
@@ -356,6 +396,10 @@ KolibriRuntime::emitGraphicsRuntime(
 
     emitter.patchRel32(
         buttonNotClosePatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        mousePatch,
         eventLoop);
 
 
@@ -1853,21 +1897,22 @@ KolibriRuntime::emitRecordLine(
     X86Emitter& emitter,
     std::uint32_t drawLength)
 {
-    // EAX = líneas ya anotadas.
-    lineCountPatchList.push_back(
+    // KONSOLE — registro circular (rebanada 2).
+    //
+    // La línea se escribe en la ranura lineHead;
+    // la cabeza avanza y al llegar a 512 vuelve
+    // a 0: la ranura más vieja se reutiliza y la
+    // salida nunca se detiene. lineCount cuenta
+    // las líneas vivas y se queda en 512. Al
+    // entrar, EDX apunta al texto. Se tocan EAX,
+    // ECX, ESI y EDI, como en la versión lineal
+    // que esto sustituye.
+
+    // EAX = lineHead (la próxima ranura física).
+    lineHeadPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    // ¿Buffer lleno?
-    emitter.emitCmpEaxImm32(128);
-
-    // jae fin
-    emitter.emitByte(0x0F);
-    emitter.emitByte(0x83);
-
-    const std::size_t llenoPatch =
-        emitter.emitRel32Placeholder();
-
-    // EAX = línea * 64 + base del buffer.
+    // EAX = ranura * 64 + base del buffer.
     // shl eax, 6
     emitter.emitByte(0xC1);
     emitter.emitByte(0xE0);
@@ -1925,9 +1970,44 @@ KolibriRuntime::emitRecordLine(
 
     emitter.patchRel32(copiaJump, copia);
 
-    // líneas++
+    // lineHead++ y vuelta a 0 al llegar a 512.
+    lineHeadPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(1);
+
+    emitter.emitCmpEaxImm32(512);
+
+    // jb guardar
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x82);
+
+    const std::size_t sinVueltaPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov eax, 0
+    emitter.emitMovEaxImm32(0);
+
+    const std::size_t guardar =
+        emitter.size();
+
+    emitter.patchRel32(sinVueltaPatch, guardar);
+
+    lineHeadPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // lineCount: sube hasta 512 y ahí se queda.
     lineCountPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(512);
+
+    // jae fin
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x83);
+
+    const std::size_t llenoPatch =
+        emitter.emitRel32Placeholder();
 
     emitter.emitAddEaxImm32(1);
 
@@ -2098,6 +2178,19 @@ const std::vector<std::size_t>&
 KolibriRuntime::lineCountPatches() const
 {
     return lineCountPatchList;
+}
+
+const std::vector<std::size_t>&
+KolibriRuntime::lineHeadPatches() const
+{
+    return lineHeadPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::firstVisiblePatches() const
+{
+    return firstVisiblePatchList;
 }
 
 const std::vector<std::size_t>&

@@ -516,9 +516,12 @@ X86Backend::generate(
     // KPP_CURSOR_DATA
     std::size_t cursorDataOffset = 0;
 
-    // Buffer de líneas del writer (DATA): contador,
-    // cursor de repintado y las 128 ranuras de 64 bytes.
+    // Buffer de líneas de la Konsole (DATA): cabeza
+    // circular, contador, primera visible, cursor de
+    // repintado y las 512 ranuras de 64 bytes.
+    std::size_t lineHeadDataOffset = 0;
     std::size_t lineCountDataOffset = 0;
+    std::size_t firstVisibleDataOffset = 0;
     std::size_t repaintCursorDataOffset = 0;
     std::size_t lineBufferDataOffset = 0;
 
@@ -4897,7 +4900,21 @@ data.resize(
 // vacía.
 // ========================================================
 
+lineHeadDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
 lineCountDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+firstVisibleDataOffset =
     data.size();
 
 data.resize(
@@ -4915,7 +4932,7 @@ lineBufferDataOffset =
     data.size();
 
 data.resize(
-    data.size() + 8192,
+    data.size() + 32768,
     0);
 
 
@@ -5681,6 +5698,34 @@ for (const auto& patch :
             emitter.patch32(
                 patch,
                 lineCountAddress);
+        }
+
+        const std::uint32_t
+            lineHeadAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    lineHeadDataOffset);
+
+        for (const std::size_t patch :
+             runtime.lineHeadPatches())
+        {
+            emitter.patch32(
+                patch,
+                lineHeadAddress);
+        }
+
+        const std::uint32_t
+            firstVisibleAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    firstVisibleDataOffset);
+
+        for (const std::size_t patch :
+             runtime.firstVisiblePatches())
+        {
+            emitter.patch32(
+                patch,
+                firstVisibleAddress);
         }
 
         const std::uint32_t
