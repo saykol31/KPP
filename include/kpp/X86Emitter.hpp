@@ -156,6 +156,7 @@ public:
 
     std::size_t emitJmpRel32Placeholder();
     std::size_t emitJeRel32Placeholder();
+    std::size_t emitJbeRel32Placeholder();
 
     std::size_t emitJneRel32Placeholder();
 
@@ -164,6 +165,9 @@ public:
     // CMP
     // --------------------------------------------------------
     void emitCmpEaxImm32(
+        std::int32_t value);
+
+    void emitAndEaxImm32(
         std::int32_t value);
 
     void emitCmpEaxEbx();

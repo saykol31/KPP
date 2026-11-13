@@ -27,7 +27,11 @@ KolibriRuntime::emitGraphicsRuntime(
     //
     // KolibriOS recibe X/Y empaquetado en EBX.
     // El valor inicial se mantiene durante la ejecución
-    // y cada PRINT / PRINT_INT avanza Y.
+    // y cada PRINT / PRINT_INT avanza el cursor: Y baja
+    // 10, y si pasa del fondo de la zona de texto
+    // (Y > 440) vuelve a 40 y X salta una columna
+    // (+110) — la ventana no tiene scroll y una sola
+    // columna se quedaba corta.
     //
 
     emitter.emitMovEaxImm32(
@@ -1440,11 +1444,47 @@ KolibriRuntime::emitPrint(
     // int 0x40
     emitter.emitInt(0x40);
 
-    // Avanzar el cursor vertical para el siguiente PRINT.
+    // Avanzar el cursor: Y baja 10; si pasa del fondo
+    // (440), Y vuelve a 40 y X salta una columna
+    // (+110). Solo se toca EAX y la pila queda
+    // balanceada en los dos caminos.
     cursorPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
     emitter.emitAddEaxImm32(10);
+
+    emitter.emitPushEax();
+
+    emitter.emitAndEaxImm32(0x0000FFFF);
+
+    emitter.emitCmpEaxImm32(440);
+
+    const std::size_t sinSalto =
+        emitter.emitJbeRel32Placeholder();
+
+    emitter.emitPopEax();
+
+    emitter.emitAndEaxImm32(
+        static_cast<std::int32_t>(0xFFFF0000u));
+
+    emitter.emitAddEaxImm32(40);
+
+    emitter.emitAddEaxImm32(110u << 16);
+
+    const std::size_t saltoFin =
+        emitter.emitJmpRel32Placeholder();
+
+    const std::size_t sigue =
+        emitter.size();
+
+    emitter.emitPopEax();
+
+    const std::size_t fin =
+        emitter.size();
+
+    emitter.patchRel32(sinSalto, sigue);
+
+    emitter.patchRel32(saltoFin, fin);
 
     cursorPatchList.push_back(
         emitter.emitMovMemEax32Placeholder());
@@ -1480,11 +1520,47 @@ KolibriRuntime::emitPrintFromEdx(
     // int 0x40
     emitter.emitInt(0x40);
 
-    // Avanzar el cursor vertical.
+    // Avanzar el cursor: Y baja 10; si pasa del fondo
+    // (440), Y vuelve a 40 y X salta una columna
+    // (+110). Solo se toca EAX y la pila queda
+    // balanceada en los dos caminos.
     cursorPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
     emitter.emitAddEaxImm32(10);
+
+    emitter.emitPushEax();
+
+    emitter.emitAndEaxImm32(0x0000FFFF);
+
+    emitter.emitCmpEaxImm32(440);
+
+    const std::size_t sinSalto =
+        emitter.emitJbeRel32Placeholder();
+
+    emitter.emitPopEax();
+
+    emitter.emitAndEaxImm32(
+        static_cast<std::int32_t>(0xFFFF0000u));
+
+    emitter.emitAddEaxImm32(40);
+
+    emitter.emitAddEaxImm32(110u << 16);
+
+    const std::size_t saltoFin =
+        emitter.emitJmpRel32Placeholder();
+
+    const std::size_t sigue =
+        emitter.size();
+
+    emitter.emitPopEax();
+
+    const std::size_t fin =
+        emitter.size();
+
+    emitter.patchRel32(sinSalto, sigue);
+
+    emitter.patchRel32(saltoFin, fin);
 
     cursorPatchList.push_back(
         emitter.emitMovMemEax32Placeholder());
@@ -1641,11 +1717,47 @@ KolibriRuntime::emitPrintInteger(
 
     emitter.emitInt(0x40);
 
-    // Avanzar el cursor vertical para el siguiente PRINT_INT.
+    // Avanzar el cursor: Y baja 10; si pasa del fondo
+    // (440), Y vuelve a 40 y X salta una columna
+    // (+110). Solo se toca EAX y la pila queda
+    // balanceada en los dos caminos.
     cursorPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
     emitter.emitAddEaxImm32(10);
+
+    emitter.emitPushEax();
+
+    emitter.emitAndEaxImm32(0x0000FFFF);
+
+    emitter.emitCmpEaxImm32(440);
+
+    const std::size_t sinSalto =
+        emitter.emitJbeRel32Placeholder();
+
+    emitter.emitPopEax();
+
+    emitter.emitAndEaxImm32(
+        static_cast<std::int32_t>(0xFFFF0000u));
+
+    emitter.emitAddEaxImm32(40);
+
+    emitter.emitAddEaxImm32(110u << 16);
+
+    const std::size_t saltoFin =
+        emitter.emitJmpRel32Placeholder();
+
+    const std::size_t sigue =
+        emitter.size();
+
+    emitter.emitPopEax();
+
+    const std::size_t fin =
+        emitter.size();
+
+    emitter.patchRel32(sinSalto, sigue);
+
+    emitter.patchRel32(saltoFin, fin);
 
     cursorPatchList.push_back(
         emitter.emitMovMemEax32Placeholder());

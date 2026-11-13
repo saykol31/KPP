@@ -1055,6 +1055,21 @@ std::size_t X86Emitter::emitJeRel32Placeholder()
 
 
 // ============================================================
+// JBE rel32 PLACEHOLDER
+//
+// 0F 86 xx xx xx xx
+// ============================================================
+
+std::size_t X86Emitter::emitJbeRel32Placeholder()
+{
+    machineCode.push_back(0x0F);
+    machineCode.push_back(0x86);
+
+    return emitRel32Placeholder();
+}
+
+
+// ============================================================
 // JNE rel32 PLACEHOLDER
 //
 // 0F 85 xx xx xx xx
@@ -1079,6 +1094,34 @@ void X86Emitter::emitCmpEaxImm32(
     std::int32_t value)
 {
     machineCode.push_back(0x3D);
+
+    const std::uint32_t v =
+        static_cast<std::uint32_t>(value);
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>(v & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((v >> 8) & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((v >> 16) & 0xFF));
+
+    machineCode.push_back(
+        static_cast<std::uint8_t>((v >> 24) & 0xFF));
+}
+
+
+// ============================================================
+// AND EAX, IMM32
+//
+// 25 xx xx xx xx
+// ============================================================
+
+void X86Emitter::emitAndEaxImm32(
+    std::int32_t value)
+{
+    machineCode.push_back(0x25);
 
     const std::uint32_t v =
         static_cast<std::uint32_t>(value);
