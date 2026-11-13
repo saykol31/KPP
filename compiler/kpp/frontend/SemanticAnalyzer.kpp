@@ -14,6 +14,10 @@
 // Solo son clases de nodo las que en AST.hpp heredan de ASTNode, Expression
 // o Statement. Parameter, StructField y EnumValue son piezas internas de
 // otros nodos, no nodos: no estan en la lista.
+// Debajo del enum vive la implementacion, por rebanadas: la SA-1 (los
+// registros) nacio el 2026-11-13 sobre el contrato AST definitivo del
+// Parser (rebanada 15) — los nodos llegan en nkind/nini/nfin/nhijo1/
+// nsig/nval/naux/nsize y los nombres se comparan por token.
 
 enum NodeKind
 {
@@ -42,7 +46,496 @@ enum NodeKind
     BinaryExpression
 };
 
+// ============================================================
+// REBANADA SA-1 — LOS REGISTROS (traduccion de la primera
+// mitad de SemanticAnalyzer::analyze() de Stage 0).
+//
+// Antes de mirar ningun cuerpo, el analizador registra
+// los nombres del programa en tres pasadas, en el orden
+// de Stage 0: estructuras, variables globales y
+// funciones. Registrar las funciones antes de los
+// cuerpos es lo que permite las llamadas hacia
+// adelante, sin prototipos.
+//
+// DOS DECISIONES DE DISENO (de Esequiel, 2026-11-13):
+//   - Los errores semanticos son CODIGOS, no textos:
+//     serr_codigo[] guarda un numero por error, en el
+//     orden en que se anota. El catalogo de abajo es
+//     la unica lista; un codigo nuevo va AL FINAL,
+//     con la misma regla de TokenType y NodeKind.
+//   - Los tipos son INDICES DE TOKEN, no cadenas: el
+//     nombre de un tipo vive en fuente[] y se compara
+//     con mismo_texto (la forma probada: cada carga a
+//     una variable local antes de comparar).
+//
+// EL CATALOGO DE ERRORES (SA-1):
+//   1  estructura declarada mas de una vez
+//   2  variable global declarada mas de una vez
+//   3  funcion declarada mas de una vez
+//   4  el programa no contiene una funcion main()
+//
+// LA REPRESENTACION: los nodos llegan en los arreglos
+// del contrato AST definitivo (nkind/nini/nfin/
+// nhijo1/nsig/nval/naux/nsize) y los tokens en la
+// tabla del contrato (tok_tipo/tok_inicio/tok_largo/
+// tok_valor sobre fuente[]). El nombre de una
+// declaracion es el TOKEN guardado en nval. El
+// recorrido de las declaraciones del programa es el
+// ordinario del contrato: hijo1 del Program y luego
+// puro nsig.
+//
+// LOS REGISTROS: tres listas planas de tokens
+// (sstruct_tok, sglobal_tok, sfuncion_tok). Un nombre
+// duplicado anota su error y NO se registra dos
+// veces — la lista guarda nombres unicos, como el
+// mapa de Stage 0: la primera declaracion es la que
+// queda. hay_main se levanta al ver cualquier funcion
+// llamada main, duplicada o no (Stage 0 lo mira antes
+// del chequeo de duplicado).
+//
+// LA SONDA (main): cuatro tablas de nodos cargadas a
+// mano con inicia_nodosN — el mismo arco del Parser
+// con sus inicia_tokens — que cargan lo que SA-1 lee:
+// nkind, nval, nhijo1, nsig, naux y nsize de cada
+// nodo, y los tokens de nombre de cada declaracion.
+// Cada corrida imprime una fila: estructuras,
+// globales, funciones, cantidad de errores y los
+// codigos en orden.
+// ============================================================
+
+int tok_count;
+int nnodos;
+int nsstruct;
+int nsglobal;
+int nsfunc;
+int hay_main;
+int serr_count;
+
+int anota_error(int codigo)
+{
+    int serr_codigo[64];
+    if (serr_count < 64)
+    {
+        serr_codigo[serr_count] = codigo;
+    }
+    serr_count = serr_count + 1;
+    return 0;
+}
+
+int mismo_texto(int a, int b)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    // Cada largo y cada caracter se lee primero a una
+    // variable local y se compara despues, en
+    // sentencias separadas: la forma probada
+    // (sonda_mismo_texto.kpp).
+    int la = tok_largo[a];
+    int lb = tok_largo[b];
+    if (la != lb)
+    {
+        return 0;
+    }
+    int ia = tok_inicio[a];
+    int ib = tok_inicio[b];
+    int i = 0;
+    while (i < la)
+    {
+        int ca = fuente[ia + i];
+        int cb = fuente[ib + i];
+        if (ca != cb)
+        {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+int es_main(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 4)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    if (c0 != 109)
+    {
+        return 0;
+    }
+    if (c1 != 97)
+    {
+        return 0;
+    }
+    if (c2 != 105)
+    {
+        return 0;
+    }
+    if (c3 != 110)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+int busca_struct(int tok)
+{
+    int sstruct_tok[64];
+    int i = 0;
+    while (i < nsstruct)
+    {
+        int t = sstruct_tok[i];
+        if (mismo_texto(t, tok) == 1)
+        {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+int busca_global(int tok)
+{
+    int sglobal_tok[64];
+    int i = 0;
+    while (i < nsglobal)
+    {
+        int t = sglobal_tok[i];
+        if (mismo_texto(t, tok) == 1)
+        {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+int busca_funcion(int tok)
+{
+    int sfuncion_tok[64];
+    int i = 0;
+    while (i < nsfunc)
+    {
+        int t = sfuncion_tok[i];
+        if (mismo_texto(t, tok) == 1)
+        {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+int registra_estructuras()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int sstruct_tok[64];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::StructDeclaration)
+        {
+            int nombre = nval[d];
+            if (busca_struct(nombre) == 1)
+            {
+                int e = anota_error(1);
+            }
+            else
+            {
+                sstruct_tok[nsstruct] = nombre;
+                nsstruct = nsstruct + 1;
+            }
+        }
+        d = nsig[d];
+    }
+    return 0;
+}
+
+int registra_globales()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int sglobal_tok[64];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::VariableDeclaration)
+        {
+            int nombre = nval[d];
+            if (busca_global(nombre) == 1)
+            {
+                int e = anota_error(2);
+            }
+            else
+            {
+                sglobal_tok[nsglobal] = nombre;
+                nsglobal = nsglobal + 1;
+            }
+        }
+        d = nsig[d];
+    }
+    return 0;
+}
+
+int registra_funciones()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int sfuncion_tok[64];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::FunctionDeclaration)
+        {
+            int nombre = nval[d];
+            if (es_main(nombre) == 1)
+            {
+                hay_main = 1;
+            }
+            if (busca_funcion(nombre) == 1)
+            {
+                int e = anota_error(3);
+            }
+            else
+            {
+                sfuncion_tok[nsfunc] = nombre;
+                nsfunc = nsfunc + 1;
+            }
+        }
+        d = nsig[d];
+    }
+    return 0;
+}
+
+int analiza()
+{
+    serr_count = 0;
+    nsstruct = 0;
+    nsglobal = 0;
+    nsfunc = 0;
+    hay_main = 0;
+    int a = registra_estructuras();
+    int b = registra_globales();
+    int c = registra_funciones();
+    if (hay_main == 0)
+    {
+        int e = anota_error(4);
+    }
+    return serr_count;
+}
+
+int imprime_fila()
+{
+    int serr_codigo[64];
+    print_int(nsstruct);
+    print_int(nsglobal);
+    print_int(nsfunc);
+    print_int(serr_count);
+    int i = 0;
+    while (i < serr_count)
+    {
+        int c = serr_codigo[i];
+        print_int(c);
+        i = i + 1;
+    }
+    return 0;
+}
+
+int inicia_nodos1()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
+    fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
+    fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 105; fuente[23] = 110;
+    fuente[24] = 116; fuente[25] = 32; fuente[26] = 121; fuente[27] = 59; fuente[28] = 32; fuente[29] = 125; fuente[30] = 59; fuente[31] = 32;
+    fuente[32] = 105; fuente[33] = 110; fuente[34] = 116; fuente[35] = 32; fuente[36] = 103; fuente[37] = 59; fuente[38] = 32; fuente[39] = 105;
+    fuente[40] = 110; fuente[41] = 116; fuente[42] = 32; fuente[43] = 109; fuente[44] = 97; fuente[45] = 105; fuente[46] = 110; fuente[47] = 40;
+    fuente[48] = 41; fuente[49] = 32; fuente[50] = 123; fuente[51] = 32; fuente[52] = 114; fuente[53] = 101; fuente[54] = 116; fuente[55] = 117;
+    fuente[56] = 114; fuente[57] = 110; fuente[58] = 32; fuente[59] = 48; fuente[60] = 59; fuente[61] = 32; fuente[62] = 125; fuente[63] = 32;
+    fuente[64] = 105; fuente[65] = 110; fuente[66] = 116; fuente[67] = 32; fuente[68] = 100; fuente[69] = 111; fuente[70] = 98; fuente[71] = 108;
+    fuente[72] = 101; fuente[73] = 40; fuente[74] = 105; fuente[75] = 110; fuente[76] = 116; fuente[77] = 32; fuente[78] = 97; fuente[79] = 41;
+    fuente[80] = 32; fuente[81] = 123; fuente[82] = 32; fuente[83] = 114; fuente[84] = 101; fuente[85] = 116; fuente[86] = 117; fuente[87] = 114;
+    fuente[88] = 110; fuente[89] = 32; fuente[90] = 97; fuente[91] = 59; fuente[92] = 32; fuente[93] = 125;
+    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 36; tok_largo[1] = 1; tok_valor[1] = 0;
+    tok_tipo[2] = 1; tok_inicio[2] = 43; tok_largo[2] = 4; tok_valor[2] = 0;
+    tok_tipo[3] = 1; tok_inicio[3] = 68; tok_largo[3] = 5; tok_valor[3] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 4; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 2;
+    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 1; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = NodeKind::FunctionDeclaration; nini[3] = 2; nfin[3] = 2; nhijo1[3] = 4; nsig[3] = 5; nval[3] = 2; naux[3] = 0; nsize[3] = 0;
+    nkind[4] = NodeKind::Block; nini[4] = 0; nfin[4] = 0; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 3; nfin[5] = 3; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 3; naux[5] = 0; nsize[5] = 1;
+    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nnodos = 7;
+    tok_count = 4;
+    return 0;
+}
+
+int inicia_nodos2()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
+    fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
+    fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 125; fuente[23] = 59;
+    fuente[24] = 32; fuente[25] = 115; fuente[26] = 116; fuente[27] = 114; fuente[28] = 117; fuente[29] = 99; fuente[30] = 116; fuente[31] = 32;
+    fuente[32] = 80; fuente[33] = 117; fuente[34] = 110; fuente[35] = 116; fuente[36] = 111; fuente[37] = 32; fuente[38] = 123; fuente[39] = 32;
+    fuente[40] = 105; fuente[41] = 110; fuente[42] = 116; fuente[43] = 32; fuente[44] = 121; fuente[45] = 59; fuente[46] = 32; fuente[47] = 125;
+    fuente[48] = 59; fuente[49] = 32; fuente[50] = 105; fuente[51] = 110; fuente[52] = 116; fuente[53] = 32; fuente[54] = 103; fuente[55] = 59;
+    fuente[56] = 32; fuente[57] = 105; fuente[58] = 110; fuente[59] = 116; fuente[60] = 32; fuente[61] = 103; fuente[62] = 59; fuente[63] = 32;
+    fuente[64] = 105; fuente[65] = 110; fuente[66] = 116; fuente[67] = 32; fuente[68] = 102; fuente[69] = 40; fuente[70] = 41; fuente[71] = 32;
+    fuente[72] = 123; fuente[73] = 32; fuente[74] = 114; fuente[75] = 101; fuente[76] = 116; fuente[77] = 117; fuente[78] = 114; fuente[79] = 110;
+    fuente[80] = 32; fuente[81] = 49; fuente[82] = 59; fuente[83] = 32; fuente[84] = 125; fuente[85] = 32; fuente[86] = 105; fuente[87] = 110;
+    fuente[88] = 116; fuente[89] = 32; fuente[90] = 102; fuente[91] = 40; fuente[92] = 41; fuente[93] = 32; fuente[94] = 123; fuente[95] = 32;
+    fuente[96] = 114; fuente[97] = 101; fuente[98] = 116; fuente[99] = 117; fuente[100] = 114; fuente[101] = 110; fuente[102] = 32; fuente[103] = 50;
+    fuente[104] = 59; fuente[105] = 32; fuente[106] = 125;
+    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 32; tok_largo[1] = 5; tok_valor[1] = 0;
+    tok_tipo[2] = 1; tok_inicio[2] = 54; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 1; tok_inicio[3] = 61; tok_largo[3] = 1; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 68; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 1; tok_inicio[5] = 90; tok_largo[5] = 1; tok_valor[5] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 6; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 1;
+    nkind[2] = NodeKind::StructDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 1; naux[2] = 0; nsize[2] = 1;
+    nkind[3] = NodeKind::VariableDeclaration; nini[3] = 2; nfin[3] = 2; nhijo1[3] = -1; nsig[3] = 4; nval[3] = 2; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = NodeKind::VariableDeclaration; nini[4] = 3; nfin[4] = 3; nhijo1[4] = -1; nsig[4] = 5; nval[4] = 3; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 4; nfin[5] = 4; nhijo1[5] = 6; nsig[5] = 7; nval[5] = 4; naux[5] = 0; nsize[5] = 0;
+    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::FunctionDeclaration; nini[7] = 5; nfin[7] = 5; nhijo1[7] = 8; nsig[7] = -1; nval[7] = 5; naux[7] = 0; nsize[7] = 0;
+    nkind[8] = NodeKind::Block; nini[8] = 0; nfin[8] = 0; nhijo1[8] = -1; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
+    nnodos = 9;
+    tok_count = 6;
+    return 0;
+}
+
+int inicia_nodos3()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
+    fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
+    fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 125; fuente[23] = 59;
+    fuente[24] = 32; fuente[25] = 105; fuente[26] = 110; fuente[27] = 116; fuente[28] = 32; fuente[29] = 103; fuente[30] = 59;
+    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 29; tok_largo[1] = 1; tok_valor[1] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 2; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 1;
+    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = -1; nval[2] = 1; naux[2] = -1; nsize[2] = 0;
+    nnodos = 3;
+    tok_count = 2;
+    return 0;
+}
+
+int inicia_nodos4()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
+    fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
+    fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 125; fuente[23] = 59;
+    fuente[24] = 32; fuente[25] = 105; fuente[26] = 110; fuente[27] = 116; fuente[28] = 32; fuente[29] = 103; fuente[30] = 59; fuente[31] = 32;
+    fuente[32] = 105; fuente[33] = 110; fuente[34] = 116; fuente[35] = 32; fuente[36] = 109; fuente[37] = 97; fuente[38] = 105; fuente[39] = 110;
+    fuente[40] = 40; fuente[41] = 41; fuente[42] = 32; fuente[43] = 123; fuente[44] = 32; fuente[45] = 114; fuente[46] = 101; fuente[47] = 116;
+    fuente[48] = 117; fuente[49] = 114; fuente[50] = 110; fuente[51] = 32; fuente[52] = 48; fuente[53] = 59; fuente[54] = 32; fuente[55] = 125;
+    fuente[56] = 32; fuente[57] = 105; fuente[58] = 110; fuente[59] = 116; fuente[60] = 32; fuente[61] = 109; fuente[62] = 97; fuente[63] = 105;
+    fuente[64] = 110; fuente[65] = 40; fuente[66] = 41; fuente[67] = 32; fuente[68] = 123; fuente[69] = 32; fuente[70] = 114; fuente[71] = 101;
+    fuente[72] = 116; fuente[73] = 117; fuente[74] = 114; fuente[75] = 110; fuente[76] = 32; fuente[77] = 49; fuente[78] = 59; fuente[79] = 32;
+    fuente[80] = 125;
+    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 29; tok_largo[1] = 1; tok_valor[1] = 0;
+    tok_tipo[2] = 1; tok_inicio[2] = 36; tok_largo[2] = 4; tok_valor[2] = 0;
+    tok_tipo[3] = 1; tok_inicio[3] = 61; tok_largo[3] = 4; tok_valor[3] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 4; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 1;
+    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 1; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = NodeKind::FunctionDeclaration; nini[3] = 2; nfin[3] = 2; nhijo1[3] = 4; nsig[3] = 5; nval[3] = 2; naux[3] = 0; nsize[3] = 0;
+    nkind[4] = NodeKind::Block; nini[4] = 0; nfin[4] = 0; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 3; nfin[5] = 3; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 3; naux[5] = 0; nsize[5] = 0;
+    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nnodos = 7;
+    tok_count = 4;
+    return 0;
+}
+
 int main()
 {
+    int a1 = inicia_nodos1();
+    int r1 = analiza();
+    int p1 = imprime_fila();
+    int a2 = inicia_nodos2();
+    int r2 = analiza();
+    int p2 = imprime_fila();
+    int a3 = inicia_nodos3();
+    int r3 = analiza();
+    int p3 = imprime_fila();
+    int a4 = inicia_nodos4();
+    int r4 = analiza();
+    int p4 = imprime_fila();
     return 0;
 }
