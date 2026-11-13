@@ -1,9 +1,13 @@
-// Lexer.kpp — Stage 1, pieza 1, rebanada 1 (BORRADOR sin compilar)
-// Lee FUENTE.KPP una sola vez y vuelca (tipo, inicio, largo) por token.
+// Lexer.kpp — Stage 1, pieza 1.
+// Lee FUENTE.KPP una sola vez y vuelca (tipo, inicio, largo, valor) por token.
 // Codigos de token: orden de TokenType en include/kpp/Token.hpp (Stage 0).
 // Reglas que este borrador respeta, todas verificadas contra Stage 0:
-//   - Todo en main, sin funciones auxiliares: K++ no pasa arreglos por
-//     parametro, y un return de temporal auto-imprime (correccion 2026-11-08).
+//   - El escaneo vive en la subrutina escanea() (rebanada
+//     del acople): los arreglos son compartidos por nombre
+//     y ninguna subrutina necesita recibirlos; escanea()
+//     devuelve tok_count, la raiz de su conjunto — la
+//     convencion de retorno del Parser. main() queda como
+//     la sonda de la pieza: lee el archivo y la imprime.
 //   - && NO cortocircuita en K++: baja a una sola AND con los dos lados
 //     evaluados (IRGenerator.cpp / X86Backend.cpp). Ningun fuente[pos]
 //     va a la derecha de un &&: los guardas de fin de fuente van en
@@ -16,40 +20,59 @@
 //   - La clasificacion de palabras clave usa ifs anidados guardados
 //     por largo, nunca && con indices: asi ningun indice sale del
 //     identificador escaneado.
-// Salida: por token, tipo, inicio y largo (3 print_int por token),
-// y al final ntok y errores. Aceptacion: 27 tokens, 0 errores con
-// FUENTE.KPP, y los mismos numeros en tu KolibriOS.
+// Salida: por token, tipo, inicio, largo y valor (4 print_int
+// por token), y al final tok_count y errores. Aceptacion:
+// 27 tokens, 0 errores con FUENTE.KPP, tok_valor 42 en los
+// tokens 8 y 14, y los mismos numeros en tu KolibriOS.
 
-int main()
+// ============================================================
+// ESTADO COMPARTIDO (DATA) — el contrato de arrays:
+// pos es el cursor (del escaneo sobre fuente[], del
+// Parser sobre la tabla), total los bytes de la
+// fuente, tok_count los tokens registrados y errores
+// el contador unico de la corrida.
+// ============================================================
+
+int pos;
+int total;
+int tok_count;
+int errores;
+
+// ============================================================
+// ESCANEA — EL LEXER COMO SUBRUTINA (el contrato
+// compartido, rebanada 14).
+//
+// Lee fuente[0..total) y registra cada token en la
+// tabla compartida: tok_tipo, tok_inicio, tok_largo
+// y tok_valor — el valor numerico ya calculado para
+// los Number, acumulado digito a digito al escanear.
+// Los errores lexicos se suman al errores compartido
+// (escanea no lo pone a cero: en el programa acoplado
+// cada corrida lo reinicia antes).
+//
+// Devuelve tok_count, el conteo de tokens: la raiz
+// de su conjunto, la convencion de retorno del
+// Parser aplicada al Lexer. Al salir deja pos = 0,
+// listo para que el Parser consuma la tabla sin
+// copiar un solo token.
+// ============================================================
+int escanea()
 {
     int fuente[1024];
     int tok_tipo[256];
     int tok_inicio[256];
     int tok_largo[256];
-
-    int total = 0;
-    int pos = 0;
-    int ntok = 0;
+    int tok_valor[256];
     int inicio = 0;
     int largo = 0;
     int tipo = 0;
+    int valor = 0;
     int c = 0;
     int d = 0;
     int sigue = 0;
     int hay_token = 0;
-    int errores = 0;
-    int i = 0;
-
-    total = file_read("FUENTE.KPP", fuente);
-
-    if (total < 0)
-    {
-        print_int(total);
-        return 1;
-    }
-
-    print("TOKENS");
-
+    pos = 0;
+    tok_count = 0;
     while (pos < total)
     {
         c = fuente[pos];
@@ -57,6 +80,7 @@ int main()
         tipo = 0;
         inicio = pos;
         largo = 1;
+        valor = 0;
 
         if (c == 32 || c == 9 || c == 10 || c == 13)
         {
@@ -278,6 +302,7 @@ int main()
                     c = fuente[pos];
                     if (c >= 48 && c <= 57)
                     {
+                        valor = valor * 10 + (c - 48);
                         pos = pos + 1;
                     }
                     else
@@ -527,12 +552,13 @@ int main()
 
         if (hay_token == 1)
         {
-            if (ntok < 256)
+            if (tok_count < 256)
             {
-                tok_tipo[ntok] = tipo;
-                tok_inicio[ntok] = inicio;
-                tok_largo[ntok] = largo;
-                ntok = ntok + 1;
+                tok_tipo[tok_count] = tipo;
+                tok_inicio[tok_count] = inicio;
+                tok_largo[tok_count] = largo;
+                tok_valor[tok_count] = valor;
+                tok_count = tok_count + 1;
             }
             else
             {
@@ -540,16 +566,41 @@ int main()
             }
         }
     }
+    pos = 0;
+    return tok_count;
+}
+
+int main()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int i = 0;
+
+    total = file_read("FUENTE.KPP", fuente);
+
+    if (total < 0)
+    {
+        print_int(total);
+        return 1;
+    }
+
+    print("TOKENS");
+
+    int n = escanea();
 
     i = 0;
-    while (i < ntok)
+    while (i < tok_count)
     {
         print_int(tok_tipo[i]);
         print_int(tok_inicio[i]);
         print_int(tok_largo[i]);
+        print_int(tok_valor[i]);
         i = i + 1;
     }
-    print_int(ntok);
+    print_int(tok_count);
     print_int(errores);
 
     return 0;
