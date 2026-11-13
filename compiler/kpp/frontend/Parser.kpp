@@ -307,6 +307,7 @@ int emite(int kind, int ini)
     int nparam_cantidad[256];
     int ncampo_cantidad[256];
     int nconst_cantidad[256];
+    int nsize[256];
     nkind[nnodos] = kind;
     nini[nnodos] = ini;
     nfin[nnodos] = pos;
@@ -317,6 +318,7 @@ int emite(int kind, int ini)
     nparam_cantidad[nnodos] = 0;
     ncampo_cantidad[nnodos] = 0;
     nconst_cantidad[nnodos] = 0;
+    nsize[nnodos] = 0;
     nnodos = nnodos + 1;
     return nnodos - 1;
 }
@@ -371,6 +373,16 @@ int pon_val(int nodo, int valor)
 {
     int nval[256];
     nval[nodo] = valor;
+    return 0;
+}
+
+// El tamano del arreglo de una VariableDeclaration
+// (rebanada 11): 0 = no es arreglo. Es un atributo del
+// nodo, como en Stage 0 (arraySize).
+int pon_size(int nodo, int tam)
+{
+    int nsize[256];
+    nsize[nodo] = tam;
     return 0;
 }
 
@@ -495,6 +507,50 @@ int consts_total()
         if (nkind[i] == NodeKind::EnumDeclaration)
         {
             int c = nconst_cantidad[i];
+            total = total + c;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// Suma de los tamanos (nsize) de todas las
+// VariableDeclaration: la prueba de la rebanada 11 —
+// el tamano del arreglo ya es un atributo del nodo,
+// no un token que se analiza y se tira.
+int tamanos_total()
+{
+    int nkind[256];
+    int nsize[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == NodeKind::VariableDeclaration)
+        {
+            int c = nsize[i];
+            total = total + c;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// Suma de los nombres (nval, indice de token) de
+// todas las VariableDeclaration: la otra prueba de
+// la rebanada 11 — el nombre ya llega a nval en las
+// ramas de sentencia, como ya llegaba en la global.
+int suma_nombres()
+{
+    int nkind[256];
+    int nval[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == NodeKind::VariableDeclaration)
+        {
+            int c = nval[i];
             total = total + c;
         }
         i = i + 1;
@@ -937,20 +993,34 @@ int parse_primario()
 
 int parse_sentencia()
 {
+    int tvalor[80];
     int ini = pos;
     int t = actual();
 
     // Declaracion de variable: int nombre [N] [= expr];
     // (tambien string). El inicializador, si lo hay, se
-    // analiza de verdad y cuelga de hijo1.
+    // analiza de verdad y cuelga de hijo1. Los datos de
+    // la declaracion son atributos del nodo (rebanada
+    // 11): el nombre en nval, el tamano en nsize.
     if (t == TokenType::KwInt)
     {
         int c1 = consume();
+        int nombre = pos;
         int ok = espera(TokenType::Identifier);
+        int tam = 0;
         if (es(TokenType::LBracket) == 1)
         {
             int c2 = consume();
+            int npos = pos;
             int ok2 = espera(TokenType::Number);
+            if (ok2 == 1)
+            {
+                tam = tvalor[npos];
+                if (tam <= 0)
+                {
+                    errores = errores + 1;
+                }
+            }
             int ok3 = espera(TokenType::RBracket);
         }
         int init = 0 - 1;
@@ -961,6 +1031,8 @@ int parse_sentencia()
         }
         int ok4 = espera(TokenType::Semicolon);
         int n = emite(NodeKind::VariableDeclaration, ini);
+        int v = pon_val(n, nombre);
+        int s = pon_size(n, tam);
         if (init != 0 - 1)
         {
             int a = pon_hijo1(n, init);
@@ -971,7 +1043,24 @@ int parse_sentencia()
     if (t == TokenType::KwString)
     {
         int c1 = consume();
+        int nombre = pos;
         int ok = espera(TokenType::Identifier);
+        int tam = 0;
+        if (es(TokenType::LBracket) == 1)
+        {
+            int c2 = consume();
+            int npos = pos;
+            int ok2 = espera(TokenType::Number);
+            if (ok2 == 1)
+            {
+                tam = tvalor[npos];
+                if (tam <= 0)
+                {
+                    errores = errores + 1;
+                }
+            }
+            int ok3 = espera(TokenType::RBracket);
+        }
         int init = 0 - 1;
         if (es(TokenType::Assign) == 1)
         {
@@ -980,6 +1069,8 @@ int parse_sentencia()
         }
         int ok4 = espera(TokenType::Semicolon);
         int n = emite(NodeKind::VariableDeclaration, ini);
+        int v = pon_val(n, nombre);
+        int s = pon_size(n, tam);
         if (init != 0 - 1)
         {
             int a = pon_hijo1(n, init);
@@ -1109,15 +1200,19 @@ int parse_sentencia()
     // semantico). Sin inicializador y sin
     // arreglo. El nodo es el mismo
     // VariableDeclaration: el tipo queda en el
-    // token inicial y el nombre en el siguiente.
+    // token inicial y el nombre en el siguiente,
+    // guardado ademas en nval (rebanada 11: nval
+    // es el nombre en toda VariableDeclaration).
     if (t == TokenType::Identifier)
     {
         if (mira(1, TokenType::Identifier) == 1)
         {
             int c1 = consume();
+            int nombre = pos;
             int c2 = consume();
             int ok = espera(TokenType::Semicolon);
             int n = emite(NodeKind::VariableDeclaration, ini);
+            int v = pon_val(n, nombre);
             nsent = nsent + 1;
             return 1;
         }
@@ -2294,6 +2389,88 @@ int inicia_tokens7()
     return 0;
 }
 
+// Tabla 8: la sonda de la rebanada 11 — una
+// declaracion con arreglo y una con inicializador:
+//
+// int main()
+// {
+//     int datos[10];
+//     int x = 5;
+//     datos[0] = 7;
+//     print_int(datos[0]);
+//     return x;
+// }
+
+int inicia_tokens8()
+{
+    int tipo[80];
+    int tinicio[80];
+    int tlargo[80];
+    int tvalor[80];
+    int fuente[512];
+
+    tipo[0  ] = TokenType::KwInt;      tinicio[0  ] = 0   ; tlargo[0  ] = 3;
+    tipo[1  ] = TokenType::Identifier; tinicio[1  ] = 4   ; tlargo[1  ] = 4;
+    tipo[2  ] = TokenType::LParen;     tinicio[2  ] = 8   ; tlargo[2  ] = 1;
+    tipo[3  ] = TokenType::RParen;     tinicio[3  ] = 9   ; tlargo[3  ] = 1;
+    tipo[4  ] = TokenType::LBrace;     tinicio[4  ] = 11  ; tlargo[4  ] = 1;
+    tipo[5  ] = TokenType::KwInt;      tinicio[5  ] = 17  ; tlargo[5  ] = 3;
+    tipo[6  ] = TokenType::Identifier; tinicio[6  ] = 21  ; tlargo[6  ] = 5;
+    tipo[7  ] = TokenType::LBracket;   tinicio[7  ] = 26  ; tlargo[7  ] = 1;
+    tipo[8  ] = TokenType::Number;     tinicio[8  ] = 27  ; tlargo[8  ] = 2;
+    tipo[9  ] = TokenType::RBracket;   tinicio[9  ] = 29  ; tlargo[9  ] = 1;
+    tipo[10 ] = TokenType::Semicolon;  tinicio[10 ] = 30  ; tlargo[10 ] = 1;
+    tipo[11 ] = TokenType::KwInt;      tinicio[11 ] = 36  ; tlargo[11 ] = 3;
+    tipo[12 ] = TokenType::Identifier; tinicio[12 ] = 40  ; tlargo[12 ] = 1;
+    tipo[13 ] = TokenType::Assign;     tinicio[13 ] = 42  ; tlargo[13 ] = 1;
+    tipo[14 ] = TokenType::Number;     tinicio[14 ] = 44  ; tlargo[14 ] = 1;
+    tipo[15 ] = TokenType::Semicolon;  tinicio[15 ] = 45  ; tlargo[15 ] = 1;
+    tipo[16 ] = TokenType::Identifier; tinicio[16 ] = 51  ; tlargo[16 ] = 5;
+    tipo[17 ] = TokenType::LBracket;   tinicio[17 ] = 56  ; tlargo[17 ] = 1;
+    tipo[18 ] = TokenType::Number;     tinicio[18 ] = 57  ; tlargo[18 ] = 1;
+    tipo[19 ] = TokenType::RBracket;   tinicio[19 ] = 58  ; tlargo[19 ] = 1;
+    tipo[20 ] = TokenType::Assign;     tinicio[20 ] = 60  ; tlargo[20 ] = 1;
+    tipo[21 ] = TokenType::Number;     tinicio[21 ] = 62  ; tlargo[21 ] = 1;
+    tipo[22 ] = TokenType::Semicolon;  tinicio[22 ] = 63  ; tlargo[22 ] = 1;
+    tipo[23 ] = TokenType::Identifier; tinicio[23 ] = 69  ; tlargo[23 ] = 9;
+    tipo[24 ] = TokenType::LParen;     tinicio[24 ] = 78  ; tlargo[24 ] = 1;
+    tipo[25 ] = TokenType::Identifier; tinicio[25 ] = 79  ; tlargo[25 ] = 5;
+    tipo[26 ] = TokenType::LBracket;   tinicio[26 ] = 84  ; tlargo[26 ] = 1;
+    tipo[27 ] = TokenType::Number;     tinicio[27 ] = 85  ; tlargo[27 ] = 1;
+    tipo[28 ] = TokenType::RBracket;   tinicio[28 ] = 86  ; tlargo[28 ] = 1;
+    tipo[29 ] = TokenType::RParen;     tinicio[29 ] = 87  ; tlargo[29 ] = 1;
+    tipo[30 ] = TokenType::Semicolon;  tinicio[30 ] = 88  ; tlargo[30 ] = 1;
+    tipo[31 ] = TokenType::KwReturn;   tinicio[31 ] = 94  ; tlargo[31 ] = 6;
+    tipo[32 ] = TokenType::Identifier; tinicio[32 ] = 101 ; tlargo[32 ] = 1;
+    tipo[33 ] = TokenType::Semicolon;  tinicio[33 ] = 102 ; tlargo[33 ] = 1;
+    tipo[34 ] = TokenType::RBrace;     tinicio[34 ] = 104 ; tlargo[34 ] = 1;
+
+    tvalor[8] = 10;
+    tvalor[14] = 5;
+    tvalor[18] = 0;
+    tvalor[21] = 7;
+    tvalor[27] = 0;
+
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
+    fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 105;  fuente[18] = 110;  fuente[19] = 116;  fuente[20] = 32;  fuente[21] = 100;  fuente[22] = 97;  fuente[23] = 116;
+    fuente[24] = 111;  fuente[25] = 115;  fuente[26] = 91;  fuente[27] = 49;  fuente[28] = 48;  fuente[29] = 93;  fuente[30] = 59;  fuente[31] = 10;
+    fuente[32] = 32;  fuente[33] = 32;  fuente[34] = 32;  fuente[35] = 32;  fuente[36] = 105;  fuente[37] = 110;  fuente[38] = 116;  fuente[39] = 32;
+    fuente[40] = 120;  fuente[41] = 32;  fuente[42] = 61;  fuente[43] = 32;  fuente[44] = 53;  fuente[45] = 59;  fuente[46] = 10;  fuente[47] = 32;
+    fuente[48] = 32;  fuente[49] = 32;  fuente[50] = 32;  fuente[51] = 100;  fuente[52] = 97;  fuente[53] = 116;  fuente[54] = 111;  fuente[55] = 115;
+    fuente[56] = 91;  fuente[57] = 48;  fuente[58] = 93;  fuente[59] = 32;  fuente[60] = 61;  fuente[61] = 32;  fuente[62] = 55;  fuente[63] = 59;
+    fuente[64] = 10;  fuente[65] = 32;  fuente[66] = 32;  fuente[67] = 32;  fuente[68] = 32;  fuente[69] = 112;  fuente[70] = 114;  fuente[71] = 105;
+    fuente[72] = 110;  fuente[73] = 116;  fuente[74] = 95;  fuente[75] = 105;  fuente[76] = 110;  fuente[77] = 116;  fuente[78] = 40;  fuente[79] = 100;
+    fuente[80] = 97;  fuente[81] = 116;  fuente[82] = 111;  fuente[83] = 115;  fuente[84] = 91;  fuente[85] = 48;  fuente[86] = 93;  fuente[87] = 41;
+    fuente[88] = 59;  fuente[89] = 10;  fuente[90] = 32;  fuente[91] = 32;  fuente[92] = 32;  fuente[93] = 32;  fuente[94] = 114;  fuente[95] = 101;
+    fuente[96] = 116;  fuente[97] = 117;  fuente[98] = 114;  fuente[99] = 110;  fuente[100] = 32;  fuente[101] = 120;  fuente[102] = 59;  fuente[103] = 10;
+    fuente[104] = 125;  fuente[105] = 10;
+
+    ntok = 35;
+    pos = 0;
+    return 0;
+}
+
 // Deja el estado compartido como recien nacido, para
 // correr las demas tablas en el mismo programa.
 int reinicia()
@@ -2399,5 +2576,17 @@ int main()
     print_int(cuenta(NodeKind::VariableDeclaration));
     print_int(cuenta(NodeKind::AssignmentStatement));
     print_int(campos_total());
+
+    int r6 = reinicia();
+    int a8 = inicia_tokens8();
+    int p8 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(cuenta(NodeKind::VariableDeclaration));
+    print_int(tamanos_total());
+    print_int(suma_nombres());
     return 0;
 }
