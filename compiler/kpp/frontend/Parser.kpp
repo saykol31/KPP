@@ -9,12 +9,11 @@
 //     los escalares compartidos (bateria L19).
 //   - current/check/match/advance/expect de Stage 0 pasan a
 //     subrutinas: actual(), es(), consume(), espera().
-//   - Los tokens llegan en arreglos paralelos compartidos por
-//     nombre (tipo/tinicio/tlargo), el formato del Lexer.
-//     En esta rebanada la tabla es LITERAL: los 27 tokens de
-//     FUENTE.KPP segun EXPECTED.txt (pieza 1, P00 sellada).
-//     La rebanada de acople la sustituira por la salida real
-//     del Lexer sin tocar a los consumidores.
+//   - Los tokens llegan en la tabla compartida del Lexer
+//     (tok_tipo/tok_inicio/tok_largo/tok_valor, rebanada 14):
+//     carga_fuenteN escribe el texto de cada fuente en
+//     fuente[] y escanea() registra la tabla que el Parser
+//     consume sin copiar un solo token.
 //   - Los nodos salen en arreglos paralelos (nkind/nini/nfin:
 //     clase del nodo y su rango de tokens), con la copia
 //     identica de NodeKind que pide el contrato de
@@ -223,7 +222,8 @@ enum NodeKind
 // ============================================================
 
 int pos;
-int ntok;
+int tok_count;
+int total;
 int nnodos;
 int errores;
 int nfun;
@@ -238,10 +238,10 @@ int nconst;
 
 int actual()
 {
-    int tipo[64];
-    if (pos < ntok)
+    int tok_tipo[64];
+    if (pos < tok_count)
     {
-        return tipo[pos];
+        return tok_tipo[pos];
     }
     return TokenType::EndOfFile;
 }
@@ -257,11 +257,11 @@ int es(int t)
 
 int consume()
 {
-    int tipo[64];
+    int tok_tipo[64];
     int t = TokenType::EndOfFile;
-    if (pos < ntok)
+    if (pos < tok_count)
     {
-        t = tipo[pos];
+        t = tok_tipo[pos];
         pos = pos + 1;
     }
     return t;
@@ -287,9 +287,28 @@ int espera(int t)
 // nkind  clase del nodo (NodeKind).
 // nini   primer token del nodo.
 // nfin   token siguiente al ultimo del nodo.
-// nhijo1 hijo izquierdo / primer hijo / indice de arreglo.
-// nhijo2 hijo derecho / valor de una asignacion.
-// nsig   siguiente hermano (argumentos de una llamada).
+//
+// Enlaces (rebanada 13, hijo/hermano):
+// nhijo1 primer hijo: la primera sentencia de un
+//        Block, la primera declaracion del Program,
+//        la condicion de if/while, el hijo izquierdo
+//        de un binario, el primer argumento de una
+//        llamada, el inicializador de una
+//        declaracion, el indice de un acceso o
+//        asignacion a arreglo. Excepcion documentada
+//        (rebanada 8): en el acceso y la asignacion
+//        a campo guarda el TOKEN del campo.
+// nhijo2 segundo hijo: el bloque del then (if), el
+//        cuerpo (while), el hijo derecho de un
+//        binario, el valor de una asignacion. En las
+//        declaraciones guarda el INICIO de su tabla
+//        lateral (parametros, campos, constantes),
+//        que no es un nodo.
+// nsig   siguiente hermano — un solo significado en
+//        todo el arbol: sentencias de un bloque,
+//        declaraciones del programa, argumentos de
+//        una llamada, y el else colgando del nsig
+//        del bloque del then.
 // nval   carga util: valor de un literal entero, codigo
 //        TokenType del operador de un nodo binario, o
 //        indice del token del nombre (variable, llamada).
@@ -626,6 +645,124 @@ int bloques_abiertos()
 }
 
 // ============================================================
+// ALCANCE — LA PRUEBA DE LOS ENLACES (rebanada 13).
+//
+// visita() recorre el arbol desde un nodo siguiendo
+// SOLO los enlaces: hijo1, hijo2 donde es nodo, y
+// nsig en todo nodo, y marca cada nodo alcanzado en
+// el arreglo compartido marca[]. alcanzables() corre
+// la visita desde el Program (nodo 0) y cuenta las
+// marcas: si todo lo emitido esta enlazado, el
+// conteo es exactamente nnodos — ningun nodo queda
+// colgando del orden de emision.
+//
+// Dos no-enlaces que la visita respeta:
+//   - El hijo2 de funcion/struct/enum es el inicio
+//     de su tabla lateral, no un nodo: no se sigue.
+//   - El hijo1 del acceso y la asignacion a campo
+//     es el token del campo: se reconoce porque el
+//     token siguiente al nombre es Dot, y no se
+//     sigue. (Cada posicion se lee primero a una
+//     variable local, la forma de mismo_texto.)
+// ============================================================
+
+int visita(int nodo)
+{
+    int nkind[256];
+    int nini[256];
+    int nhijo1[256];
+    int nhijo2[256];
+    int nsig[256];
+    int tok_tipo[80];
+    int marca[256];
+    if (nodo < 0)
+    {
+        return 0;
+    }
+    if (nodo >= nnodos)
+    {
+        return 0;
+    }
+    if (marca[nodo] == 1)
+    {
+        return 0;
+    }
+    marca[nodo] = 1;
+    int k = nkind[nodo];
+    int ini_n = nini[nodo];
+    int tok_sig = tok_tipo[ini_n + 1];
+    int h1 = nhijo1[nodo];
+    int h2 = nhijo2[nodo];
+    int sg = nsig[nodo];
+
+    // hijo1: no se sigue cuando es el token del campo.
+    int sigue1 = h1;
+    if (k == NodeKind::AssignmentStatement)
+    {
+        if (tok_sig == TokenType::Dot)
+        {
+            sigue1 = 0 - 1;
+        }
+    }
+    if (k == NodeKind::VariableExpression)
+    {
+        if (tok_sig == TokenType::Dot)
+        {
+            sigue1 = 0 - 1;
+        }
+    }
+    int a = visita(sigue1);
+
+    // hijo2: solo es nodo en asignacion, if, while
+    // y binario.
+    int sigue2 = 0 - 1;
+    if (k == NodeKind::AssignmentStatement)
+    {
+        sigue2 = h2;
+    }
+    if (k == NodeKind::IfStatement)
+    {
+        sigue2 = h2;
+    }
+    if (k == NodeKind::WhileStatement)
+    {
+        sigue2 = h2;
+    }
+    if (k == NodeKind::BinaryExpression)
+    {
+        sigue2 = h2;
+    }
+    int b = visita(sigue2);
+
+    // nsig: el siguiente hermano, en todo nodo.
+    int c = visita(sg);
+    return 0;
+}
+
+int alcanzables()
+{
+    int marca[256];
+    int i = 0;
+    while (i < 256)
+    {
+        marca[i] = 0;
+        i = i + 1;
+    }
+    int v = visita(0);
+    int total = 0;
+    i = 0;
+    while (i < nnodos)
+    {
+        if (marca[i] == 1)
+        {
+            total = total + 1;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// ============================================================
 // CADENA DE EXPRESIONES.
 //
 // Traduccion nivel a nivel de la cadena de precedencia
@@ -921,14 +1058,14 @@ int parse_unario()
 
 int parse_primario()
 {
-    int tvalor[64];
+    int tok_valor[64];
     int ini = pos;
     int t = actual();
 
     // Numero: el valor ya viene calculado en tvalor.
     if (t == TokenType::Number)
     {
-        int v = tvalor[pos];
+        int v = tok_valor[pos];
         int c = consume();
         return emite_lit(v, ini);
     }
@@ -1060,7 +1197,7 @@ int parse_primario()
 
 int parse_sentencia()
 {
-    int tvalor[80];
+    int tok_valor[80];
     int ini = pos;
     int t = actual();
 
@@ -1082,7 +1219,7 @@ int parse_sentencia()
             int ok2 = espera(TokenType::Number);
             if (ok2 == 1)
             {
-                tam = tvalor[npos];
+                tam = tok_valor[npos];
                 if (tam <= 0)
                 {
                     errores = errores + 1;
@@ -1105,7 +1242,7 @@ int parse_sentencia()
             int a = pon_hijo1(n, init);
         }
         nsent = nsent + 1;
-        return 1;
+        return n;
     }
     if (t == TokenType::KwString)
     {
@@ -1120,7 +1257,7 @@ int parse_sentencia()
             int ok2 = espera(TokenType::Number);
             if (ok2 == 1)
             {
-                tam = tvalor[npos];
+                tam = tok_valor[npos];
                 if (tam <= 0)
                 {
                     errores = errores + 1;
@@ -1143,13 +1280,14 @@ int parse_sentencia()
             int a = pon_hijo1(n, init);
         }
         nsent = nsent + 1;
-        return 1;
+        return n;
     }
 
     // if (condicion) bloque [else bloque | else if ...]
-    // La condicion ya no se salta: se analiza y cuelga
-    // de hijo1 del nodo If. Los bloques caen detras
-    // del nodo, en orden de emision.
+    // La condicion cuelga de hijo1, el bloque del
+    // then de hijo2, y el bloque del else (real o el
+    // sintetico del else if) del nsig del bloque del
+    // then — la forma hijo/hermano de la rebanada 13.
     if (t == TokenType::KwIf)
     {
         int c1 = consume();
@@ -1160,6 +1298,7 @@ int parse_sentencia()
         int a = pon_hijo1(n, cond);
         nsent = nsent + 1;
         int b = parse_bloque();
+        int h = pon_hijo2(n, b);
         if (es(TokenType::KwElse) == 1)
         {
             int c2 = consume();
@@ -1171,24 +1310,27 @@ int parse_sentencia()
             {
                 // ELSE IF (Stage 0): el if anidado va
                 // envuelto en un Block sintetico de una
-                // sola sentencia. El Block se emite y
-                // la sentencia if cae detras de el, en
-                // orden de emision, igual que las
-                // sentencias de un bloque real.
+                // sola sentencia. El sintetico cuelga
+                // del nsig del bloque del then y el if
+                // anidado es su hijo1.
                 int nb = emite(NodeKind::Block, pos);
                 int s = parse_sentencia();
+                int a1 = pon_hijo1(nb, s);
+                int s2 = pon_sig(b, nb);
                 int fb = pon_fin(nb, pos);
             }
             if (esif == 0)
             {
                 int b2 = parse_bloque();
+                int s3 = pon_sig(b, b2);
             }
         }
         int f = pon_fin(n, pos);
-        return 1;
+        return n;
     }
 
-    // while (condicion) bloque
+    // while (condicion) bloque — la condicion en
+    // hijo1 y el cuerpo en hijo2.
     if (t == TokenType::KwWhile)
     {
         int c1 = consume();
@@ -1199,8 +1341,21 @@ int parse_sentencia()
         int a = pon_hijo1(n, cond);
         nsent = nsent + 1;
         int b = parse_bloque();
+        int h = pon_hijo2(n, b);
         int f = pon_fin(n, pos);
-        return 1;
+        return n;
+    }
+
+    // Bloque suelto como sentencia: { ... } — el
+    // bloque ES la sentencia (parseBlock como
+    // sentencia en Stage 0); sus sentencias cuelgan
+    // de el como en cualquier bloque. Entro en la
+    // rebanada 9, salio con su revert, y vuelve con
+    // los enlaces de la 13.
+    if (t == TokenType::LBrace)
+    {
+        int b = parse_bloque();
+        return b;
     }
 
     // print ( expr );
@@ -1214,7 +1369,7 @@ int parse_sentencia()
         int n = emite(NodeKind::PrintStatement, ini);
         int a = pon_hijo1(n, e);
         nsent = nsent + 1;
-        return 1;
+        return n;
     }
 
     // return [expr];
@@ -1233,7 +1388,7 @@ int parse_sentencia()
             int a = pon_hijo1(n, e);
         }
         nsent = nsent + 1;
-        return 1;
+        return n;
     }
 
     // print_int(expr); — print_int no es palabra
@@ -1258,7 +1413,7 @@ int parse_sentencia()
             int n = emite(NodeKind::PrintIntegerStatement, ini);
             int a = pon_hijo1(n, e);
             nsent = nsent + 1;
-            return 1;
+            return n;
         }
     }
 
@@ -1284,7 +1439,7 @@ int parse_sentencia()
             int n = emite(NodeKind::VariableDeclaration, ini);
             int v = pon_val(n, nombre);
             nsent = nsent + 1;
-            return 1;
+            return n;
         }
     }
 
@@ -1327,13 +1482,15 @@ int parse_sentencia()
             int c6 = pon_hijo1(n, campo);
         }
         nsent = nsent + 1;
-        return 1;
+        return n;
     }
 
     // Nada reconocido: error y avance para no ciclar.
+    // No se emite nodo: devuelve -1 y parse_bloque no
+    // lo encadena.
     errores = errores + 1;
     int c4 = consume();
-    return 0;
+    return 0 - 1;
 }
 
 // ============================================================
@@ -1345,10 +1502,12 @@ int parse_bloque()
     int ini = pos;
     int ok = espera(TokenType::LBrace);
     int n = emite(NodeKind::Block, ini);
+    int primero = 0 - 1;
+    int ultimo = 0 - 1;
     int sigue = 1;
     while (sigue == 1)
     {
-        if (pos >= ntok)
+        if (pos >= tok_count)
         {
             sigue = 0;
         }
@@ -1359,11 +1518,24 @@ int parse_bloque()
         if (sigue == 1)
         {
             int s = parse_sentencia();
+            if (s != 0 - 1)
+            {
+                if (primero == 0 - 1)
+                {
+                    primero = s;
+                    int a = pon_hijo1(n, s);
+                }
+                if (ultimo != 0 - 1)
+                {
+                    int b = pon_sig(ultimo, s);
+                }
+                ultimo = s;
+            }
         }
     }
     int ok2 = espera(TokenType::RBrace);
     int f = pon_fin(n, pos);
-    return 1;
+    return n;
 }
 
 int pon_param(int tok)
@@ -1417,11 +1589,10 @@ int parse_funcion()
     int c = pon_cant_params(n, npar - pini);
     nfun = nfun + 1;
 
-    int bloque = nnodos;
     int bl = parse_bloque();
-    int d = pon_hijo1(n, bloque);
+    int d = pon_hijo1(n, bl);
     int f = pon_fin(n, pos);
-    return 1;
+    return n;
 }
 
 // ============================================================
@@ -1480,7 +1651,7 @@ int parse_estructura()
         {
             sigue = 0;
         }
-        if (pos >= ntok)
+        if (pos >= tok_count)
         {
             sigue = 0;
         }
@@ -1517,7 +1688,7 @@ int parse_estructura()
     int a = pon_val(n, nombre);
     int b = pon_hijo2(n, cini);
     int c = pon_cant_campos(n, ncam - cini);
-    return 1;
+    return n;
 }
 
 // ============================================================
@@ -1544,9 +1715,9 @@ int parse_estructura()
 
 int mismo_texto(int a, int b)
 {
-    int tinicio[64];
-    int tlargo[64];
-    int fuente[512];
+    int tok_inicio[64];
+    int tok_largo[64];
+    int fuente[1024];
     // Cada largo y cada caracter se lee primero a una
     // variable local y se compara despues, en
     // sentencias separadas. La forma directa —
@@ -1555,14 +1726,14 @@ int mismo_texto(int a, int b)
     // campo, con el IR correcto: es la forma que esta
     // funcion evita a proposito
     // (sonda_mismo_texto.kpp).
-    int la = tlargo[a];
-    int lb = tlargo[b];
+    int la = tok_largo[a];
+    int lb = tok_largo[b];
     if (la != lb)
     {
         return 0;
     }
-    int ia = tinicio[a];
-    int ib = tinicio[b];
+    int ia = tok_inicio[a];
+    int ib = tok_inicio[b];
     int i = 0;
     while (i < la)
     {
@@ -1631,15 +1802,15 @@ int busca_const(int etok, int mtok)
 
 int es_print_int(int tok)
 {
-    int tinicio[80];
-    int tlargo[80];
-    int fuente[512];
-    int largo = tlargo[tok];
+    int tok_inicio[80];
+    int tok_largo[80];
+    int fuente[1024];
+    int largo = tok_largo[tok];
     if (largo != 9)
     {
         return 0;
     }
-    int base = tinicio[tok];
+    int base = tok_inicio[tok];
     int c0 = fuente[base + 0];
     int c1 = fuente[base + 1];
     int c2 = fuente[base + 2];
@@ -1712,7 +1883,7 @@ int es_print_int(int tok)
 
 int parse_enum()
 {
-    int tvalor[64];
+    int tok_valor[64];
     int constok[64];
     int ini = pos;
     int ok = espera(TokenType::KwEnum);
@@ -1729,7 +1900,7 @@ int parse_enum()
         {
             sigue = 0;
         }
-        if (pos >= ntok)
+        if (pos >= tok_count)
         {
             sigue = 0;
         }
@@ -1741,7 +1912,7 @@ int parse_enum()
             if (es(TokenType::Assign) == 1)
             {
                 int c = consume();
-                valor = tvalor[pos];
+                valor = tok_valor[pos];
                 int ok5 = espera(TokenType::Number);
             }
             siguiente = valor + 1;
@@ -1778,7 +1949,7 @@ int parse_enum()
     int a = pon_val(n, nombre);
     int b = pon_hijo2(n, cini);
     int c = pon_cant_consts(n, nconst - cini);
-    return 1;
+    return n;
 }
 
 // ============================================================
@@ -1789,10 +1960,10 @@ int parse_enum()
 // token que esta `salto` posiciones adelante, sin consumir.
 int mira(int salto, int t)
 {
-    int tipo[64];
-    if (pos + salto < ntok)
+    int tok_tipo[64];
+    if (pos + salto < tok_count)
     {
-        if (tipo[pos + salto] == t)
+        if (tok_tipo[pos + salto] == t)
         {
             return 1;
         }
@@ -1811,105 +1982,670 @@ int parse_global()
     int ok2 = espera(TokenType::Semicolon);
     int n = emite(NodeKind::VariableDeclaration, ini);
     int a = pon_val(n, nombre);
-    return 1;
+    return n;
 }
 
 int parse_programa()
 {
     int ini = pos;
     int n = emite(NodeKind::Program, ini);
-    while (pos < ntok)
+    int primero = 0 - 1;
+    int ultimo = 0 - 1;
+    while (pos < tok_count)
     {
         int hecho = 0;
+        int d = 0 - 1;
+        // El despacho es exclusivo: una declaracion
+        // por vuelta, guardada por la propia bandera
+        // hecho. Sin la guarda, tras un struct o un
+        // enum el token actual ya es el int de la
+        // funcion siguiente y la rama de int volvia
+        // a disparar en la misma vuelta, pisando a
+        // d: solo se enlazaba la funcion y la primera
+        // declaracion quedaba fuera de la cadena
+        // (alcanzables daba nnodos - 1 en las
+        // corridas 2, 3, 4 y 7).
         if (es(TokenType::KwStruct) == 1)
         {
             // struct primero y enum detras, el orden
             // del parse() de Stage 0.
-            int e = parse_estructura();
+            d = parse_estructura();
             hecho = 1;
         }
-        if (es(TokenType::KwEnum) == 1)
+        if (hecho == 0)
         {
-            int en = parse_enum();
-            hecho = 1;
+            if (es(TokenType::KwEnum) == 1)
+            {
+                d = parse_enum();
+                hecho = 1;
+            }
         }
-        if (es(TokenType::KwInt) == 1)
+        if (hecho == 0)
         {
-            // La bifurcacion de Stage 0 (parse()):
-            // int nombre;  -> variable global
-            // int nombre(  -> funcion
-            if (mira(2, TokenType::Semicolon) == 1)
+            if (es(TokenType::KwInt) == 1)
             {
-                int g = parse_global();
+                // La bifurcacion de Stage 0 (parse()):
+                // int nombre;  -> variable global
+                // int nombre(  -> funcion
+                // La decision se lee una sola vez,
+                // antes de analizar nada (el patron
+                // esif de la rebanada 6): tras la
+                // global, un segundo mira() miraria
+                // la funcion siguiente y pisaria a d.
+                int esglobal = mira(2, TokenType::Semicolon);
+                if (esglobal == 1)
+                {
+                    d = parse_global();
+                }
+                if (esglobal == 0)
+                {
+                    d = parse_funcion();
+                }
+                hecho = 1;
             }
-            if (mira(2, TokenType::Semicolon) == 0)
-            {
-                int f = parse_funcion();
-            }
-            hecho = 1;
         }
         if (hecho == 0)
         {
             errores = errores + 1;
             int c = consume();
         }
+        if (d > 0)
+        {
+            if (primero == 0 - 1)
+            {
+                primero = d;
+                int a = pon_hijo1(n, d);
+            }
+            if (ultimo != 0 - 1)
+            {
+                int b = pon_sig(ultimo, d);
+            }
+            ultimo = d;
+        }
     }
     int f = pon_fin(n, pos);
-    return 1;
+    return n;
 }
 
 // ============================================================
-// TABLA LITERAL DE TOKENS — los 27 de FUENTE.KPP (EXPECTED.txt)
+// FUENTES Y ESCANEO — el acople con el Lexer
+// (rebanada 14). Cada carga_fuenteN escribe el
+// texto de su fuente en fuente[]; escanea()
+// registra la tabla compartida que el Parser
+// consume. Las nueve fuentes reproducen, token
+// a token, las tablas literales que sustituyen.
 // ============================================================
 
-int inicia_tokens()
+// ============================================================
+// ESCANEA — EL LEXER COMO SUBRUTINA (el contrato
+// compartido, rebanada 14).
+//
+// Lee fuente[0..total) y registra cada token en la
+// tabla compartida: tok_tipo, tok_inicio, tok_largo
+// y tok_valor — el valor numerico ya calculado para
+// los Number, acumulado digito a digito al escanear.
+// Los errores lexicos se suman al errores compartido
+// (escanea no lo pone a cero: en el programa acoplado
+// cada corrida lo reinicia antes).
+//
+// Devuelve tok_count, el conteo de tokens: la raiz
+// de su conjunto, la convencion de retorno del
+// Parser aplicada al Lexer. Al salir deja pos = 0,
+// listo para que el Parser consuma la tabla sin
+// copiar un solo token.
+// ============================================================
+int escanea()
 {
-    int tipo[64];
-    int tinicio[64];
-    int tlargo[64];
-    int tvalor[64];
-
-    tipo[0] = TokenType::KwInt;       tinicio[0] = 0;    tlargo[0] = 3;
-    tipo[1] = TokenType::Identifier;  tinicio[1] = 4;    tlargo[1] = 4;
-    tipo[2] = TokenType::LParen;      tinicio[2] = 8;    tlargo[2] = 1;
-    tipo[3] = TokenType::RParen;      tinicio[3] = 9;    tlargo[3] = 1;
-    tipo[4] = TokenType::LBrace;      tinicio[4] = 11;   tlargo[4] = 1;
-    tipo[5] = TokenType::KwInt;       tinicio[5] = 17;   tlargo[5] = 3;
-    tipo[6] = TokenType::Identifier;  tinicio[6] = 21;   tlargo[6] = 1;
-    tipo[7] = TokenType::Assign;      tinicio[7] = 23;   tlargo[7] = 1;
-    tipo[8] = TokenType::Number;      tinicio[8] = 25;   tlargo[8] = 2;
-    tipo[9] = TokenType::Semicolon;   tinicio[9] = 27;   tlargo[9] = 1;
-    tipo[10] = TokenType::KwIf;       tinicio[10] = 45;  tlargo[10] = 2;
-    tipo[11] = TokenType::LParen;     tinicio[11] = 48;  tlargo[11] = 1;
-    tipo[12] = TokenType::Identifier; tinicio[12] = 49;  tlargo[12] = 1;
-    tipo[13] = TokenType::Equal;      tinicio[13] = 51;  tlargo[13] = 2;
-    tipo[14] = TokenType::Number;     tinicio[14] = 54;  tlargo[14] = 2;
-    tipo[15] = TokenType::RParen;     tinicio[15] = 56;  tlargo[15] = 1;
-    tipo[16] = TokenType::LBrace;     tinicio[16] = 62;  tlargo[16] = 1;
-    tipo[17] = TokenType::KwPrint;    tinicio[17] = 72;  tlargo[17] = 5;
-    tipo[18] = TokenType::LParen;     tinicio[18] = 77;  tlargo[18] = 1;
-    tipo[19] = TokenType::String;     tinicio[19] = 78;  tlargo[19] = 6;
-    tipo[20] = TokenType::RParen;     tinicio[20] = 84;  tlargo[20] = 1;
-    tipo[21] = TokenType::Semicolon;  tinicio[21] = 85;  tlargo[21] = 1;
-    tipo[22] = TokenType::RBrace;     tinicio[22] = 91;  tlargo[22] = 1;
-    tipo[23] = TokenType::KwReturn;   tinicio[23] = 97;  tlargo[23] = 6;
-    tipo[24] = TokenType::Number;     tinicio[24] = 104; tlargo[24] = 1;
-    tipo[25] = TokenType::Semicolon;  tinicio[25] = 105; tlargo[25] = 1;
-    tipo[26] = TokenType::RBrace;     tinicio[26] = 107; tlargo[26] = 1;
-
-    // Valores de los tokens Number de la tabla (el Lexer
-    // los calculara al escanear los digitos; el resto de
-    // tvalor vale 0 porque la DATA nace en cero).
-    tvalor[8] = 42;
-    tvalor[14] = 42;
-
-    ntok = 27;
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int inicio = 0;
+    int largo = 0;
+    int tipo = 0;
+    int valor = 0;
+    int c = 0;
+    int d = 0;
+    int sigue = 0;
+    int hay_token = 0;
     pos = 0;
+    tok_count = 0;
+    while (pos < total)
+    {
+        c = fuente[pos];
+        hay_token = 0;
+        tipo = 0;
+        inicio = pos;
+        largo = 1;
+        valor = 0;
+
+        if (c == 32 || c == 9 || c == 10 || c == 13)
+        {
+            pos = pos + 1;
+        }
+        else if (c == 47)
+        {
+            d = 0;
+            if (pos + 1 < total)
+            {
+                d = fuente[pos + 1];
+            }
+            if (d == 47)
+            {
+                pos = pos + 2;
+                sigue = 1;
+                while (sigue == 1)
+                {
+                    if (pos >= total)
+                    {
+                        sigue = 0;
+                    }
+                    else
+                    {
+                        c = fuente[pos];
+                        if (c == 10)
+                        {
+                            sigue = 0;
+                        }
+                        else
+                        {
+                            pos = pos + 1;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                tipo = 17;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+        }
+        else if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95)
+        {
+            sigue = 1;
+            while (sigue == 1)
+            {
+                if (pos >= total)
+                {
+                    sigue = 0;
+                }
+                else
+                {
+                    c = fuente[pos];
+                    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95)
+                    {
+                        pos = pos + 1;
+                    }
+                    else
+                    {
+                        sigue = 0;
+                    }
+                }
+            }
+            largo = pos - inicio;
+            tipo = 1;
+            if (largo == 2)
+            {
+                if (fuente[inicio] == 105)
+                {
+                    if (fuente[inicio + 1] == 102)
+                    {
+                        tipo = 10;
+                    }
+                }
+            }
+            if (largo == 3)
+            {
+                if (fuente[inicio] == 105)
+                {
+                    if (fuente[inicio + 1] == 110)
+                    {
+                        if (fuente[inicio + 2] == 116)
+                        {
+                            tipo = 4;
+                        }
+                    }
+                }
+            }
+            if (largo == 4)
+            {
+                if (fuente[inicio] == 101)
+                {
+                    if (fuente[inicio + 1] == 110)
+                    {
+                        if (fuente[inicio + 2] == 117)
+                        {
+                            if (fuente[inicio + 3] == 109)
+                            {
+                                tipo = 7;
+                            }
+                        }
+                    }
+                    if (fuente[inicio + 1] == 108)
+                    {
+                        if (fuente[inicio + 2] == 115)
+                        {
+                            if (fuente[inicio + 3] == 101)
+                            {
+                                tipo = 11;
+                            }
+                        }
+                    }
+                }
+            }
+            if (largo == 5)
+            {
+                if (fuente[inicio] == 112)
+                {
+                    if (fuente[inicio + 1] == 114)
+                    {
+                        if (fuente[inicio + 2] == 105)
+                        {
+                            if (fuente[inicio + 3] == 110)
+                            {
+                                if (fuente[inicio + 4] == 116)
+                                {
+                                    tipo = 9;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 119)
+                {
+                    if (fuente[inicio + 1] == 104)
+                    {
+                        if (fuente[inicio + 2] == 105)
+                        {
+                            if (fuente[inicio + 3] == 108)
+                            {
+                                if (fuente[inicio + 4] == 101)
+                                {
+                                    tipo = 12;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (largo == 6)
+            {
+                if (fuente[inicio] == 115)
+                {
+                    if (fuente[inicio + 1] == 116)
+                    {
+                        if (fuente[inicio + 2] == 114)
+                        {
+                            if (fuente[inicio + 3] == 105)
+                            {
+                                if (fuente[inicio + 4] == 110)
+                                {
+                                    if (fuente[inicio + 5] == 103)
+                                    {
+                                        tipo = 5;
+                                    }
+                                }
+                            }
+                        }
+                        if (fuente[inicio + 2] == 114)
+                        {
+                            if (fuente[inicio + 3] == 117)
+                            {
+                                if (fuente[inicio + 4] == 99)
+                                {
+                                    if (fuente[inicio + 5] == 116)
+                                    {
+                                        tipo = 6;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 114)
+                {
+                    if (fuente[inicio + 1] == 101)
+                    {
+                        if (fuente[inicio + 2] == 116)
+                        {
+                            if (fuente[inicio + 3] == 117)
+                            {
+                                if (fuente[inicio + 4] == 114)
+                                {
+                                    if (fuente[inicio + 5] == 110)
+                                    {
+                                        tipo = 8;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            hay_token = 1;
+        }
+        else if (c >= 48 && c <= 57)
+        {
+            sigue = 1;
+            while (sigue == 1)
+            {
+                if (pos >= total)
+                {
+                    sigue = 0;
+                }
+                else
+                {
+                    c = fuente[pos];
+                    if (c >= 48 && c <= 57)
+                    {
+                        valor = valor * 10 + (c - 48);
+                        pos = pos + 1;
+                    }
+                    else
+                    {
+                        sigue = 0;
+                    }
+                }
+            }
+            largo = pos - inicio;
+            tipo = 2;
+            hay_token = 1;
+        }
+        else if (c == 34)
+        {
+            pos = pos + 1;
+            sigue = 1;
+            while (sigue == 1)
+            {
+                if (pos >= total)
+                {
+                    sigue = 0;
+                }
+                else
+                {
+                    c = fuente[pos];
+                    if (c == 34)
+                    {
+                        pos = pos + 1;
+                        sigue = 0;
+                    }
+                    else
+                    {
+                        pos = pos + 1;
+                    }
+                }
+            }
+            largo = pos - inicio;
+            tipo = 3;
+            hay_token = 1;
+        }
+        else
+        {
+            d = 0;
+            if (pos + 1 < total)
+            {
+                d = fuente[pos + 1];
+            }
+            if (c == 43)
+            {
+                tipo = 14;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 45)
+            {
+                tipo = 15;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 42)
+            {
+                tipo = 16;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 37)
+            {
+                tipo = 18;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 94)
+            {
+                tipo = 19;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 40)
+            {
+                tipo = 29;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 41)
+            {
+                tipo = 30;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 91)
+            {
+                tipo = 31;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 93)
+            {
+                tipo = 32;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 123)
+            {
+                tipo = 33;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 125)
+            {
+                tipo = 34;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 44)
+            {
+                tipo = 35;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 59)
+            {
+                tipo = 36;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 46)
+            {
+                tipo = 38;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 61)
+            {
+                if (d == 61)
+                {
+                    tipo = 20;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 13;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 33)
+            {
+                if (d == 61)
+                {
+                    tipo = 21;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 28;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 60)
+            {
+                if (d == 61)
+                {
+                    tipo = 23;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 22;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 62)
+            {
+                if (d == 61)
+                {
+                    tipo = 25;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 24;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 38)
+            {
+                if (d == 38)
+                {
+                    tipo = 26;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    errores = errores + 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 124)
+            {
+                if (d == 124)
+                {
+                    tipo = 27;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    errores = errores + 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 58)
+            {
+                if (d == 58)
+                {
+                    tipo = 37;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    errores = errores + 1;
+                    pos = pos + 1;
+                }
+            }
+            else
+            {
+                errores = errores + 1;
+                pos = pos + 1;
+            }
+        }
+
+        if (hay_token == 1)
+        {
+            if (tok_count < 256)
+            {
+                tok_tipo[tok_count] = tipo;
+                tok_inicio[tok_count] = inicio;
+                tok_largo[tok_count] = largo;
+                tok_valor[tok_count] = valor;
+                tok_count = tok_count + 1;
+            }
+            else
+            {
+                errores = errores + 1;
+            }
+        }
+    }
+    pos = 0;
+    return tok_count;
+}
+
+// ============================================================
+// CARGA FUENTE1 — FUENTE.KPP (la fuente de la pieza 1).
+//
+// int main()
+// {
+//     int x = 42;
+//     // nota
+//     if (x == 42)
+//     {
+//         print("HOLA");
+//     }
+//     return 0;
+// }
+// ============================================================
+
+int carga_fuente1()
+{
+    int fuente[1024];
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
+    fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 105;  fuente[18] = 110;  fuente[19] = 116;  fuente[20] = 32;  fuente[21] = 120;  fuente[22] = 32;  fuente[23] = 61;
+    fuente[24] = 32;  fuente[25] = 52;  fuente[26] = 50;  fuente[27] = 59;  fuente[28] = 10;  fuente[29] = 32;  fuente[30] = 32;  fuente[31] = 32;
+    fuente[32] = 32;  fuente[33] = 47;  fuente[34] = 47;  fuente[35] = 32;  fuente[36] = 110;  fuente[37] = 111;  fuente[38] = 116;  fuente[39] = 97;
+    fuente[40] = 10;  fuente[41] = 32;  fuente[42] = 32;  fuente[43] = 32;  fuente[44] = 32;  fuente[45] = 105;  fuente[46] = 102;  fuente[47] = 32;
+    fuente[48] = 40;  fuente[49] = 120;  fuente[50] = 32;  fuente[51] = 61;  fuente[52] = 61;  fuente[53] = 32;  fuente[54] = 52;  fuente[55] = 50;
+    fuente[56] = 41;  fuente[57] = 10;  fuente[58] = 32;  fuente[59] = 32;  fuente[60] = 32;  fuente[61] = 32;  fuente[62] = 123;  fuente[63] = 10;
+    fuente[64] = 32;  fuente[65] = 32;  fuente[66] = 32;  fuente[67] = 32;  fuente[68] = 32;  fuente[69] = 32;  fuente[70] = 32;  fuente[71] = 32;
+    fuente[72] = 112;  fuente[73] = 114;  fuente[74] = 105;  fuente[75] = 110;  fuente[76] = 116;  fuente[77] = 40;  fuente[78] = 34;  fuente[79] = 72;
+    fuente[80] = 79;  fuente[81] = 76;  fuente[82] = 65;  fuente[83] = 34;  fuente[84] = 41;  fuente[85] = 59;  fuente[86] = 10;  fuente[87] = 32;
+    fuente[88] = 32;  fuente[89] = 32;  fuente[90] = 32;  fuente[91] = 125;  fuente[92] = 10;  fuente[93] = 32;  fuente[94] = 32;  fuente[95] = 32;
+    fuente[96] = 32;  fuente[97] = 114;  fuente[98] = 101;  fuente[99] = 116;  fuente[100] = 117;  fuente[101] = 114;  fuente[102] = 110;  fuente[103] = 32;
+    fuente[104] = 48;  fuente[105] = 59;  fuente[106] = 10;  fuente[107] = 125;  fuente[108] = 10;
+    total = 109;
     return 0;
 }
 
 // ============================================================
-// TABLA LITERAL 2 — LA SONDA DE DECLARACIONES.
+// CARGA FUENTE2 — la sonda de declaraciones.
 //
 // int g;
 // int suma(int a, int b)
@@ -1922,72 +2658,32 @@ int inicia_tokens()
 //     print(r);
 //     return 0;
 // }
-//
-// Generada mecanicamente desde esa fuente: 43 tokens,
-// mismo formato que la tabla de FUENTE.
 // ============================================================
 
-int inicia_tokens2()
+int carga_fuente2()
 {
-    int tipo[64];
-    int tinicio[64];
-    int tlargo[64];
-    int tvalor[64];
-
-    tipo[0] = TokenType::KwInt;       tinicio[0] = 0;     tlargo[0] = 3;
-    tipo[1] = TokenType::Identifier;  tinicio[1] = 4;     tlargo[1] = 1;
-    tipo[2] = TokenType::Semicolon;   tinicio[2] = 5;     tlargo[2] = 1;
-    tipo[3] = TokenType::KwInt;       tinicio[3] = 7;     tlargo[3] = 3;
-    tipo[4] = TokenType::Identifier;  tinicio[4] = 11;    tlargo[4] = 4;
-    tipo[5] = TokenType::LParen;      tinicio[5] = 15;    tlargo[5] = 1;
-    tipo[6] = TokenType::KwInt;       tinicio[6] = 16;    tlargo[6] = 3;
-    tipo[7] = TokenType::Identifier;  tinicio[7] = 20;    tlargo[7] = 1;
-    tipo[8] = TokenType::Comma;       tinicio[8] = 21;    tlargo[8] = 1;
-    tipo[9] = TokenType::KwInt;       tinicio[9] = 23;    tlargo[9] = 3;
-    tipo[10] = TokenType::Identifier; tinicio[10] = 27;   tlargo[10] = 1;
-    tipo[11] = TokenType::RParen;     tinicio[11] = 28;   tlargo[11] = 1;
-    tipo[12] = TokenType::LBrace;     tinicio[12] = 30;   tlargo[12] = 1;
-    tipo[13] = TokenType::KwReturn;   tinicio[13] = 36;   tlargo[13] = 6;
-    tipo[14] = TokenType::Identifier; tinicio[14] = 43;   tlargo[14] = 1;
-    tipo[15] = TokenType::Plus;       tinicio[15] = 45;   tlargo[15] = 1;
-    tipo[16] = TokenType::Identifier; tinicio[16] = 47;   tlargo[16] = 1;
-    tipo[17] = TokenType::Semicolon;  tinicio[17] = 48;   tlargo[17] = 1;
-    tipo[18] = TokenType::RBrace;     tinicio[18] = 50;   tlargo[18] = 1;
-    tipo[19] = TokenType::KwInt;      tinicio[19] = 52;   tlargo[19] = 3;
-    tipo[20] = TokenType::Identifier; tinicio[20] = 56;   tlargo[20] = 4;
-    tipo[21] = TokenType::LParen;     tinicio[21] = 60;   tlargo[21] = 1;
-    tipo[22] = TokenType::RParen;     tinicio[22] = 61;   tlargo[22] = 1;
-    tipo[23] = TokenType::LBrace;     tinicio[23] = 63;   tlargo[23] = 1;
-    tipo[24] = TokenType::KwInt;      tinicio[24] = 69;   tlargo[24] = 3;
-    tipo[25] = TokenType::Identifier; tinicio[25] = 73;   tlargo[25] = 1;
-    tipo[26] = TokenType::Assign;     tinicio[26] = 75;   tlargo[26] = 1;
-    tipo[27] = TokenType::Identifier; tinicio[27] = 77;   tlargo[27] = 4;
-    tipo[28] = TokenType::LParen;     tinicio[28] = 81;   tlargo[28] = 1;
-    tipo[29] = TokenType::Identifier; tinicio[29] = 82;   tlargo[29] = 1;
-    tipo[30] = TokenType::Comma;      tinicio[30] = 83;   tlargo[30] = 1;
-    tipo[31] = TokenType::Number;     tinicio[31] = 85;   tlargo[31] = 1;
-    tipo[32] = TokenType::RParen;     tinicio[32] = 86;   tlargo[32] = 1;
-    tipo[33] = TokenType::Semicolon;  tinicio[33] = 87;   tlargo[33] = 1;
-    tipo[34] = TokenType::KwPrint;    tinicio[34] = 93;   tlargo[34] = 5;
-    tipo[35] = TokenType::LParen;     tinicio[35] = 98;   tlargo[35] = 1;
-    tipo[36] = TokenType::Identifier; tinicio[36] = 99;   tlargo[36] = 1;
-    tipo[37] = TokenType::RParen;     tinicio[37] = 100;  tlargo[37] = 1;
-    tipo[38] = TokenType::Semicolon;  tinicio[38] = 101;  tlargo[38] = 1;
-    tipo[39] = TokenType::KwReturn;   tinicio[39] = 107;  tlargo[39] = 6;
-    tipo[40] = TokenType::Number;     tinicio[40] = 114;  tlargo[40] = 1;
-    tipo[41] = TokenType::Semicolon;  tinicio[41] = 115;  tlargo[41] = 1;
-    tipo[42] = TokenType::RBrace;     tinicio[42] = 117;  tlargo[42] = 1;
-
-    tvalor[31] = 3;
-    tvalor[40] = 0;
-
-    ntok = 43;
-    pos = 0;
+    int fuente[1024];
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 103;  fuente[5] = 59;  fuente[6] = 10;  fuente[7] = 105;
+    fuente[8] = 110;  fuente[9] = 116;  fuente[10] = 32;  fuente[11] = 115;  fuente[12] = 117;  fuente[13] = 109;  fuente[14] = 97;  fuente[15] = 40;
+    fuente[16] = 105;  fuente[17] = 110;  fuente[18] = 116;  fuente[19] = 32;  fuente[20] = 97;  fuente[21] = 44;  fuente[22] = 32;  fuente[23] = 105;
+    fuente[24] = 110;  fuente[25] = 116;  fuente[26] = 32;  fuente[27] = 98;  fuente[28] = 41;  fuente[29] = 10;  fuente[30] = 123;  fuente[31] = 10;
+    fuente[32] = 32;  fuente[33] = 32;  fuente[34] = 32;  fuente[35] = 32;  fuente[36] = 114;  fuente[37] = 101;  fuente[38] = 116;  fuente[39] = 117;
+    fuente[40] = 114;  fuente[41] = 110;  fuente[42] = 32;  fuente[43] = 97;  fuente[44] = 32;  fuente[45] = 43;  fuente[46] = 32;  fuente[47] = 98;
+    fuente[48] = 59;  fuente[49] = 10;  fuente[50] = 125;  fuente[51] = 10;  fuente[52] = 105;  fuente[53] = 110;  fuente[54] = 116;  fuente[55] = 32;
+    fuente[56] = 109;  fuente[57] = 97;  fuente[58] = 105;  fuente[59] = 110;  fuente[60] = 40;  fuente[61] = 41;  fuente[62] = 10;  fuente[63] = 123;
+    fuente[64] = 10;  fuente[65] = 32;  fuente[66] = 32;  fuente[67] = 32;  fuente[68] = 32;  fuente[69] = 105;  fuente[70] = 110;  fuente[71] = 116;
+    fuente[72] = 32;  fuente[73] = 114;  fuente[74] = 32;  fuente[75] = 61;  fuente[76] = 32;  fuente[77] = 115;  fuente[78] = 117;  fuente[79] = 109;
+    fuente[80] = 97;  fuente[81] = 40;  fuente[82] = 103;  fuente[83] = 44;  fuente[84] = 32;  fuente[85] = 51;  fuente[86] = 41;  fuente[87] = 59;
+    fuente[88] = 10;  fuente[89] = 32;  fuente[90] = 32;  fuente[91] = 32;  fuente[92] = 32;  fuente[93] = 112;  fuente[94] = 114;  fuente[95] = 105;
+    fuente[96] = 110;  fuente[97] = 116;  fuente[98] = 40;  fuente[99] = 114;  fuente[100] = 41;  fuente[101] = 59;  fuente[102] = 10;  fuente[103] = 32;
+    fuente[104] = 32;  fuente[105] = 32;  fuente[106] = 32;  fuente[107] = 114;  fuente[108] = 101;  fuente[109] = 116;  fuente[110] = 117;  fuente[111] = 114;
+    fuente[112] = 110;  fuente[113] = 32;  fuente[114] = 48;  fuente[115] = 59;  fuente[116] = 10;  fuente[117] = 125;  fuente[118] = 10;
+    total = 119;
     return 0;
 }
 
 // ============================================================
-// TABLA LITERAL 3 — LA SONDA DE STRUCT.
+// CARGA FUENTE3 — la sonda de struct.
 //
 // struct Punto
 // {
@@ -2001,64 +2697,32 @@ int inicia_tokens2()
 //     print(r);
 //     return 0;
 // }
-//
-// Generada mecanicamente desde esa fuente: 33 tokens,
-// mismo formato que las tablas anteriores. El ';' tras
-// la '}' es un token mas de la tabla: Stage 0 lo exige
-// al cerrar la declaracion.
 // ============================================================
 
-int inicia_tokens3()
+int carga_fuente3()
 {
-    int tipo[64];
-    int tinicio[64];
-    int tlargo[64];
-    int tvalor[64];
-
-    tipo[0] = TokenType::KwStruct;   tinicio[0] = 0;    tlargo[0] = 6;
-    tipo[1] = TokenType::Identifier; tinicio[1] = 7;    tlargo[1] = 5;
-    tipo[2] = TokenType::LBrace;     tinicio[2] = 13;   tlargo[2] = 1;
-    tipo[3] = TokenType::KwInt;      tinicio[3] = 19;   tlargo[3] = 3;
-    tipo[4] = TokenType::Identifier; tinicio[4] = 23;   tlargo[4] = 1;
-    tipo[5] = TokenType::Semicolon;  tinicio[5] = 24;   tlargo[5] = 1;
-    tipo[6] = TokenType::KwInt;      tinicio[6] = 30;   tlargo[6] = 3;
-    tipo[7] = TokenType::Identifier; tinicio[7] = 34;   tlargo[7] = 1;
-    tipo[8] = TokenType::Semicolon;  tinicio[8] = 35;   tlargo[8] = 1;
-    tipo[9] = TokenType::KwString;   tinicio[9] = 41;   tlargo[9] = 6;
-    tipo[10] = TokenType::Identifier; tinicio[10] = 48;  tlargo[10] = 6;
-    tipo[11] = TokenType::Semicolon;  tinicio[11] = 54;  tlargo[11] = 1;
-    tipo[12] = TokenType::RBrace;     tinicio[12] = 56;  tlargo[12] = 1;
-    tipo[13] = TokenType::Semicolon;  tinicio[13] = 57;  tlargo[13] = 1;
-    tipo[14] = TokenType::KwInt;      tinicio[14] = 59;  tlargo[14] = 3;
-    tipo[15] = TokenType::Identifier; tinicio[15] = 63;  tlargo[15] = 4;
-    tipo[16] = TokenType::LParen;     tinicio[16] = 67;  tlargo[16] = 1;
-    tipo[17] = TokenType::RParen;     tinicio[17] = 68;  tlargo[17] = 1;
-    tipo[18] = TokenType::LBrace;     tinicio[18] = 70;  tlargo[18] = 1;
-    tipo[19] = TokenType::KwInt;      tinicio[19] = 76;  tlargo[19] = 3;
-    tipo[20] = TokenType::Identifier; tinicio[20] = 80;  tlargo[20] = 1;
-    tipo[21] = TokenType::Assign;     tinicio[21] = 82;  tlargo[21] = 1;
-    tipo[22] = TokenType::Number;     tinicio[22] = 84;  tlargo[22] = 1;
-    tipo[23] = TokenType::Semicolon;  tinicio[23] = 85;  tlargo[23] = 1;
-    tipo[24] = TokenType::KwPrint;    tinicio[24] = 91;  tlargo[24] = 5;
-    tipo[25] = TokenType::LParen;     tinicio[25] = 96;  tlargo[25] = 1;
-    tipo[26] = TokenType::Identifier; tinicio[26] = 97;  tlargo[26] = 1;
-    tipo[27] = TokenType::RParen;     tinicio[27] = 98;  tlargo[27] = 1;
-    tipo[28] = TokenType::Semicolon;  tinicio[28] = 99;  tlargo[28] = 1;
-    tipo[29] = TokenType::KwReturn;   tinicio[29] = 105; tlargo[29] = 6;
-    tipo[30] = TokenType::Number;     tinicio[30] = 112; tlargo[30] = 1;
-    tipo[31] = TokenType::Semicolon;  tinicio[31] = 113; tlargo[31] = 1;
-    tipo[32] = TokenType::RBrace;     tinicio[32] = 115; tlargo[32] = 1;
-
-    tvalor[22] = 3;
-    tvalor[30] = 0;
-
-    ntok = 33;
-    pos = 0;
+    int fuente[1024];
+    fuente[0] = 115;  fuente[1] = 116;  fuente[2] = 114;  fuente[3] = 117;  fuente[4] = 99;  fuente[5] = 116;  fuente[6] = 32;  fuente[7] = 80;
+    fuente[8] = 117;  fuente[9] = 110;  fuente[10] = 116;  fuente[11] = 111;  fuente[12] = 10;  fuente[13] = 123;  fuente[14] = 10;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 32;  fuente[18] = 32;  fuente[19] = 105;  fuente[20] = 110;  fuente[21] = 116;  fuente[22] = 32;  fuente[23] = 120;
+    fuente[24] = 59;  fuente[25] = 10;  fuente[26] = 32;  fuente[27] = 32;  fuente[28] = 32;  fuente[29] = 32;  fuente[30] = 105;  fuente[31] = 110;
+    fuente[32] = 116;  fuente[33] = 32;  fuente[34] = 121;  fuente[35] = 59;  fuente[36] = 10;  fuente[37] = 32;  fuente[38] = 32;  fuente[39] = 32;
+    fuente[40] = 32;  fuente[41] = 115;  fuente[42] = 116;  fuente[43] = 114;  fuente[44] = 105;  fuente[45] = 110;  fuente[46] = 103;  fuente[47] = 32;
+    fuente[48] = 110;  fuente[49] = 111;  fuente[50] = 109;  fuente[51] = 98;  fuente[52] = 114;  fuente[53] = 101;  fuente[54] = 59;  fuente[55] = 10;
+    fuente[56] = 125;  fuente[57] = 59;  fuente[58] = 10;  fuente[59] = 105;  fuente[60] = 110;  fuente[61] = 116;  fuente[62] = 32;  fuente[63] = 109;
+    fuente[64] = 97;  fuente[65] = 105;  fuente[66] = 110;  fuente[67] = 40;  fuente[68] = 41;  fuente[69] = 10;  fuente[70] = 123;  fuente[71] = 10;
+    fuente[72] = 32;  fuente[73] = 32;  fuente[74] = 32;  fuente[75] = 32;  fuente[76] = 105;  fuente[77] = 110;  fuente[78] = 116;  fuente[79] = 32;
+    fuente[80] = 114;  fuente[81] = 32;  fuente[82] = 61;  fuente[83] = 32;  fuente[84] = 51;  fuente[85] = 59;  fuente[86] = 10;  fuente[87] = 32;
+    fuente[88] = 32;  fuente[89] = 32;  fuente[90] = 32;  fuente[91] = 112;  fuente[92] = 114;  fuente[93] = 105;  fuente[94] = 110;  fuente[95] = 116;
+    fuente[96] = 40;  fuente[97] = 114;  fuente[98] = 41;  fuente[99] = 59;  fuente[100] = 10;  fuente[101] = 32;  fuente[102] = 32;  fuente[103] = 32;
+    fuente[104] = 32;  fuente[105] = 114;  fuente[106] = 101;  fuente[107] = 116;  fuente[108] = 117;  fuente[109] = 114;  fuente[110] = 110;  fuente[111] = 32;
+    fuente[112] = 48;  fuente[113] = 59;  fuente[114] = 10;  fuente[115] = 125;  fuente[116] = 10;
+    total = 117;
     return 0;
 }
 
 // ============================================================
-// TABLA LITERAL 4 — LA SONDA DE ENUM.
+// CARGA FUENTE4 — la sonda de enum.
 //
 // enum Color
 // {
@@ -2074,76 +2738,11 @@ int inicia_tokens3()
 //     print(c);
 //     return 0;
 // }
-//
-// Generada mecanicamente desde esa fuente: 47 tokens.
-// Trae ademas el arreglo fuente[] con los caracteres
-// de la fuente (170), porque el pliegue de :: compara
-// los nombres por contenido (mismo_texto). La sonda
-// se compilo con Stage 0: su AST da Rojo = 0, Verde
-// = 10, Azul = 11 y los tres inicializadores
-// plegados a esos literales — lo que esta tabla debe
-// reproducir.
 // ============================================================
 
-int inicia_tokens4()
+int carga_fuente4()
 {
-    int tipo[64];
-    int tinicio[64];
-    int tlargo[64];
-    int tvalor[64];
-    int fuente[512];
-
-    tipo[0] = TokenType::KwEnum;     tinicio[0] = 0;    tlargo[0] = 4;
-    tipo[1] = TokenType::Identifier; tinicio[1] = 5;    tlargo[1] = 5;
-    tipo[2] = TokenType::LBrace;     tinicio[2] = 11;   tlargo[2] = 1;
-    tipo[3] = TokenType::Identifier; tinicio[3] = 17;   tlargo[3] = 4;
-    tipo[4] = TokenType::Comma;      tinicio[4] = 21;   tlargo[4] = 1;
-    tipo[5] = TokenType::Identifier; tinicio[5] = 27;   tlargo[5] = 5;
-    tipo[6] = TokenType::Assign;     tinicio[6] = 33;   tlargo[6] = 1;
-    tipo[7] = TokenType::Number;     tinicio[7] = 35;   tlargo[7] = 2;
-    tipo[8] = TokenType::Comma;      tinicio[8] = 37;   tlargo[8] = 1;
-    tipo[9] = TokenType::Identifier; tinicio[9] = 43;   tlargo[9] = 4;
-    tipo[10] = TokenType::RBrace;     tinicio[10] = 48;  tlargo[10] = 1;
-    tipo[11] = TokenType::Semicolon;  tinicio[11] = 49;  tlargo[11] = 1;
-    tipo[12] = TokenType::KwInt;      tinicio[12] = 51;  tlargo[12] = 3;
-    tipo[13] = TokenType::Identifier; tinicio[13] = 55;  tlargo[13] = 4;
-    tipo[14] = TokenType::LParen;     tinicio[14] = 59;  tlargo[14] = 1;
-    tipo[15] = TokenType::RParen;     tinicio[15] = 60;  tlargo[15] = 1;
-    tipo[16] = TokenType::LBrace;     tinicio[16] = 62;  tlargo[16] = 1;
-    tipo[17] = TokenType::KwInt;      tinicio[17] = 68;  tlargo[17] = 3;
-    tipo[18] = TokenType::Identifier; tinicio[18] = 72;  tlargo[18] = 1;
-    tipo[19] = TokenType::Assign;     tinicio[19] = 74;  tlargo[19] = 1;
-    tipo[20] = TokenType::Identifier; tinicio[20] = 76;  tlargo[20] = 5;
-    tipo[21] = TokenType::ColonColon; tinicio[21] = 81;  tlargo[21] = 2;
-    tipo[22] = TokenType::Identifier; tinicio[22] = 83;  tlargo[22] = 4;
-    tipo[23] = TokenType::Semicolon;  tinicio[23] = 87;  tlargo[23] = 1;
-    tipo[24] = TokenType::KwInt;      tinicio[24] = 93;  tlargo[24] = 3;
-    tipo[25] = TokenType::Identifier; tinicio[25] = 97;  tlargo[25] = 1;
-    tipo[26] = TokenType::Assign;     tinicio[26] = 99;  tlargo[26] = 1;
-    tipo[27] = TokenType::Identifier; tinicio[27] = 101; tlargo[27] = 5;
-    tipo[28] = TokenType::ColonColon; tinicio[28] = 106; tlargo[28] = 2;
-    tipo[29] = TokenType::Identifier; tinicio[29] = 108; tlargo[29] = 5;
-    tipo[30] = TokenType::Semicolon;  tinicio[30] = 113; tlargo[30] = 1;
-    tipo[31] = TokenType::KwInt;      tinicio[31] = 119; tlargo[31] = 3;
-    tipo[32] = TokenType::Identifier; tinicio[32] = 123; tlargo[32] = 1;
-    tipo[33] = TokenType::Assign;     tinicio[33] = 125; tlargo[33] = 1;
-    tipo[34] = TokenType::Identifier; tinicio[34] = 127; tlargo[34] = 5;
-    tipo[35] = TokenType::ColonColon; tinicio[35] = 132; tlargo[35] = 2;
-    tipo[36] = TokenType::Identifier; tinicio[36] = 134; tlargo[36] = 4;
-    tipo[37] = TokenType::Semicolon;  tinicio[37] = 138; tlargo[37] = 1;
-    tipo[38] = TokenType::KwPrint;    tinicio[38] = 144; tlargo[38] = 5;
-    tipo[39] = TokenType::LParen;     tinicio[39] = 149; tlargo[39] = 1;
-    tipo[40] = TokenType::Identifier; tinicio[40] = 150; tlargo[40] = 1;
-    tipo[41] = TokenType::RParen;     tinicio[41] = 151; tlargo[41] = 1;
-    tipo[42] = TokenType::Semicolon;  tinicio[42] = 152; tlargo[42] = 1;
-    tipo[43] = TokenType::KwReturn;   tinicio[43] = 158; tlargo[43] = 6;
-    tipo[44] = TokenType::Number;     tinicio[44] = 165; tlargo[44] = 1;
-    tipo[45] = TokenType::Semicolon;  tinicio[45] = 166; tlargo[45] = 1;
-    tipo[46] = TokenType::RBrace;     tinicio[46] = 168; tlargo[46] = 1;
-
-    tvalor[7] = 10;
-    tvalor[44] = 0;
-
+    int fuente[1024];
     fuente[0] = 101;  fuente[1] = 110;  fuente[2] = 117;  fuente[3] = 109;  fuente[4] = 32;  fuente[5] = 67;  fuente[6] = 111;  fuente[7] = 108;
     fuente[8] = 111;  fuente[9] = 114;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
     fuente[16] = 32;  fuente[17] = 82;  fuente[18] = 111;  fuente[19] = 106;  fuente[20] = 111;  fuente[21] = 44;  fuente[22] = 10;  fuente[23] = 32;
@@ -2166,14 +2765,12 @@ int inicia_tokens4()
     fuente[152] = 59;  fuente[153] = 10;  fuente[154] = 32;  fuente[155] = 32;  fuente[156] = 32;  fuente[157] = 32;  fuente[158] = 114;  fuente[159] = 101;
     fuente[160] = 116;  fuente[161] = 117;  fuente[162] = 114;  fuente[163] = 110;  fuente[164] = 32;  fuente[165] = 48;  fuente[166] = 59;  fuente[167] = 10;
     fuente[168] = 125;  fuente[169] = 10;
-
-    ntok = 47;
-    pos = 0;
+    total = 170;
     return 0;
 }
 
 // ============================================================
-// TABLA LITERAL 5 — LA SONDA DE CONTROL DE FLUJO.
+// CARGA FUENTE5 — la sonda de control de flujo.
 //
 // int main()
 // {
@@ -2198,174 +2795,69 @@ int inicia_tokens4()
 //     }
 //     return s;
 // }
-//
-// Generada mecanicamente desde esa fuente: 74 tokens.
-// La sonda se compilo con Stage 0: su IR trae el
-// bucle completo y la cadena if / else if / else con
-// sus tres print — lo que esta tabla debe reproducir
-// en nodos.
 // ============================================================
 
-int inicia_tokens5()
+int carga_fuente5()
 {
-    int tipo[80];
-    int tinicio[80];
-    int tlargo[80];
-    int tvalor[80];
-
-    tipo[0 ] = TokenType::KwInt;      tinicio[0 ] = 0   ; tlargo[0 ] = 3;
-    tipo[1 ] = TokenType::Identifier; tinicio[1 ] = 4   ; tlargo[1 ] = 4;
-    tipo[2 ] = TokenType::LParen;     tinicio[2 ] = 8   ; tlargo[2 ] = 1;
-    tipo[3 ] = TokenType::RParen;     tinicio[3 ] = 9   ; tlargo[3 ] = 1;
-    tipo[4 ] = TokenType::LBrace;     tinicio[4 ] = 11  ; tlargo[4 ] = 1;
-    tipo[5 ] = TokenType::KwInt;      tinicio[5 ] = 17  ; tlargo[5 ] = 3;
-    tipo[6 ] = TokenType::Identifier; tinicio[6 ] = 21  ; tlargo[6 ] = 1;
-    tipo[7 ] = TokenType::Assign;     tinicio[7 ] = 23  ; tlargo[7 ] = 1;
-    tipo[8 ] = TokenType::Number;     tinicio[8 ] = 25  ; tlargo[8 ] = 1;
-    tipo[9 ] = TokenType::Semicolon;  tinicio[9 ] = 26  ; tlargo[9 ] = 1;
-    tipo[10] = TokenType::KwInt;      tinicio[10] = 32  ; tlargo[10] = 3;
-    tipo[11] = TokenType::Identifier; tinicio[11] = 36  ; tlargo[11] = 1;
-    tipo[12] = TokenType::Assign;     tinicio[12] = 38  ; tlargo[12] = 1;
-    tipo[13] = TokenType::Number;     tinicio[13] = 40  ; tlargo[13] = 1;
-    tipo[14] = TokenType::Semicolon;  tinicio[14] = 41  ; tlargo[14] = 1;
-    tipo[15] = TokenType::KwWhile;    tinicio[15] = 47  ; tlargo[15] = 5;
-    tipo[16] = TokenType::LParen;     tinicio[16] = 53  ; tlargo[16] = 1;
-    tipo[17] = TokenType::Identifier; tinicio[17] = 54  ; tlargo[17] = 1;
-    tipo[18] = TokenType::Less;       tinicio[18] = 56  ; tlargo[18] = 1;
-    tipo[19] = TokenType::Number;     tinicio[19] = 58  ; tlargo[19] = 1;
-    tipo[20] = TokenType::RParen;     tinicio[20] = 59  ; tlargo[20] = 1;
-    tipo[21] = TokenType::LBrace;     tinicio[21] = 65  ; tlargo[21] = 1;
-    tipo[22] = TokenType::Identifier; tinicio[22] = 75  ; tlargo[22] = 1;
-    tipo[23] = TokenType::Assign;     tinicio[23] = 77  ; tlargo[23] = 1;
-    tipo[24] = TokenType::Identifier; tinicio[24] = 79  ; tlargo[24] = 1;
-    tipo[25] = TokenType::Plus;       tinicio[25] = 81  ; tlargo[25] = 1;
-    tipo[26] = TokenType::Identifier; tinicio[26] = 83  ; tlargo[26] = 1;
-    tipo[27] = TokenType::Semicolon;  tinicio[27] = 84  ; tlargo[27] = 1;
-    tipo[28] = TokenType::Identifier; tinicio[28] = 94  ; tlargo[28] = 1;
-    tipo[29] = TokenType::Assign;     tinicio[29] = 96  ; tlargo[29] = 1;
-    tipo[30] = TokenType::Identifier; tinicio[30] = 98  ; tlargo[30] = 1;
-    tipo[31] = TokenType::Plus;       tinicio[31] = 100 ; tlargo[31] = 1;
-    tipo[32] = TokenType::Number;     tinicio[32] = 102 ; tlargo[32] = 1;
-    tipo[33] = TokenType::Semicolon;  tinicio[33] = 103 ; tlargo[33] = 1;
-    tipo[34] = TokenType::RBrace;     tinicio[34] = 109 ; tlargo[34] = 1;
-    tipo[35] = TokenType::KwIf;       tinicio[35] = 115 ; tlargo[35] = 2;
-    tipo[36] = TokenType::LParen;     tinicio[36] = 118 ; tlargo[36] = 1;
-    tipo[37] = TokenType::Identifier; tinicio[37] = 119 ; tlargo[37] = 1;
-    tipo[38] = TokenType::Equal;      tinicio[38] = 121 ; tlargo[38] = 2;
-    tipo[39] = TokenType::Number;     tinicio[39] = 124 ; tlargo[39] = 1;
-    tipo[40] = TokenType::RParen;     tinicio[40] = 125 ; tlargo[40] = 1;
-    tipo[41] = TokenType::LBrace;     tinicio[41] = 131 ; tlargo[41] = 1;
-    tipo[42] = TokenType::KwPrint;    tinicio[42] = 141 ; tlargo[42] = 5;
-    tipo[43] = TokenType::LParen;     tinicio[43] = 146 ; tlargo[43] = 1;
-    tipo[44] = TokenType::Identifier; tinicio[44] = 147 ; tlargo[44] = 1;
-    tipo[45] = TokenType::RParen;     tinicio[45] = 148 ; tlargo[45] = 1;
-    tipo[46] = TokenType::Semicolon;  tinicio[46] = 149 ; tlargo[46] = 1;
-    tipo[47] = TokenType::RBrace;     tinicio[47] = 155 ; tlargo[47] = 1;
-    tipo[48] = TokenType::KwElse;     tinicio[48] = 161 ; tlargo[48] = 4;
-    tipo[49] = TokenType::KwIf;       tinicio[49] = 166 ; tlargo[49] = 2;
-    tipo[50] = TokenType::LParen;     tinicio[50] = 169 ; tlargo[50] = 1;
-    tipo[51] = TokenType::Identifier; tinicio[51] = 170 ; tlargo[51] = 1;
-    tipo[52] = TokenType::Equal;      tinicio[52] = 172 ; tlargo[52] = 2;
-    tipo[53] = TokenType::Number;     tinicio[53] = 175 ; tlargo[53] = 1;
-    tipo[54] = TokenType::RParen;     tinicio[54] = 176 ; tlargo[54] = 1;
-    tipo[55] = TokenType::LBrace;     tinicio[55] = 182 ; tlargo[55] = 1;
-    tipo[56] = TokenType::KwPrint;    tinicio[56] = 192 ; tlargo[56] = 5;
-    tipo[57] = TokenType::LParen;     tinicio[57] = 197 ; tlargo[57] = 1;
-    tipo[58] = TokenType::Number;     tinicio[58] = 198 ; tlargo[58] = 1;
-    tipo[59] = TokenType::RParen;     tinicio[59] = 199 ; tlargo[59] = 1;
-    tipo[60] = TokenType::Semicolon;  tinicio[60] = 200 ; tlargo[60] = 1;
-    tipo[61] = TokenType::RBrace;     tinicio[61] = 206 ; tlargo[61] = 1;
-    tipo[62] = TokenType::KwElse;     tinicio[62] = 212 ; tlargo[62] = 4;
-    tipo[63] = TokenType::LBrace;     tinicio[63] = 221 ; tlargo[63] = 1;
-    tipo[64] = TokenType::KwPrint;    tinicio[64] = 231 ; tlargo[64] = 5;
-    tipo[65] = TokenType::LParen;     tinicio[65] = 236 ; tlargo[65] = 1;
-    tipo[66] = TokenType::Number;     tinicio[66] = 237 ; tlargo[66] = 1;
-    tipo[67] = TokenType::RParen;     tinicio[67] = 238 ; tlargo[67] = 1;
-    tipo[68] = TokenType::Semicolon;  tinicio[68] = 239 ; tlargo[68] = 1;
-    tipo[69] = TokenType::RBrace;     tinicio[69] = 245 ; tlargo[69] = 1;
-    tipo[70] = TokenType::KwReturn;   tinicio[70] = 251 ; tlargo[70] = 6;
-    tipo[71] = TokenType::Identifier; tinicio[71] = 258 ; tlargo[71] = 1;
-    tipo[72] = TokenType::Semicolon;  tinicio[72] = 259 ; tlargo[72] = 1;
-    tipo[73] = TokenType::RBrace;     tinicio[73] = 261 ; tlargo[73] = 1;
-
-    tvalor[8] = 0;
-    tvalor[13] = 0;
-    tvalor[19] = 3;
-    tvalor[32] = 1;
-    tvalor[39] = 3;
-    tvalor[53] = 2;
-    tvalor[58] = 2;
-    tvalor[66] = 9;
-
-    ntok = 74;
-    pos = 0;
+    int fuente[1024];
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
+    fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 105;  fuente[18] = 110;  fuente[19] = 116;  fuente[20] = 32;  fuente[21] = 105;  fuente[22] = 32;  fuente[23] = 61;
+    fuente[24] = 32;  fuente[25] = 48;  fuente[26] = 59;  fuente[27] = 10;  fuente[28] = 32;  fuente[29] = 32;  fuente[30] = 32;  fuente[31] = 32;
+    fuente[32] = 105;  fuente[33] = 110;  fuente[34] = 116;  fuente[35] = 32;  fuente[36] = 115;  fuente[37] = 32;  fuente[38] = 61;  fuente[39] = 32;
+    fuente[40] = 48;  fuente[41] = 59;  fuente[42] = 10;  fuente[43] = 32;  fuente[44] = 32;  fuente[45] = 32;  fuente[46] = 32;  fuente[47] = 119;
+    fuente[48] = 104;  fuente[49] = 105;  fuente[50] = 108;  fuente[51] = 101;  fuente[52] = 32;  fuente[53] = 40;  fuente[54] = 105;  fuente[55] = 32;
+    fuente[56] = 60;  fuente[57] = 32;  fuente[58] = 51;  fuente[59] = 41;  fuente[60] = 10;  fuente[61] = 32;  fuente[62] = 32;  fuente[63] = 32;
+    fuente[64] = 32;  fuente[65] = 123;  fuente[66] = 10;  fuente[67] = 32;  fuente[68] = 32;  fuente[69] = 32;  fuente[70] = 32;  fuente[71] = 32;
+    fuente[72] = 32;  fuente[73] = 32;  fuente[74] = 32;  fuente[75] = 115;  fuente[76] = 32;  fuente[77] = 61;  fuente[78] = 32;  fuente[79] = 115;
+    fuente[80] = 32;  fuente[81] = 43;  fuente[82] = 32;  fuente[83] = 105;  fuente[84] = 59;  fuente[85] = 10;  fuente[86] = 32;  fuente[87] = 32;
+    fuente[88] = 32;  fuente[89] = 32;  fuente[90] = 32;  fuente[91] = 32;  fuente[92] = 32;  fuente[93] = 32;  fuente[94] = 105;  fuente[95] = 32;
+    fuente[96] = 61;  fuente[97] = 32;  fuente[98] = 105;  fuente[99] = 32;  fuente[100] = 43;  fuente[101] = 32;  fuente[102] = 49;  fuente[103] = 59;
+    fuente[104] = 10;  fuente[105] = 32;  fuente[106] = 32;  fuente[107] = 32;  fuente[108] = 32;  fuente[109] = 125;  fuente[110] = 10;  fuente[111] = 32;
+    fuente[112] = 32;  fuente[113] = 32;  fuente[114] = 32;  fuente[115] = 105;  fuente[116] = 102;  fuente[117] = 32;  fuente[118] = 40;  fuente[119] = 115;
+    fuente[120] = 32;  fuente[121] = 61;  fuente[122] = 61;  fuente[123] = 32;  fuente[124] = 51;  fuente[125] = 41;  fuente[126] = 10;  fuente[127] = 32;
+    fuente[128] = 32;  fuente[129] = 32;  fuente[130] = 32;  fuente[131] = 123;  fuente[132] = 10;  fuente[133] = 32;  fuente[134] = 32;  fuente[135] = 32;
+    fuente[136] = 32;  fuente[137] = 32;  fuente[138] = 32;  fuente[139] = 32;  fuente[140] = 32;  fuente[141] = 112;  fuente[142] = 114;  fuente[143] = 105;
+    fuente[144] = 110;  fuente[145] = 116;  fuente[146] = 40;  fuente[147] = 115;  fuente[148] = 41;  fuente[149] = 59;  fuente[150] = 10;  fuente[151] = 32;
+    fuente[152] = 32;  fuente[153] = 32;  fuente[154] = 32;  fuente[155] = 125;  fuente[156] = 10;  fuente[157] = 32;  fuente[158] = 32;  fuente[159] = 32;
+    fuente[160] = 32;  fuente[161] = 101;  fuente[162] = 108;  fuente[163] = 115;  fuente[164] = 101;  fuente[165] = 32;  fuente[166] = 105;  fuente[167] = 102;
+    fuente[168] = 32;  fuente[169] = 40;  fuente[170] = 115;  fuente[171] = 32;  fuente[172] = 61;  fuente[173] = 61;  fuente[174] = 32;  fuente[175] = 50;
+    fuente[176] = 41;  fuente[177] = 10;  fuente[178] = 32;  fuente[179] = 32;  fuente[180] = 32;  fuente[181] = 32;  fuente[182] = 123;  fuente[183] = 10;
+    fuente[184] = 32;  fuente[185] = 32;  fuente[186] = 32;  fuente[187] = 32;  fuente[188] = 32;  fuente[189] = 32;  fuente[190] = 32;  fuente[191] = 32;
+    fuente[192] = 112;  fuente[193] = 114;  fuente[194] = 105;  fuente[195] = 110;  fuente[196] = 116;  fuente[197] = 40;  fuente[198] = 50;  fuente[199] = 41;
+    fuente[200] = 59;  fuente[201] = 10;  fuente[202] = 32;  fuente[203] = 32;  fuente[204] = 32;  fuente[205] = 32;  fuente[206] = 125;  fuente[207] = 10;
+    fuente[208] = 32;  fuente[209] = 32;  fuente[210] = 32;  fuente[211] = 32;  fuente[212] = 101;  fuente[213] = 108;  fuente[214] = 115;  fuente[215] = 101;
+    fuente[216] = 10;  fuente[217] = 32;  fuente[218] = 32;  fuente[219] = 32;  fuente[220] = 32;  fuente[221] = 123;  fuente[222] = 10;  fuente[223] = 32;
+    fuente[224] = 32;  fuente[225] = 32;  fuente[226] = 32;  fuente[227] = 32;  fuente[228] = 32;  fuente[229] = 32;  fuente[230] = 32;  fuente[231] = 112;
+    fuente[232] = 114;  fuente[233] = 105;  fuente[234] = 110;  fuente[235] = 116;  fuente[236] = 40;  fuente[237] = 57;  fuente[238] = 41;  fuente[239] = 59;
+    fuente[240] = 10;  fuente[241] = 32;  fuente[242] = 32;  fuente[243] = 32;  fuente[244] = 32;  fuente[245] = 125;  fuente[246] = 10;  fuente[247] = 32;
+    fuente[248] = 32;  fuente[249] = 32;  fuente[250] = 32;  fuente[251] = 114;  fuente[252] = 101;  fuente[253] = 116;  fuente[254] = 117;  fuente[255] = 114;
+    fuente[256] = 110;  fuente[257] = 32;  fuente[258] = 115;  fuente[259] = 59;  fuente[260] = 10;  fuente[261] = 125;  fuente[262] = 10;
+    total = 263;
     return 0;
 }
 
-int inicia_tokens6()
+// ============================================================
+// CARGA FUENTE6 — la sonda de print_int.
+//
+// int doble(int n)
+// {
+//     return n * 2;
+// }
+// int main()
+// {
+//     int v = 21;
+//     print_int(v);
+//     print_int(doble(v));
+//     print_int(7);
+//     print("FIN");
+//     return 0;
+// }
+// ============================================================
+
+int carga_fuente6()
 {
-    int tipo[80];
-    int tinicio[80];
-    int tlargo[80];
-    int tvalor[80];
-    int fuente[512];
-
-    tipo[0 ] = TokenType::KwInt;       tinicio[0 ] = 0   ; tlargo[0 ] = 3;
-    tipo[1 ] = TokenType::Identifier;  tinicio[1 ] = 4   ; tlargo[1 ] = 5;
-    tipo[2 ] = TokenType::LParen;      tinicio[2 ] = 9   ; tlargo[2 ] = 1;
-    tipo[3 ] = TokenType::KwInt;       tinicio[3 ] = 10  ; tlargo[3 ] = 3;
-    tipo[4 ] = TokenType::Identifier;  tinicio[4 ] = 14  ; tlargo[4 ] = 1;
-    tipo[5 ] = TokenType::RParen;      tinicio[5 ] = 15  ; tlargo[5 ] = 1;
-    tipo[6 ] = TokenType::LBrace;      tinicio[6 ] = 17  ; tlargo[6 ] = 1;
-    tipo[7 ] = TokenType::KwReturn;    tinicio[7 ] = 23  ; tlargo[7 ] = 6;
-    tipo[8 ] = TokenType::Identifier;  tinicio[8 ] = 30  ; tlargo[8 ] = 1;
-    tipo[9 ] = TokenType::Multiply;    tinicio[9 ] = 32  ; tlargo[9 ] = 1;
-    tipo[10] = TokenType::Number;      tinicio[10] = 34  ; tlargo[10] = 1;
-    tipo[11] = TokenType::Semicolon;   tinicio[11] = 35  ; tlargo[11] = 1;
-    tipo[12] = TokenType::RBrace;      tinicio[12] = 37  ; tlargo[12] = 1;
-    tipo[13] = TokenType::KwInt;       tinicio[13] = 39  ; tlargo[13] = 3;
-    tipo[14] = TokenType::Identifier;  tinicio[14] = 43  ; tlargo[14] = 4;
-    tipo[15] = TokenType::LParen;      tinicio[15] = 47  ; tlargo[15] = 1;
-    tipo[16] = TokenType::RParen;      tinicio[16] = 48  ; tlargo[16] = 1;
-    tipo[17] = TokenType::LBrace;      tinicio[17] = 50  ; tlargo[17] = 1;
-    tipo[18] = TokenType::KwInt;       tinicio[18] = 56  ; tlargo[18] = 3;
-    tipo[19] = TokenType::Identifier;  tinicio[19] = 60  ; tlargo[19] = 1;
-    tipo[20] = TokenType::Assign;      tinicio[20] = 62  ; tlargo[20] = 1;
-    tipo[21] = TokenType::Number;      tinicio[21] = 64  ; tlargo[21] = 2;
-    tipo[22] = TokenType::Semicolon;   tinicio[22] = 66  ; tlargo[22] = 1;
-    tipo[23] = TokenType::Identifier;  tinicio[23] = 72  ; tlargo[23] = 9;
-    tipo[24] = TokenType::LParen;      tinicio[24] = 81  ; tlargo[24] = 1;
-    tipo[25] = TokenType::Identifier;  tinicio[25] = 82  ; tlargo[25] = 1;
-    tipo[26] = TokenType::RParen;      tinicio[26] = 83  ; tlargo[26] = 1;
-    tipo[27] = TokenType::Semicolon;   tinicio[27] = 84  ; tlargo[27] = 1;
-    tipo[28] = TokenType::Identifier;  tinicio[28] = 90  ; tlargo[28] = 9;
-    tipo[29] = TokenType::LParen;      tinicio[29] = 99  ; tlargo[29] = 1;
-    tipo[30] = TokenType::Identifier;  tinicio[30] = 100 ; tlargo[30] = 5;
-    tipo[31] = TokenType::LParen;      tinicio[31] = 105 ; tlargo[31] = 1;
-    tipo[32] = TokenType::Identifier;  tinicio[32] = 106 ; tlargo[32] = 1;
-    tipo[33] = TokenType::RParen;      tinicio[33] = 107 ; tlargo[33] = 1;
-    tipo[34] = TokenType::RParen;      tinicio[34] = 108 ; tlargo[34] = 1;
-    tipo[35] = TokenType::Semicolon;   tinicio[35] = 109 ; tlargo[35] = 1;
-    tipo[36] = TokenType::Identifier;  tinicio[36] = 115 ; tlargo[36] = 9;
-    tipo[37] = TokenType::LParen;      tinicio[37] = 124 ; tlargo[37] = 1;
-    tipo[38] = TokenType::Number;      tinicio[38] = 125 ; tlargo[38] = 1;
-    tipo[39] = TokenType::RParen;      tinicio[39] = 126 ; tlargo[39] = 1;
-    tipo[40] = TokenType::Semicolon;   tinicio[40] = 127 ; tlargo[40] = 1;
-    tipo[41] = TokenType::KwPrint;     tinicio[41] = 133 ; tlargo[41] = 5;
-    tipo[42] = TokenType::LParen;      tinicio[42] = 138 ; tlargo[42] = 1;
-    tipo[43] = TokenType::String;      tinicio[43] = 139 ; tlargo[43] = 5;
-    tipo[44] = TokenType::RParen;      tinicio[44] = 144 ; tlargo[44] = 1;
-    tipo[45] = TokenType::Semicolon;   tinicio[45] = 145 ; tlargo[45] = 1;
-    tipo[46] = TokenType::KwReturn;    tinicio[46] = 151 ; tlargo[46] = 6;
-    tipo[47] = TokenType::Number;      tinicio[47] = 158 ; tlargo[47] = 1;
-    tipo[48] = TokenType::Semicolon;   tinicio[48] = 159 ; tlargo[48] = 1;
-    tipo[49] = TokenType::RBrace;      tinicio[49] = 161 ; tlargo[49] = 1;
-
-    tvalor[10] = 2;
-    tvalor[21] = 21;
-    tvalor[38] = 7;
-    tvalor[47] = 0;
-
+    int fuente[1024];
     fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 100;  fuente[5] = 111;  fuente[6] = 98;  fuente[7] = 108;
     fuente[8] = 101;  fuente[9] = 40;  fuente[10] = 105;  fuente[11] = 110;  fuente[12] = 116;  fuente[13] = 32;  fuente[14] = 110;  fuente[15] = 41;
     fuente[16] = 10;  fuente[17] = 123;  fuente[18] = 10;  fuente[19] = 32;  fuente[20] = 32;  fuente[21] = 32;  fuente[22] = 32;  fuente[23] = 114;
@@ -2387,59 +2879,30 @@ int inicia_tokens6()
     fuente[144] = 41;  fuente[145] = 59;  fuente[146] = 10;  fuente[147] = 32;  fuente[148] = 32;  fuente[149] = 32;  fuente[150] = 32;  fuente[151] = 114;
     fuente[152] = 101;  fuente[153] = 116;  fuente[154] = 117;  fuente[155] = 114;  fuente[156] = 110;  fuente[157] = 32;  fuente[158] = 48;  fuente[159] = 59;
     fuente[160] = 10;  fuente[161] = 125;
-    ntok = 50;
-    pos = 0;
+    total = 162;
     return 0;
 }
 
-int inicia_tokens7()
+// ============================================================
+// CARGA FUENTE7 — la sonda de Persona.
+//
+// struct Persona
+// {
+//     string nombre;
+//     int edad;
+// };
+// int main()
+// {
+//     Persona p;
+//     p.edad = 30;
+//     print_int(p.edad);
+//     return 0;
+// }
+// ============================================================
+
+int carga_fuente7()
 {
-    int tipo[80];
-    int tinicio[80];
-    int tlargo[80];
-    int tvalor[80];
-    int fuente[512];
-
-    tipo[0 ] = TokenType::KwStruct;    tinicio[0 ] = 0   ; tlargo[0 ] = 6;
-    tipo[1 ] = TokenType::Identifier;  tinicio[1 ] = 7   ; tlargo[1 ] = 7;
-    tipo[2 ] = TokenType::LBrace;      tinicio[2 ] = 15  ; tlargo[2 ] = 1;
-    tipo[3 ] = TokenType::KwString;    tinicio[3 ] = 21  ; tlargo[3 ] = 6;
-    tipo[4 ] = TokenType::Identifier;  tinicio[4 ] = 28  ; tlargo[4 ] = 6;
-    tipo[5 ] = TokenType::Semicolon;   tinicio[5 ] = 34  ; tlargo[5 ] = 1;
-    tipo[6 ] = TokenType::KwInt;       tinicio[6 ] = 40  ; tlargo[6 ] = 3;
-    tipo[7 ] = TokenType::Identifier;  tinicio[7 ] = 44  ; tlargo[7 ] = 4;
-    tipo[8 ] = TokenType::Semicolon;   tinicio[8 ] = 48  ; tlargo[8 ] = 1;
-    tipo[9 ] = TokenType::RBrace;      tinicio[9 ] = 50  ; tlargo[9 ] = 1;
-    tipo[10] = TokenType::Semicolon;   tinicio[10] = 51  ; tlargo[10] = 1;
-    tipo[11] = TokenType::KwInt;       tinicio[11] = 53  ; tlargo[11] = 3;
-    tipo[12] = TokenType::Identifier;  tinicio[12] = 57  ; tlargo[12] = 4;
-    tipo[13] = TokenType::LParen;      tinicio[13] = 61  ; tlargo[13] = 1;
-    tipo[14] = TokenType::RParen;      tinicio[14] = 62  ; tlargo[14] = 1;
-    tipo[15] = TokenType::LBrace;      tinicio[15] = 64  ; tlargo[15] = 1;
-    tipo[16] = TokenType::Identifier;  tinicio[16] = 70  ; tlargo[16] = 7;
-    tipo[17] = TokenType::Identifier;  tinicio[17] = 78  ; tlargo[17] = 1;
-    tipo[18] = TokenType::Semicolon;   tinicio[18] = 79  ; tlargo[18] = 1;
-    tipo[19] = TokenType::Identifier;  tinicio[19] = 85  ; tlargo[19] = 1;
-    tipo[20] = TokenType::Dot;         tinicio[20] = 86  ; tlargo[20] = 1;
-    tipo[21] = TokenType::Identifier;  tinicio[21] = 87  ; tlargo[21] = 4;
-    tipo[22] = TokenType::Assign;      tinicio[22] = 92  ; tlargo[22] = 1;
-    tipo[23] = TokenType::Number;      tinicio[23] = 94  ; tlargo[23] = 2;
-    tipo[24] = TokenType::Semicolon;   tinicio[24] = 96  ; tlargo[24] = 1;
-    tipo[25] = TokenType::Identifier;  tinicio[25] = 102 ; tlargo[25] = 9;
-    tipo[26] = TokenType::LParen;      tinicio[26] = 111 ; tlargo[26] = 1;
-    tipo[27] = TokenType::Identifier;  tinicio[27] = 112 ; tlargo[27] = 1;
-    tipo[28] = TokenType::Dot;         tinicio[28] = 113 ; tlargo[28] = 1;
-    tipo[29] = TokenType::Identifier;  tinicio[29] = 114 ; tlargo[29] = 4;
-    tipo[30] = TokenType::RParen;      tinicio[30] = 118 ; tlargo[30] = 1;
-    tipo[31] = TokenType::Semicolon;   tinicio[31] = 119 ; tlargo[31] = 1;
-    tipo[32] = TokenType::KwReturn;    tinicio[32] = 125 ; tlargo[32] = 6;
-    tipo[33] = TokenType::Number;      tinicio[33] = 132 ; tlargo[33] = 1;
-    tipo[34] = TokenType::Semicolon;   tinicio[34] = 133 ; tlargo[34] = 1;
-    tipo[35] = TokenType::RBrace;      tinicio[35] = 135 ; tlargo[35] = 1;
-
-    tvalor[23] = 30;
-    tvalor[33] = 0;
-
+    int fuente[1024];
     fuente[0] = 115;  fuente[1] = 116;  fuente[2] = 114;  fuente[3] = 117;  fuente[4] = 99;  fuente[5] = 116;  fuente[6] = 32;  fuente[7] = 80;
     fuente[8] = 101;  fuente[9] = 114;  fuente[10] = 115;  fuente[11] = 111;  fuente[12] = 110;  fuente[13] = 97;  fuente[14] = 10;  fuente[15] = 123;
     fuente[16] = 10;  fuente[17] = 32;  fuente[18] = 32;  fuente[19] = 32;  fuente[20] = 32;  fuente[21] = 115;  fuente[22] = 116;  fuente[23] = 114;
@@ -2457,13 +2920,12 @@ int inicia_tokens7()
     fuente[112] = 112;  fuente[113] = 46;  fuente[114] = 101;  fuente[115] = 100;  fuente[116] = 97;  fuente[117] = 100;  fuente[118] = 41;  fuente[119] = 59;
     fuente[120] = 10;  fuente[121] = 32;  fuente[122] = 32;  fuente[123] = 32;  fuente[124] = 32;  fuente[125] = 114;  fuente[126] = 101;  fuente[127] = 116;
     fuente[128] = 117;  fuente[129] = 114;  fuente[130] = 110;  fuente[131] = 32;  fuente[132] = 48;  fuente[133] = 59;  fuente[134] = 10;  fuente[135] = 125;
-    ntok = 36;
-    pos = 0;
+    total = 136;
     return 0;
 }
 
-// Tabla 8: la sonda de la rebanada 11 — una
-// declaracion con arreglo y una con inicializador:
+// ============================================================
+// CARGA FUENTE8 — la sonda de arreglos (rebanada 11).
 //
 // int main()
 // {
@@ -2473,57 +2935,11 @@ int inicia_tokens7()
 //     print_int(datos[0]);
 //     return x;
 // }
+// ============================================================
 
-int inicia_tokens8()
+int carga_fuente8()
 {
-    int tipo[80];
-    int tinicio[80];
-    int tlargo[80];
-    int tvalor[80];
-    int fuente[512];
-
-    tipo[0  ] = TokenType::KwInt;      tinicio[0  ] = 0   ; tlargo[0  ] = 3;
-    tipo[1  ] = TokenType::Identifier; tinicio[1  ] = 4   ; tlargo[1  ] = 4;
-    tipo[2  ] = TokenType::LParen;     tinicio[2  ] = 8   ; tlargo[2  ] = 1;
-    tipo[3  ] = TokenType::RParen;     tinicio[3  ] = 9   ; tlargo[3  ] = 1;
-    tipo[4  ] = TokenType::LBrace;     tinicio[4  ] = 11  ; tlargo[4  ] = 1;
-    tipo[5  ] = TokenType::KwInt;      tinicio[5  ] = 17  ; tlargo[5  ] = 3;
-    tipo[6  ] = TokenType::Identifier; tinicio[6  ] = 21  ; tlargo[6  ] = 5;
-    tipo[7  ] = TokenType::LBracket;   tinicio[7  ] = 26  ; tlargo[7  ] = 1;
-    tipo[8  ] = TokenType::Number;     tinicio[8  ] = 27  ; tlargo[8  ] = 2;
-    tipo[9  ] = TokenType::RBracket;   tinicio[9  ] = 29  ; tlargo[9  ] = 1;
-    tipo[10 ] = TokenType::Semicolon;  tinicio[10 ] = 30  ; tlargo[10 ] = 1;
-    tipo[11 ] = TokenType::KwInt;      tinicio[11 ] = 36  ; tlargo[11 ] = 3;
-    tipo[12 ] = TokenType::Identifier; tinicio[12 ] = 40  ; tlargo[12 ] = 1;
-    tipo[13 ] = TokenType::Assign;     tinicio[13 ] = 42  ; tlargo[13 ] = 1;
-    tipo[14 ] = TokenType::Number;     tinicio[14 ] = 44  ; tlargo[14 ] = 1;
-    tipo[15 ] = TokenType::Semicolon;  tinicio[15 ] = 45  ; tlargo[15 ] = 1;
-    tipo[16 ] = TokenType::Identifier; tinicio[16 ] = 51  ; tlargo[16 ] = 5;
-    tipo[17 ] = TokenType::LBracket;   tinicio[17 ] = 56  ; tlargo[17 ] = 1;
-    tipo[18 ] = TokenType::Number;     tinicio[18 ] = 57  ; tlargo[18 ] = 1;
-    tipo[19 ] = TokenType::RBracket;   tinicio[19 ] = 58  ; tlargo[19 ] = 1;
-    tipo[20 ] = TokenType::Assign;     tinicio[20 ] = 60  ; tlargo[20 ] = 1;
-    tipo[21 ] = TokenType::Number;     tinicio[21 ] = 62  ; tlargo[21 ] = 1;
-    tipo[22 ] = TokenType::Semicolon;  tinicio[22 ] = 63  ; tlargo[22 ] = 1;
-    tipo[23 ] = TokenType::Identifier; tinicio[23 ] = 69  ; tlargo[23 ] = 9;
-    tipo[24 ] = TokenType::LParen;     tinicio[24 ] = 78  ; tlargo[24 ] = 1;
-    tipo[25 ] = TokenType::Identifier; tinicio[25 ] = 79  ; tlargo[25 ] = 5;
-    tipo[26 ] = TokenType::LBracket;   tinicio[26 ] = 84  ; tlargo[26 ] = 1;
-    tipo[27 ] = TokenType::Number;     tinicio[27 ] = 85  ; tlargo[27 ] = 1;
-    tipo[28 ] = TokenType::RBracket;   tinicio[28 ] = 86  ; tlargo[28 ] = 1;
-    tipo[29 ] = TokenType::RParen;     tinicio[29 ] = 87  ; tlargo[29 ] = 1;
-    tipo[30 ] = TokenType::Semicolon;  tinicio[30 ] = 88  ; tlargo[30 ] = 1;
-    tipo[31 ] = TokenType::KwReturn;   tinicio[31 ] = 94  ; tlargo[31 ] = 6;
-    tipo[32 ] = TokenType::Identifier; tinicio[32 ] = 101 ; tlargo[32 ] = 1;
-    tipo[33 ] = TokenType::Semicolon;  tinicio[33 ] = 102 ; tlargo[33 ] = 1;
-    tipo[34 ] = TokenType::RBrace;     tinicio[34 ] = 104 ; tlargo[34 ] = 1;
-
-    tvalor[8] = 10;
-    tvalor[14] = 5;
-    tvalor[18] = 0;
-    tvalor[21] = 7;
-    tvalor[27] = 0;
-
+    int fuente[1024];
     fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
     fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
     fuente[16] = 32;  fuente[17] = 105;  fuente[18] = 110;  fuente[19] = 116;  fuente[20] = 32;  fuente[21] = 100;  fuente[22] = 97;  fuente[23] = 116;
@@ -2538,11 +2954,39 @@ int inicia_tokens8()
     fuente[88] = 59;  fuente[89] = 10;  fuente[90] = 32;  fuente[91] = 32;  fuente[92] = 32;  fuente[93] = 32;  fuente[94] = 114;  fuente[95] = 101;
     fuente[96] = 116;  fuente[97] = 117;  fuente[98] = 114;  fuente[99] = 110;  fuente[100] = 32;  fuente[101] = 120;  fuente[102] = 59;  fuente[103] = 10;
     fuente[104] = 125;  fuente[105] = 10;
-
-    ntok = 35;
-    pos = 0;
+    total = 106;
     return 0;
 }
+
+// ============================================================
+// CARGA FUENTE9 — la sonda del bloque suelto (rebanada 13).
+//
+// int main()
+// {
+//     int x = 1;
+//     {
+//         x = 2;
+//     }
+//     return x;
+// }
+// ============================================================
+
+int carga_fuente9()
+{
+    int fuente[1024];
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
+    fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 105;  fuente[18] = 110;  fuente[19] = 116;  fuente[20] = 32;  fuente[21] = 120;  fuente[22] = 32;  fuente[23] = 61;
+    fuente[24] = 32;  fuente[25] = 49;  fuente[26] = 59;  fuente[27] = 10;  fuente[28] = 32;  fuente[29] = 32;  fuente[30] = 32;  fuente[31] = 32;
+    fuente[32] = 123;  fuente[33] = 10;  fuente[34] = 32;  fuente[35] = 32;  fuente[36] = 32;  fuente[37] = 32;  fuente[38] = 32;  fuente[39] = 32;
+    fuente[40] = 32;  fuente[41] = 32;  fuente[42] = 120;  fuente[43] = 32;  fuente[44] = 61;  fuente[45] = 32;  fuente[46] = 50;  fuente[47] = 59;
+    fuente[48] = 10;  fuente[49] = 32;  fuente[50] = 32;  fuente[51] = 32;  fuente[52] = 32;  fuente[53] = 125;  fuente[54] = 10;  fuente[55] = 32;
+    fuente[56] = 32;  fuente[57] = 32;  fuente[58] = 32;  fuente[59] = 114;  fuente[60] = 101;  fuente[61] = 116;  fuente[62] = 117;  fuente[63] = 114;
+    fuente[64] = 110;  fuente[65] = 32;  fuente[66] = 120;  fuente[67] = 59;  fuente[68] = 10;  fuente[69] = 125;  fuente[70] = 10;
+    total = 71;
+    return 0;
+}
+
 
 // Deja el estado compartido como recien nacido, para
 // correr las demas tablas en el mismo programa.
@@ -2565,7 +3009,8 @@ int reinicia()
 
 int main()
 {
-    int a = inicia_tokens();
+    int cf1 = carga_fuente1();
+    int es1 = escanea();
     int p = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2578,9 +3023,11 @@ int main()
     print_int(bloques_abiertos());
     print_int(fin_kind(NodeKind::FunctionDeclaration));
     print_int(fin_kind(NodeKind::IfStatement));
+    print_int(alcanzables());
 
     int r0 = reinicia();
-    int a2 = inicia_tokens2();
+    int cf2 = carga_fuente2();
+    int es2 = escanea();
     int p2 = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2592,9 +3039,11 @@ int main()
     print_int(params_total());
     print_int(fin_programa());
     print_int(bloques_abiertos());
+    print_int(alcanzables());
 
     int r1 = reinicia();
-    int a3 = inicia_tokens3();
+    int cf3 = carga_fuente3();
+    int es3 = escanea();
     int p3 = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2606,9 +3055,11 @@ int main()
     print_int(campos_total());
     print_int(fin_programa());
     print_int(bloques_abiertos());
+    print_int(alcanzables());
 
     int r2 = reinicia();
-    int a4 = inicia_tokens4();
+    int cf4 = carga_fuente4();
+    int es4 = escanea();
     int p4 = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2621,9 +3072,11 @@ int main()
     print_int(consts_total());
     print_int(fin_programa());
     print_int(bloques_abiertos());
+    print_int(alcanzables());
 
     int r3 = reinicia();
-    int a5 = inicia_tokens5();
+    int cf5 = carga_fuente5();
+    int es5 = escanea();
     int p5 = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2638,9 +3091,11 @@ int main()
     print_int(fin_kind(NodeKind::WhileStatement));
     print_int(fin_kind(NodeKind::IfStatement));
     print_int(fin_kind(NodeKind::FunctionDeclaration));
+    print_int(alcanzables());
 
     int r4 = reinicia();
-    int a6 = inicia_tokens6();
+    int cf6 = carga_fuente6();
+    int es6 = escanea();
     int p6 = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2653,9 +3108,11 @@ int main()
     print_int(params_total());
     print_int(fin_programa());
     print_int(bloques_abiertos());
+    print_int(alcanzables());
 
     int r5 = reinicia();
-    int a7 = inicia_tokens7();
+    int cf7 = carga_fuente7();
+    int es7 = escanea();
     int p7 = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2668,9 +3125,11 @@ int main()
     print_int(campos_total());
     print_int(fin_programa());
     print_int(bloques_abiertos());
+    print_int(alcanzables());
 
     int r6 = reinicia();
-    int a8 = inicia_tokens8();
+    int cf8 = carga_fuente8();
+    int es8 = escanea();
     int p8 = parse_programa();
     print_int(nfun);
     print_int(nsent);
@@ -2682,5 +3141,19 @@ int main()
     print_int(suma_nombres());
     print_int(fin_programa());
     print_int(bloques_abiertos());
+    print_int(alcanzables());
+
+    int r7 = reinicia();
+    int cf9 = carga_fuente9();
+    int es9 = escanea();
+    int p9 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(alcanzables());
     return 0;
 }
