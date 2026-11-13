@@ -386,6 +386,17 @@ int pon_size(int nodo, int tam)
     return 0;
 }
 
+// El fin del rango de un nodo contenedor (rebanada
+// 12): emite() lo escribe al emitir, cuando el nodo
+// aun no ha analizado su contenido; pon_fin lo
+// corrige en el punto de cierre.
+int pon_fin(int nodo, int fin)
+{
+    int nfin[256];
+    nfin[nodo] = fin;
+    return 0;
+}
+
 int nodo_ini(int nodo)
 {
     int nini[256];
@@ -552,6 +563,62 @@ int suma_nombres()
         {
             int c = nval[i];
             total = total + c;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// El nfin del nodo Program (siempre el nodo 0): tras
+// la rebanada 12 debe igualar el pos final de la
+// corrida — el rango del programa es el programa.
+int fin_programa()
+{
+    int nfin[256];
+    return nfin[0];
+}
+
+// El nfin del primer nodo del kind dado (0 - 1 si no
+// hay ninguno): los fines interiores de la prueba.
+int fin_kind(int kind)
+{
+    int nkind[256];
+    int nfin[256];
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == kind)
+        {
+            int f = nfin[i];
+            return f;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// Cuantos Block siguen "abiertos": nfin todavia en
+// nini + 1, la posicion justo tras el '{' con la que
+// emite() los nace. Tras la rebanada 12 debe dar 0:
+// todo bloque cierra con su '}' consumido, nfin
+// queda al menos en nini + 2.
+int bloques_abiertos()
+{
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == NodeKind::Block)
+        {
+            int a = nini[i];
+            int b = nfin[i];
+            if (b == a + 1)
+            {
+                total = total + 1;
+            }
         }
         i = i + 1;
     }
@@ -1110,12 +1177,14 @@ int parse_sentencia()
                 // sentencias de un bloque real.
                 int nb = emite(NodeKind::Block, pos);
                 int s = parse_sentencia();
+                int fb = pon_fin(nb, pos);
             }
             if (esif == 0)
             {
                 int b2 = parse_bloque();
             }
         }
+        int f = pon_fin(n, pos);
         return 1;
     }
 
@@ -1130,6 +1199,7 @@ int parse_sentencia()
         int a = pon_hijo1(n, cond);
         nsent = nsent + 1;
         int b = parse_bloque();
+        int f = pon_fin(n, pos);
         return 1;
     }
 
@@ -1292,6 +1362,7 @@ int parse_bloque()
         }
     }
     int ok2 = espera(TokenType::RBrace);
+    int f = pon_fin(n, pos);
     return 1;
 }
 
@@ -1349,6 +1420,7 @@ int parse_funcion()
     int bloque = nnodos;
     int bl = parse_bloque();
     int d = pon_hijo1(n, bloque);
+    int f = pon_fin(n, pos);
     return 1;
 }
 
@@ -1782,6 +1854,7 @@ int parse_programa()
             int c = consume();
         }
     }
+    int f = pon_fin(n, pos);
     return 1;
 }
 
@@ -2501,6 +2574,10 @@ int main()
     print_int(nnodos);
     print_int(cuenta(NodeKind::BinaryExpression));
     print_int(cuenta(NodeKind::IntegerLiteral));
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(fin_kind(NodeKind::FunctionDeclaration));
+    print_int(fin_kind(NodeKind::IfStatement));
 
     int r0 = reinicia();
     int a2 = inicia_tokens2();
@@ -2513,6 +2590,8 @@ int main()
     print_int(npar);
     print_int(cuenta(NodeKind::FunctionDeclaration));
     print_int(params_total());
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
 
     int r1 = reinicia();
     int a3 = inicia_tokens3();
@@ -2525,6 +2604,8 @@ int main()
     print_int(ncam);
     print_int(cuenta(NodeKind::StructDeclaration));
     print_int(campos_total());
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
 
     int r2 = reinicia();
     int a4 = inicia_tokens4();
@@ -2538,6 +2619,8 @@ int main()
     print_int(cuenta(NodeKind::EnumDeclaration));
     print_int(suma_literales());
     print_int(consts_total());
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
 
     int r3 = reinicia();
     int a5 = inicia_tokens5();
@@ -2550,6 +2633,11 @@ int main()
     print_int(cuenta(NodeKind::WhileStatement));
     print_int(cuenta(NodeKind::IfStatement));
     print_int(cuenta(NodeKind::Block));
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(fin_kind(NodeKind::WhileStatement));
+    print_int(fin_kind(NodeKind::IfStatement));
+    print_int(fin_kind(NodeKind::FunctionDeclaration));
 
     int r4 = reinicia();
     int a6 = inicia_tokens6();
@@ -2563,6 +2651,8 @@ int main()
     print_int(cuenta(NodeKind::CallExpression));
     print_int(cuenta(NodeKind::PrintStatement));
     print_int(params_total());
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
 
     int r5 = reinicia();
     int a7 = inicia_tokens7();
@@ -2576,6 +2666,8 @@ int main()
     print_int(cuenta(NodeKind::VariableDeclaration));
     print_int(cuenta(NodeKind::AssignmentStatement));
     print_int(campos_total());
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
 
     int r6 = reinicia();
     int a8 = inicia_tokens8();
@@ -2588,5 +2680,7 @@ int main()
     print_int(cuenta(NodeKind::VariableDeclaration));
     print_int(tamanos_total());
     print_int(suma_nombres());
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
     return 0;
 }
