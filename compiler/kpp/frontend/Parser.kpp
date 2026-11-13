@@ -1,4 +1,4 @@
-// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 3.
+// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 5.
 // Traduccion de src/frontend/Parser.cpp (Stage 0) a K++, en el
 // estilo de subrutinas con estado compartido:
 //
@@ -30,12 +30,38 @@
 //     no es un NodeKind) — y la bifurcacion de parse():
 //     int nombre; es global, int nombre( es funcion,
 //     la misma bifurcacion que Stage 0 gano con L19.
+//   - Rebanada 4: la declaracion de estructura de Stage 0
+//     (parseStruct): campos int/string en tabla lateral
+//     (StructField no es un NodeKind: campotipo/campotok,
+//     como Parameter en partok), el tipo guardado como
+//     codigo TokenType donde Stage 0 guarda el texto, y
+//     el ';' obligatorio tras la '}' que Stage 0 exige.
+//   - Rebanada 5: la declaracion de enumeracion de
+//     Stage 0 (parseEnum) y el pliegue de la constante
+//     Enum::Miembro a literal entero en parse_primario
+//     — la primera rama del identificador, como en
+//     Stage 0. Las constantes viven en tabla lateral
+//     (EnumValue no es un NodeKind) con su valor ya
+//     calculado, y los nombres se comparan por
+//     contenido con mismo_texto sobre el arreglo
+//     fuente[] que la tabla 4 carga: el mapa de texto
+//     de Stage 0 (enumConstants) escrito con
+//     posiciones, porque este Parser no guarda texto.
 //
 // Aceptacion de la rebanada (en campo, Studio):
 //   Tabla de FUENTE: 1, 4, 0, 27, 14, 1, 3 (como en la
 //   rebanada 2). Tabla 2 (declaraciones): 2, 4, 0, 43,
 //   18, 2, 2 — funciones, sentencias, errores, tokens,
 //   nodos, parametros y FunctionDeclaration.
+//   Tabla 3 (struct): 1, 3, 0, 33, 10, 3, 1 — funciones,
+//   sentencias, errores, tokens, nodos, campos y
+//   StructDeclaration.
+//   Tabla 4 (enum): 1, 5, 0, 47, 14, 3, 1, 21 —
+//   funciones, sentencias, errores, tokens, nodos,
+//   constantes, EnumDeclaration y la suma de los
+//   literales (0 + 10 + 11 del pliegue, mas el 0 del
+//   return): la prueba numerica de que cada
+//   Color::Miembro cayo en su valor.
 //
 // Tabla de tokens: el enum TokenType de include/kpp/Token.hpp
 // (Stage 0) traducido 1:1. Los valores salen del ORDEN de
@@ -149,6 +175,8 @@ int errores;
 int nfun;
 int nsent;
 int npar;
+int ncam;
+int nconst;
 
 // ============================================================
 // MAQUINARIA DEL CURSOR (Parser::current/check/match/expect)
@@ -300,6 +328,27 @@ int cuenta(int kind)
         if (nkind[i] == kind)
         {
             total = total + 1;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// Suma de los valores (nval) de todos los
+// IntegerLiteral: la prueba numerica del pliegue de
+// constantes de enum — cada Enum::Miembro ya es un
+// literal con su valor.
+int suma_literales()
+{
+    int nkind[256];
+    int nval[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == NodeKind::IntegerLiteral)
+        {
+            total = total + nval[i];
         }
         i = i + 1;
     }
@@ -595,9 +644,9 @@ int parse_unario()
 // indice de su token en nval: el texto vive en la fuente
 // y se recupera por tinicio/tlargo cuando haga falta.
 //
-// PENDIENTE DE SU REBANADA: la constante de enum con ::
-// (Enum::Miembro), que en Stage 0 se pliega a literal
-// entero consultando la tabla de constantes del enum.
+// La constante de enum con :: (Enum::Miembro) se
+// pliega a literal entero consultando la tabla de
+// constantes, como en Stage 0 (rebanada 5).
 // ============================================================
 
 int parse_primario()
@@ -627,6 +676,26 @@ int parse_primario()
     if (t == TokenType::Identifier)
     {
         int c = consume();
+
+        // Constante de enum: Enum::Miembro — la primera
+        // rama, como en el parsePrimary de Stage 0. Se
+        // pliega a literal entero con el valor guardado
+        // en la tabla de constantes; si el nombre no
+        // esta, es error (el "enumerador no declarado"
+        // de Stage 0).
+        if (es(TokenType::ColonColon) == 1)
+        {
+            int c0 = consume();
+            int mtok = pos;
+            int ok0 = espera(TokenType::Identifier);
+            int v = busca_const(ini, mtok);
+            if (v == 0 - 1)
+            {
+                errores = errores + 1;
+                return 0 - 1;
+            }
+            return emite_lit(v, ini);
+        }
 
         // Acceso a arreglo: x[indice]
         if (es(TokenType::LBracket) == 1)
@@ -959,6 +1028,274 @@ int parse_funcion()
 }
 
 // ============================================================
+// CAMPOS DE STRUCT (la tabla lateral de parseStruct).
+//
+// StructField no es un NodeKind (contrato de
+// SemanticAnalyzer.kpp): los campos viven en su tabla
+// lateral, como los parametros en partok. campotipo
+// guarda el tipo como codigo TokenType (KwInt/KwString)
+// donde Stage 0 guarda el texto ("int"/"string") — el
+// mismo criterio que la rebanada 2 aplico a los
+// operadores. campotok guarda el indice del token del
+// nombre del campo.
+// ============================================================
+
+int pon_campo(int tipo, int tok)
+{
+    int campotipo[64];
+    int campotok[64];
+    campotipo[ncam] = tipo;
+    campotok[ncam] = tok;
+    ncam = ncam + 1;
+    return 0;
+}
+
+// ============================================================
+// PARSE STRUCT (Parser::parseStruct).
+//
+// struct Nombre
+// {
+//     int campo;
+//     string campo;
+// };
+//
+// Tipos de campo admitidos: int y string, nada mas
+// (Stage 0 no admite structs anidados). La estructura
+// guarda su nombre en nval, el inicio de sus campos en
+// hijo2 y cuantos son en nsig. La declaracion cierra
+// con ';' tras la '}', como exige Stage 0.
+// ============================================================
+
+int parse_estructura()
+{
+    int ini = pos;
+    int ok = espera(TokenType::KwStruct);
+    int nombre = pos;
+    int ok2 = espera(TokenType::Identifier);
+    int ok3 = espera(TokenType::LBrace);
+
+    int cini = ncam;
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        if (es(TokenType::RBrace) == 1)
+        {
+            sigue = 0;
+        }
+        if (pos >= ntok)
+        {
+            sigue = 0;
+        }
+        if (sigue == 1)
+        {
+            int tipo = 0;
+            if (es(TokenType::KwInt) == 1)
+            {
+                tipo = TokenType::KwInt;
+            }
+            if (es(TokenType::KwString) == 1)
+            {
+                tipo = TokenType::KwString;
+            }
+            if (tipo == 0)
+            {
+                errores = errores + 1;
+                int cx = consume();
+            }
+            if (tipo != 0)
+            {
+                int c = consume();
+                int ctok = pos;
+                int ok4 = espera(TokenType::Identifier);
+                int ok5 = espera(TokenType::Semicolon);
+                int r = pon_campo(tipo, ctok);
+            }
+        }
+    }
+    int ok6 = espera(TokenType::RBrace);
+    int ok7 = espera(TokenType::Semicolon);
+
+    int n = emite(NodeKind::StructDeclaration, ini);
+    int a = pon_val(n, nombre);
+    int b = pon_hijo2(n, cini);
+    int c = pon_sig(n, ncam - cini);
+    return 1;
+}
+
+// ============================================================
+// CONSTANTES DE ENUM (el enumConstants de Stage 0).
+//
+// EnumValue no es un NodeKind (contrato de
+// SemanticAnalyzer.kpp): las constantes viven en su
+// tabla lateral, como los parametros en partok y los
+// campos en campotok. Tres columnas por constante:
+// constenum guarda el token del nombre del enum,
+// constok el token del nombre del miembro y
+// constvalor el valor ya calculado (el automatico o
+// el explicito tras el '=').
+//
+// Stage 0 busca por texto ("Color::Rojo") en un mapa.
+// Aqui no hay texto: hay tinicio/tlargo, que son la
+// direccion del nombre dentro de la fuente. Por eso
+// la tabla 4 carga ademas el arreglo fuente[] con los
+// caracteres de su fuente, y mismo_texto compara dos
+// nombres caracter a caracter — la misma igualdad
+// por contenido del mapa, escrita con posiciones.
+// En las tablas sin '::' nada de esto se mueve.
+// ============================================================
+
+int mismo_texto(int a, int b)
+{
+    int tinicio[64];
+    int tlargo[64];
+    int fuente[512];
+    if (tlargo[a] != tlargo[b])
+    {
+        return 0;
+    }
+    int i = 0;
+    while (i < tlargo[a])
+    {
+        if (fuente[tinicio[a] + i] != fuente[tinicio[b] + i])
+        {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+int pon_const(int etok, int tok, int valor)
+{
+    int constenum[64];
+    int constok[64];
+    int constvalor[64];
+    constenum[nconst] = etok;
+    constok[nconst] = tok;
+    constvalor[nconst] = valor;
+    nconst = nconst + 1;
+    return 0;
+}
+
+// busca_const(etok, mtok): el valor de la constante
+// etok::mtok, o -1 si no esta declarada. Los valores
+// de enum nunca son negativos (Stage 0 solo admite
+// numeros tras el '='), asi que -1 es centinela
+// limpio.
+int busca_const(int etok, int mtok)
+{
+    int constenum[64];
+    int constok[64];
+    int constvalor[64];
+    int i = 0;
+    while (i < nconst)
+    {
+        if (mismo_texto(etok, constenum[i]) == 1)
+        {
+            if (mismo_texto(mtok, constok[i]) == 1)
+            {
+                return constvalor[i];
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// ============================================================
+// PARSE ENUM (Parser::parseEnum).
+//
+// enum Nombre
+// {
+//     Miembro,
+//     Miembro = 10,
+//     Miembro
+// };
+//
+// El valor corre solo desde 0; tras un valor
+// explicito el siguiente continua en ese valor + 1
+// (el nextValue de Stage 0). Un miembro repetido
+// dentro del mismo enum es error — el chequeo del
+// mapa de Stage 0, limitado a este enum: el mismo
+// nombre en OTRO enum es legal (bateria L08). La
+// declaracion cierra con ';' tras la '}', como la
+// de struct. El nodo guarda su nombre en nval, el
+// inicio de sus constantes en hijo2 y cuantas son
+// en nsig.
+// ============================================================
+
+int parse_enum()
+{
+    int tvalor[64];
+    int constok[64];
+    int ini = pos;
+    int ok = espera(TokenType::KwEnum);
+    int nombre = pos;
+    int ok2 = espera(TokenType::Identifier);
+    int ok3 = espera(TokenType::LBrace);
+
+    int cini = nconst;
+    int siguiente = 0;
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        if (es(TokenType::RBrace) == 1)
+        {
+            sigue = 0;
+        }
+        if (pos >= ntok)
+        {
+            sigue = 0;
+        }
+        if (sigue == 1)
+        {
+            int mtok = pos;
+            int ok4 = espera(TokenType::Identifier);
+            int valor = siguiente;
+            if (es(TokenType::Assign) == 1)
+            {
+                int c = consume();
+                valor = tvalor[pos];
+                int ok5 = espera(TokenType::Number);
+            }
+            siguiente = valor + 1;
+
+            int dup = 0;
+            int i = cini;
+            while (i < nconst)
+            {
+                if (mismo_texto(mtok, constok[i]) == 1)
+                {
+                    dup = 1;
+                }
+                i = i + 1;
+            }
+            if (dup == 1)
+            {
+                errores = errores + 1;
+            }
+            if (dup == 0)
+            {
+                int r = pon_const(nombre, mtok, valor);
+            }
+
+            if (es(TokenType::RBrace) == 0)
+            {
+                int ok6 = espera(TokenType::Comma);
+            }
+        }
+    }
+    int ok7 = espera(TokenType::RBrace);
+    int ok8 = espera(TokenType::Semicolon);
+
+    int n = emite(NodeKind::EnumDeclaration, ini);
+    int a = pon_val(n, nombre);
+    int b = pon_hijo2(n, cini);
+    int c = pon_sig(n, nconst - cini);
+    return 1;
+}
+
+// ============================================================
 // PROGRAMA (Parser::parse, nivel superior de la rebanada)
 // ============================================================
 
@@ -998,6 +1335,18 @@ int parse_programa()
     while (pos < ntok)
     {
         int hecho = 0;
+        if (es(TokenType::KwStruct) == 1)
+        {
+            // struct primero y enum detras, el orden
+            // del parse() de Stage 0.
+            int e = parse_estructura();
+            hecho = 1;
+        }
+        if (es(TokenType::KwEnum) == 1)
+        {
+            int en = parse_enum();
+            hecho = 1;
+        }
         if (es(TokenType::KwInt) == 1)
         {
             // La bifurcacion de Stage 0 (parse()):
@@ -1150,8 +1499,194 @@ int inicia_tokens2()
     return 0;
 }
 
+// ============================================================
+// TABLA LITERAL 3 — LA SONDA DE STRUCT.
+//
+// struct Punto
+// {
+//     int x;
+//     int y;
+//     string nombre;
+// };
+// int main()
+// {
+//     int r = 3;
+//     print(r);
+//     return 0;
+// }
+//
+// Generada mecanicamente desde esa fuente: 33 tokens,
+// mismo formato que las tablas anteriores. El ';' tras
+// la '}' es un token mas de la tabla: Stage 0 lo exige
+// al cerrar la declaracion.
+// ============================================================
+
+int inicia_tokens3()
+{
+    int tipo[64];
+    int tinicio[64];
+    int tlargo[64];
+    int tvalor[64];
+
+    tipo[0] = TokenType::KwStruct;   tinicio[0] = 0;    tlargo[0] = 6;
+    tipo[1] = TokenType::Identifier; tinicio[1] = 7;    tlargo[1] = 5;
+    tipo[2] = TokenType::LBrace;     tinicio[2] = 13;   tlargo[2] = 1;
+    tipo[3] = TokenType::KwInt;      tinicio[3] = 19;   tlargo[3] = 3;
+    tipo[4] = TokenType::Identifier; tinicio[4] = 23;   tlargo[4] = 1;
+    tipo[5] = TokenType::Semicolon;  tinicio[5] = 24;   tlargo[5] = 1;
+    tipo[6] = TokenType::KwInt;      tinicio[6] = 30;   tlargo[6] = 3;
+    tipo[7] = TokenType::Identifier; tinicio[7] = 34;   tlargo[7] = 1;
+    tipo[8] = TokenType::Semicolon;  tinicio[8] = 35;   tlargo[8] = 1;
+    tipo[9] = TokenType::KwString;   tinicio[9] = 41;   tlargo[9] = 6;
+    tipo[10] = TokenType::Identifier; tinicio[10] = 48;  tlargo[10] = 6;
+    tipo[11] = TokenType::Semicolon;  tinicio[11] = 54;  tlargo[11] = 1;
+    tipo[12] = TokenType::RBrace;     tinicio[12] = 56;  tlargo[12] = 1;
+    tipo[13] = TokenType::Semicolon;  tinicio[13] = 57;  tlargo[13] = 1;
+    tipo[14] = TokenType::KwInt;      tinicio[14] = 59;  tlargo[14] = 3;
+    tipo[15] = TokenType::Identifier; tinicio[15] = 63;  tlargo[15] = 4;
+    tipo[16] = TokenType::LParen;     tinicio[16] = 67;  tlargo[16] = 1;
+    tipo[17] = TokenType::RParen;     tinicio[17] = 68;  tlargo[17] = 1;
+    tipo[18] = TokenType::LBrace;     tinicio[18] = 70;  tlargo[18] = 1;
+    tipo[19] = TokenType::KwInt;      tinicio[19] = 76;  tlargo[19] = 3;
+    tipo[20] = TokenType::Identifier; tinicio[20] = 80;  tlargo[20] = 1;
+    tipo[21] = TokenType::Assign;     tinicio[21] = 82;  tlargo[21] = 1;
+    tipo[22] = TokenType::Number;     tinicio[22] = 84;  tlargo[22] = 1;
+    tipo[23] = TokenType::Semicolon;  tinicio[23] = 85;  tlargo[23] = 1;
+    tipo[24] = TokenType::KwPrint;    tinicio[24] = 91;  tlargo[24] = 5;
+    tipo[25] = TokenType::LParen;     tinicio[25] = 96;  tlargo[25] = 1;
+    tipo[26] = TokenType::Identifier; tinicio[26] = 97;  tlargo[26] = 1;
+    tipo[27] = TokenType::RParen;     tinicio[27] = 98;  tlargo[27] = 1;
+    tipo[28] = TokenType::Semicolon;  tinicio[28] = 99;  tlargo[28] = 1;
+    tipo[29] = TokenType::KwReturn;   tinicio[29] = 105; tlargo[29] = 6;
+    tipo[30] = TokenType::Number;     tinicio[30] = 112; tlargo[30] = 1;
+    tipo[31] = TokenType::Semicolon;  tinicio[31] = 113; tlargo[31] = 1;
+    tipo[32] = TokenType::RBrace;     tinicio[32] = 115; tlargo[32] = 1;
+
+    tvalor[22] = 3;
+    tvalor[30] = 0;
+
+    ntok = 33;
+    pos = 0;
+    return 0;
+}
+
+// ============================================================
+// TABLA LITERAL 4 — LA SONDA DE ENUM.
+//
+// enum Color
+// {
+//     Rojo,
+//     Verde = 10,
+//     Azul
+// };
+// int main()
+// {
+//     int a = Color::Rojo;
+//     int b = Color::Verde;
+//     int c = Color::Azul;
+//     print(c);
+//     return 0;
+// }
+//
+// Generada mecanicamente desde esa fuente: 47 tokens.
+// Trae ademas el arreglo fuente[] con los caracteres
+// de la fuente (170), porque el pliegue de :: compara
+// los nombres por contenido (mismo_texto). La sonda
+// se compilo con Stage 0: su AST da Rojo = 0, Verde
+// = 10, Azul = 11 y los tres inicializadores
+// plegados a esos literales — lo que esta tabla debe
+// reproducir.
+// ============================================================
+
+int inicia_tokens4()
+{
+    int tipo[64];
+    int tinicio[64];
+    int tlargo[64];
+    int tvalor[64];
+    int fuente[512];
+
+    tipo[0] = TokenType::KwEnum;     tinicio[0] = 0;    tlargo[0] = 4;
+    tipo[1] = TokenType::Identifier; tinicio[1] = 5;    tlargo[1] = 5;
+    tipo[2] = TokenType::LBrace;     tinicio[2] = 11;   tlargo[2] = 1;
+    tipo[3] = TokenType::Identifier; tinicio[3] = 17;   tlargo[3] = 4;
+    tipo[4] = TokenType::Comma;      tinicio[4] = 21;   tlargo[4] = 1;
+    tipo[5] = TokenType::Identifier; tinicio[5] = 27;   tlargo[5] = 5;
+    tipo[6] = TokenType::Assign;     tinicio[6] = 33;   tlargo[6] = 1;
+    tipo[7] = TokenType::Number;     tinicio[7] = 35;   tlargo[7] = 2;
+    tipo[8] = TokenType::Comma;      tinicio[8] = 37;   tlargo[8] = 1;
+    tipo[9] = TokenType::Identifier; tinicio[9] = 43;   tlargo[9] = 4;
+    tipo[10] = TokenType::RBrace;     tinicio[10] = 48;  tlargo[10] = 1;
+    tipo[11] = TokenType::Semicolon;  tinicio[11] = 49;  tlargo[11] = 1;
+    tipo[12] = TokenType::KwInt;      tinicio[12] = 51;  tlargo[12] = 3;
+    tipo[13] = TokenType::Identifier; tinicio[13] = 55;  tlargo[13] = 4;
+    tipo[14] = TokenType::LParen;     tinicio[14] = 59;  tlargo[14] = 1;
+    tipo[15] = TokenType::RParen;     tinicio[15] = 60;  tlargo[15] = 1;
+    tipo[16] = TokenType::LBrace;     tinicio[16] = 62;  tlargo[16] = 1;
+    tipo[17] = TokenType::KwInt;      tinicio[17] = 68;  tlargo[17] = 3;
+    tipo[18] = TokenType::Identifier; tinicio[18] = 72;  tlargo[18] = 1;
+    tipo[19] = TokenType::Assign;     tinicio[19] = 74;  tlargo[19] = 1;
+    tipo[20] = TokenType::Identifier; tinicio[20] = 76;  tlargo[20] = 5;
+    tipo[21] = TokenType::ColonColon; tinicio[21] = 81;  tlargo[21] = 2;
+    tipo[22] = TokenType::Identifier; tinicio[22] = 83;  tlargo[22] = 4;
+    tipo[23] = TokenType::Semicolon;  tinicio[23] = 87;  tlargo[23] = 1;
+    tipo[24] = TokenType::KwInt;      tinicio[24] = 93;  tlargo[24] = 3;
+    tipo[25] = TokenType::Identifier; tinicio[25] = 97;  tlargo[25] = 1;
+    tipo[26] = TokenType::Assign;     tinicio[26] = 99;  tlargo[26] = 1;
+    tipo[27] = TokenType::Identifier; tinicio[27] = 101; tlargo[27] = 5;
+    tipo[28] = TokenType::ColonColon; tinicio[28] = 106; tlargo[28] = 2;
+    tipo[29] = TokenType::Identifier; tinicio[29] = 108; tlargo[29] = 5;
+    tipo[30] = TokenType::Semicolon;  tinicio[30] = 113; tlargo[30] = 1;
+    tipo[31] = TokenType::KwInt;      tinicio[31] = 119; tlargo[31] = 3;
+    tipo[32] = TokenType::Identifier; tinicio[32] = 123; tlargo[32] = 1;
+    tipo[33] = TokenType::Assign;     tinicio[33] = 125; tlargo[33] = 1;
+    tipo[34] = TokenType::Identifier; tinicio[34] = 127; tlargo[34] = 5;
+    tipo[35] = TokenType::ColonColon; tinicio[35] = 132; tlargo[35] = 2;
+    tipo[36] = TokenType::Identifier; tinicio[36] = 134; tlargo[36] = 4;
+    tipo[37] = TokenType::Semicolon;  tinicio[37] = 138; tlargo[37] = 1;
+    tipo[38] = TokenType::KwPrint;    tinicio[38] = 144; tlargo[38] = 5;
+    tipo[39] = TokenType::LParen;     tinicio[39] = 149; tlargo[39] = 1;
+    tipo[40] = TokenType::Identifier; tinicio[40] = 150; tlargo[40] = 1;
+    tipo[41] = TokenType::RParen;     tinicio[41] = 151; tlargo[41] = 1;
+    tipo[42] = TokenType::Semicolon;  tinicio[42] = 152; tlargo[42] = 1;
+    tipo[43] = TokenType::KwReturn;   tinicio[43] = 158; tlargo[43] = 6;
+    tipo[44] = TokenType::Number;     tinicio[44] = 165; tlargo[44] = 1;
+    tipo[45] = TokenType::Semicolon;  tinicio[45] = 166; tlargo[45] = 1;
+    tipo[46] = TokenType::RBrace;     tinicio[46] = 168; tlargo[46] = 1;
+
+    tvalor[7] = 10;
+    tvalor[44] = 0;
+
+    fuente[0] = 101;  fuente[1] = 110;  fuente[2] = 117;  fuente[3] = 109;  fuente[4] = 32;  fuente[5] = 67;  fuente[6] = 111;  fuente[7] = 108;
+    fuente[8] = 111;  fuente[9] = 114;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 82;  fuente[18] = 111;  fuente[19] = 106;  fuente[20] = 111;  fuente[21] = 44;  fuente[22] = 10;  fuente[23] = 32;
+    fuente[24] = 32;  fuente[25] = 32;  fuente[26] = 32;  fuente[27] = 86;  fuente[28] = 101;  fuente[29] = 114;  fuente[30] = 100;  fuente[31] = 101;
+    fuente[32] = 32;  fuente[33] = 61;  fuente[34] = 32;  fuente[35] = 49;  fuente[36] = 48;  fuente[37] = 44;  fuente[38] = 10;  fuente[39] = 32;
+    fuente[40] = 32;  fuente[41] = 32;  fuente[42] = 32;  fuente[43] = 65;  fuente[44] = 122;  fuente[45] = 117;  fuente[46] = 108;  fuente[47] = 10;
+    fuente[48] = 125;  fuente[49] = 59;  fuente[50] = 10;  fuente[51] = 105;  fuente[52] = 110;  fuente[53] = 116;  fuente[54] = 32;  fuente[55] = 109;
+    fuente[56] = 97;  fuente[57] = 105;  fuente[58] = 110;  fuente[59] = 40;  fuente[60] = 41;  fuente[61] = 10;  fuente[62] = 123;  fuente[63] = 10;
+    fuente[64] = 32;  fuente[65] = 32;  fuente[66] = 32;  fuente[67] = 32;  fuente[68] = 105;  fuente[69] = 110;  fuente[70] = 116;  fuente[71] = 32;
+    fuente[72] = 97;  fuente[73] = 32;  fuente[74] = 61;  fuente[75] = 32;  fuente[76] = 67;  fuente[77] = 111;  fuente[78] = 108;  fuente[79] = 111;
+    fuente[80] = 114;  fuente[81] = 58;  fuente[82] = 58;  fuente[83] = 82;  fuente[84] = 111;  fuente[85] = 106;  fuente[86] = 111;  fuente[87] = 59;
+    fuente[88] = 10;  fuente[89] = 32;  fuente[90] = 32;  fuente[91] = 32;  fuente[92] = 32;  fuente[93] = 105;  fuente[94] = 110;  fuente[95] = 116;
+    fuente[96] = 32;  fuente[97] = 98;  fuente[98] = 32;  fuente[99] = 61;  fuente[100] = 32;  fuente[101] = 67;  fuente[102] = 111;  fuente[103] = 108;
+    fuente[104] = 111;  fuente[105] = 114;  fuente[106] = 58;  fuente[107] = 58;  fuente[108] = 86;  fuente[109] = 101;  fuente[110] = 114;  fuente[111] = 100;
+    fuente[112] = 101;  fuente[113] = 59;  fuente[114] = 10;  fuente[115] = 32;  fuente[116] = 32;  fuente[117] = 32;  fuente[118] = 32;  fuente[119] = 105;
+    fuente[120] = 110;  fuente[121] = 116;  fuente[122] = 32;  fuente[123] = 99;  fuente[124] = 32;  fuente[125] = 61;  fuente[126] = 32;  fuente[127] = 67;
+    fuente[128] = 111;  fuente[129] = 108;  fuente[130] = 111;  fuente[131] = 114;  fuente[132] = 58;  fuente[133] = 58;  fuente[134] = 65;  fuente[135] = 122;
+    fuente[136] = 117;  fuente[137] = 108;  fuente[138] = 59;  fuente[139] = 10;  fuente[140] = 32;  fuente[141] = 32;  fuente[142] = 32;  fuente[143] = 32;
+    fuente[144] = 112;  fuente[145] = 114;  fuente[146] = 105;  fuente[147] = 110;  fuente[148] = 116;  fuente[149] = 40;  fuente[150] = 99;  fuente[151] = 41;
+    fuente[152] = 59;  fuente[153] = 10;  fuente[154] = 32;  fuente[155] = 32;  fuente[156] = 32;  fuente[157] = 32;  fuente[158] = 114;  fuente[159] = 101;
+    fuente[160] = 116;  fuente[161] = 117;  fuente[162] = 114;  fuente[163] = 110;  fuente[164] = 32;  fuente[165] = 48;  fuente[166] = 59;  fuente[167] = 10;
+    fuente[168] = 125;  fuente[169] = 10;
+
+    ntok = 47;
+    pos = 0;
+    return 0;
+}
+
 // Deja el estado compartido como recien nacido, para
-// correr la segunda tabla en el mismo programa.
+// correr las demas tablas en el mismo programa.
 int reinicia()
 {
     pos = 0;
@@ -1160,6 +1695,8 @@ int reinicia()
     nfun = 0;
     nsent = 0;
     npar = 0;
+    ncam = 0;
+    nconst = 0;
     return 0;
 }
 
@@ -1189,5 +1726,28 @@ int main()
     print_int(nnodos);
     print_int(npar);
     print_int(cuenta(NodeKind::FunctionDeclaration));
+
+    int r1 = reinicia();
+    int a3 = inicia_tokens3();
+    int p3 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(ncam);
+    print_int(cuenta(NodeKind::StructDeclaration));
+
+    int r2 = reinicia();
+    int a4 = inicia_tokens4();
+    int p4 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(nconst);
+    print_int(cuenta(NodeKind::EnumDeclaration));
+    print_int(suma_literales());
     return 0;
 }
