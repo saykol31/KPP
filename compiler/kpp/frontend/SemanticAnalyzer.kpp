@@ -46,6 +46,58 @@ enum NodeKind
     BinaryExpression
 };
 
+// Tabla de tipos de token: la lista del Lexer
+// (Token.hpp de Stage 0), con el mismo orden y la
+// misma regla — un tipo nuevo va AL FINAL. Este
+// archivo lleva su copia identica, como el Parser
+// lleva la suya: emisor y consumidores comparten la
+// tabla sin compartir el archivo. La SA-2 es la
+// primera rebanada que la nombra (el tipo declarado
+// de una variable se lee del tok_tipo de su token).
+
+enum TokenType
+{
+    EndOfFile,
+    Identifier,
+    Number,
+    String,
+    KwInt,
+    KwString,
+    KwStruct,
+    KwEnum,
+    KwReturn,
+    KwPrint,
+    KwIf,
+    KwElse,
+    KwWhile,
+    Assign,
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+    Power,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    LogicalAnd,
+    LogicalOr,
+    LogicalNot,
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+    Comma,
+    Semicolon,
+    ColonColon,
+    Dot
+};
+
 // ============================================================
 // REBANADA SA-1 — LOS REGISTROS (traduccion de la primera
 // mitad de SemanticAnalyzer::analyze() de Stage 0).
@@ -68,11 +120,22 @@ enum NodeKind
 //     con mismo_texto (la forma probada: cada carga a
 //     una variable local antes de comparar).
 //
-// EL CATALOGO DE ERRORES (SA-1):
+// EL CATALOGO DE ERRORES (SA-1 y SA-2):
 //   1  estructura declarada mas de una vez
 //   2  variable global declarada mas de una vez
 //   3  funcion declarada mas de una vez
 //   4  el programa no contiene una funcion main()
+//   5  parametro duplicado en la funcion
+//   6  tipo de retorno de funcion no soportado
+//   7  funcion sin cuerpo
+//   8  variable ya declarada en este ambito
+//   9  arreglo cuyo tipo no es int
+//   10 arreglo con inicializador
+//   11 tipo de variable no declarado o no soportado
+//   12 variable no declarada (destino de asignacion)
+//   13 return sin expresion
+//   14 print sin expresion
+//   15 print_int sin expresion
 //
 // LA REPRESENTACION: los nodos llegan en los arreglos
 // del contrato AST definitivo (nkind/nini/nfin/
@@ -336,6 +399,11 @@ int analiza()
     int a = registra_estructuras();
     int b = registra_globales();
     int c = registra_funciones();
+    int d = analiza_cuerpos();
+    // El chequeo de main va DESPUES de los cuerpos:
+    // su posicion en analyze() de Stage 0 (en la
+    // SA-1 iba tras los registros porque aun no
+    // habia cuerpos que analizar).
     if (hay_main == 0)
     {
         int e = anota_error(4);
@@ -343,6 +411,388 @@ int analiza()
     return serr_count;
 }
 
+// ============================================================
+// REBANADA SA-2 — AMBITOS Y SENTENCIAS (traduccion de
+// analyzeFunction y de la mitad de sentencias de
+// analyzeStatement de Stage 0).
+//
+// LOS AMBITOS: una sola tabla plana de simbolos con
+// SELLO DE PROFUNDIDAD (la forma de las tablas
+// laterales del Parser, no la pila de mapas de
+// Stage 0):
+//
+//   ssim_tok[i]    token del nombre
+//   ssim_tipo[i]   token del tipo (el nini de su
+//                  declaracion; en un parametro, el
+//                  token int de la cabecera — la
+//                  tabla partok solo guarda nombres
+//                  y el Parser solo admite parametros
+//                  int)
+//   ssim_tam[i]    tamano del arreglo (0 = escalar)
+//   ssim_nivel[i]  profundidad en que nacio
+//
+// entra_ambito sube el nivel; sale_ambito retira los
+// simbolos del nivel que cierra (trunca desde el
+// final: los de un nivel siempre son los ultimos) y
+// baja. La busqueda local recorre desde el final —
+// el simbolo mas interno gana: eso es la sombra. Si
+// la busqueda local falla, se cae al registro de
+// globales de la SA-1, como lookupVariable en
+// Stage 0. El chequeo de duplicado mira SOLO el
+// nivel actual, como scopes.back() en Stage 0: una
+// declaracion en un bloque puede sombrear a la de
+// afuera sin error.
+//
+// Cada funcion arranca con la tabla vacia y su
+// ambito (los cuerpos de las sentencias compuestas
+// abren el suyo; el bloque del cuerpo NO abre otro:
+// sus sentencias viven en el ambito de la funcion,
+// como en analyzeFunction).
+//
+// LO QUE SA-2 NO MIRA TODAVIA — llega en SA-3,
+// exactamente donde Stage 0 llama a analyzeExpression
+// o a inferExpressionType: el inicializador de una
+// declaracion y su tipo, el tipo del valor de una
+// asignacion, las condiciones de if/while y las
+// expresiones de return/print. Los chequeos de
+// existencia y de forma de SA-2 ya quedan en su
+// sitio para que SA-3 inserte los suyos en el orden
+// de Stage 0.
+// ============================================================
+
+int nsim;
+int nivel;
+
+int entra_ambito()
+{
+    nivel = nivel + 1;
+    return 0;
+}
+
+int sale_ambito()
+{
+    int ssim_nivel[128];
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        if (nsim == 0)
+        {
+            sigue = 0;
+        }
+        else
+        {
+            int u = ssim_nivel[nsim - 1];
+            if (u != nivel)
+            {
+                sigue = 0;
+            }
+            else
+            {
+                nsim = nsim - 1;
+            }
+        }
+    }
+    nivel = nivel - 1;
+    return 0;
+}
+
+int registra_simbolo(int tok, int tipo, int tam)
+{
+    int ssim_tok[128];
+    int ssim_tipo[128];
+    int ssim_tam[128];
+    int ssim_nivel[128];
+    ssim_tok[nsim] = tok;
+    ssim_tipo[nsim] = tipo;
+    ssim_tam[nsim] = tam;
+    ssim_nivel[nsim] = nivel;
+    nsim = nsim + 1;
+    return 0;
+}
+
+int busca_local(int tok)
+{
+    int ssim_tok[128];
+    int i = nsim - 1;
+    while (i >= 0)
+    {
+        int t = ssim_tok[i];
+        if (mismo_texto(t, tok) == 1)
+        {
+            return i;
+        }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+int busca_en_actual(int tok)
+{
+    int ssim_tok[128];
+    int ssim_nivel[128];
+    int i = 0;
+    while (i < nsim)
+    {
+        int t = ssim_tok[i];
+        int nv = ssim_nivel[i];
+        if (nv == nivel)
+        {
+            if (mismo_texto(t, tok) == 1)
+            {
+                return 1;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+int es_int(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 3)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    if (c0 != 105)
+    {
+        return 0;
+    }
+    if (c1 != 110)
+    {
+        return 0;
+    }
+    if (c2 != 116)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+int camina_bloque(int b)
+{
+    int nhijo1[256];
+    int nsig[256];
+    int e = entra_ambito();
+    int s = nhijo1[b];
+    while (s != 0 - 1)
+    {
+        int r = analiza_sentencia(s);
+        s = nsig[s];
+    }
+    int x = sale_ambito();
+    return 0;
+}
+
+int analiza_sentencia(int s)
+{
+    int nkind[256];
+    int nini[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int nsize[256];
+    int tok_tipo[256];
+    int k = nkind[s];
+
+    if (k == NodeKind::Block)
+    {
+        int r = camina_bloque(s);
+        return 0;
+    }
+
+    if (k == NodeKind::VariableDeclaration)
+    {
+        int nombre = nval[s];
+        if (busca_en_actual(nombre) == 1)
+        {
+            int e = anota_error(8);
+            return 0;
+        }
+        int tam = nsize[s];
+        int tipo = nini[s];
+        if (tam > 0)
+        {
+            if (es_int(tipo) == 0)
+            {
+                int e2 = anota_error(9);
+                return 0;
+            }
+            if (nhijo1[s] != 0 - 1)
+            {
+                int e3 = anota_error(10);
+                return 0;
+            }
+        }
+        int tt = tok_tipo[tipo];
+        int valido = 0;
+        if (tt == TokenType::KwInt)
+        {
+            valido = 1;
+        }
+        if (tt == TokenType::KwString)
+        {
+            valido = 1;
+        }
+        if (tt == TokenType::Identifier)
+        {
+            if (busca_struct(tipo) == 1)
+            {
+                valido = 1;
+            }
+        }
+        if (valido == 0)
+        {
+            int e4 = anota_error(11);
+            return 0;
+        }
+        int r = registra_simbolo(nombre, tipo, tam);
+        return 0;
+    }
+
+    if (k == NodeKind::AssignmentStatement)
+    {
+        int nombre = nval[s];
+        if (busca_local(nombre) == 0 - 1)
+        {
+            if (busca_global(nombre) == 0)
+            {
+                int e = anota_error(12);
+            }
+        }
+        return 0;
+    }
+
+    if (k == NodeKind::IfStatement)
+    {
+        int cond = nhijo1[s];
+        int then = nsig[cond];
+        if (then != 0 - 1)
+        {
+            int r = camina_bloque(then);
+            int els = nsig[then];
+            if (els != 0 - 1)
+            {
+                int r2 = camina_bloque(els);
+            }
+        }
+        return 0;
+    }
+
+    if (k == NodeKind::WhileStatement)
+    {
+        int cond = nhijo1[s];
+        int cuerpo = nsig[cond];
+        if (cuerpo != 0 - 1)
+        {
+            int r = camina_bloque(cuerpo);
+        }
+        return 0;
+    }
+
+    if (k == NodeKind::ReturnStatement)
+    {
+        if (nhijo1[s] == 0 - 1)
+        {
+            int e = anota_error(13);
+        }
+        return 0;
+    }
+
+    if (k == NodeKind::PrintStatement)
+    {
+        if (nhijo1[s] == 0 - 1)
+        {
+            int e = anota_error(14);
+        }
+        return 0;
+    }
+
+    if (k == NodeKind::PrintIntegerStatement)
+    {
+        if (nhijo1[s] == 0 - 1)
+        {
+            int e = anota_error(15);
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+int analiza_funcion(int f)
+{
+    int nini[256];
+    int nhijo1[256];
+    int nsig[256];
+    int naux[256];
+    int nsize[256];
+    int partok[64];
+    nsim = 0;
+    nivel = 0;
+    int e0 = entra_ambito();
+    int tipo_ret = nini[f];
+    if (es_int(tipo_ret) == 0)
+    {
+        int e = anota_error(6);
+    }
+    int pini = naux[f];
+    int pcant = nsize[f];
+    int j = 0;
+    while (j < pcant)
+    {
+        int t = partok[pini + j];
+        if (busca_en_actual(t) == 1)
+        {
+            int e2 = anota_error(5);
+        }
+        else
+        {
+            int r = registra_simbolo(t, tipo_ret, 0);
+        }
+        j = j + 1;
+    }
+    int cuerpo = nhijo1[f];
+    if (cuerpo == 0 - 1)
+    {
+        int e3 = anota_error(7);
+        int x = sale_ambito();
+        return 0;
+    }
+    int s = nhijo1[cuerpo];
+    while (s != 0 - 1)
+    {
+        int r2 = analiza_sentencia(s);
+        s = nsig[s];
+    }
+    int x2 = sale_ambito();
+    return 0;
+}
+
+int analiza_cuerpos()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::FunctionDeclaration)
+        {
+            int r = analiza_funcion(d);
+        }
+        d = nsig[d];
+    }
+    return 0;
+}
 int imprime_fila()
 {
     int serr_codigo[64];
@@ -360,6 +810,15 @@ int imprime_fila()
     return 0;
 }
 
+// Las cuatro tablas de la SA-1, recargadas COMPLETAS
+// (parche_sa_tablas_nini): la carga original solo
+// traia los tokens de nombre y dejaba el nini de
+// cada declaracion apuntando al token del nombre.
+// La SA-2 estreno un lector de nini — el tipo — y
+// acuso un codigo 6 por funcion sobre esas tablas.
+// Aqui cada tabla es el escaneo entero de su
+// fuente, como las de la SA-2: nini es el token
+// del tipo y partok trae los parametros de verdad.
 int inicia_nodos1()
 {
     int fuente[1024];
@@ -375,6 +834,7 @@ int inicia_nodos1()
     int nval[256];
     int naux[256];
     int nsize[256];
+    int partok[64];
     fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
     fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
     fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 105; fuente[23] = 110;
@@ -387,19 +847,54 @@ int inicia_nodos1()
     fuente[72] = 101; fuente[73] = 40; fuente[74] = 105; fuente[75] = 110; fuente[76] = 116; fuente[77] = 32; fuente[78] = 97; fuente[79] = 41;
     fuente[80] = 32; fuente[81] = 123; fuente[82] = 32; fuente[83] = 114; fuente[84] = 101; fuente[85] = 116; fuente[86] = 117; fuente[87] = 114;
     fuente[88] = 110; fuente[89] = 32; fuente[90] = 97; fuente[91] = 59; fuente[92] = 32; fuente[93] = 125;
-    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
-    tok_tipo[1] = 1; tok_inicio[1] = 36; tok_largo[1] = 1; tok_valor[1] = 0;
-    tok_tipo[2] = 1; tok_inicio[2] = 43; tok_largo[2] = 4; tok_valor[2] = 0;
-    tok_tipo[3] = 1; tok_inicio[3] = 68; tok_largo[3] = 5; tok_valor[3] = 0;
-    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 4; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
-    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 2;
-    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 1; naux[2] = -1; nsize[2] = 0;
-    nkind[3] = NodeKind::FunctionDeclaration; nini[3] = 2; nfin[3] = 2; nhijo1[3] = 4; nsig[3] = 5; nval[3] = 2; naux[3] = 0; nsize[3] = 0;
-    nkind[4] = NodeKind::Block; nini[4] = 0; nfin[4] = 0; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
-    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 3; nfin[5] = 3; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 3; naux[5] = 0; nsize[5] = 1;
-    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
-    nnodos = 7;
-    tok_count = 4;
+    tok_tipo[0] = 6; tok_inicio[0] = 0; tok_largo[0] = 6; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 7; tok_largo[1] = 5; tok_valor[1] = 0;
+    tok_tipo[2] = 33; tok_inicio[2] = 13; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 15; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 19; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 36; tok_inicio[5] = 20; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 4; tok_inicio[6] = 22; tok_largo[6] = 3; tok_valor[6] = 0;
+    tok_tipo[7] = 1; tok_inicio[7] = 26; tok_largo[7] = 1; tok_valor[7] = 0;
+    tok_tipo[8] = 36; tok_inicio[8] = 27; tok_largo[8] = 1; tok_valor[8] = 0;
+    tok_tipo[9] = 34; tok_inicio[9] = 29; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 36; tok_inicio[10] = 30; tok_largo[10] = 1; tok_valor[10] = 0;
+    tok_tipo[11] = 4; tok_inicio[11] = 32; tok_largo[11] = 3; tok_valor[11] = 0;
+    tok_tipo[12] = 1; tok_inicio[12] = 36; tok_largo[12] = 1; tok_valor[12] = 0;
+    tok_tipo[13] = 36; tok_inicio[13] = 37; tok_largo[13] = 1; tok_valor[13] = 0;
+    tok_tipo[14] = 4; tok_inicio[14] = 39; tok_largo[14] = 3; tok_valor[14] = 0;
+    tok_tipo[15] = 1; tok_inicio[15] = 43; tok_largo[15] = 4; tok_valor[15] = 0;
+    tok_tipo[16] = 29; tok_inicio[16] = 47; tok_largo[16] = 1; tok_valor[16] = 0;
+    tok_tipo[17] = 30; tok_inicio[17] = 48; tok_largo[17] = 1; tok_valor[17] = 0;
+    tok_tipo[18] = 33; tok_inicio[18] = 50; tok_largo[18] = 1; tok_valor[18] = 0;
+    tok_tipo[19] = 8; tok_inicio[19] = 52; tok_largo[19] = 6; tok_valor[19] = 0;
+    tok_tipo[20] = 2; tok_inicio[20] = 59; tok_largo[20] = 1; tok_valor[20] = 0;
+    tok_tipo[21] = 36; tok_inicio[21] = 60; tok_largo[21] = 1; tok_valor[21] = 0;
+    tok_tipo[22] = 34; tok_inicio[22] = 62; tok_largo[22] = 1; tok_valor[22] = 0;
+    tok_tipo[23] = 4; tok_inicio[23] = 64; tok_largo[23] = 3; tok_valor[23] = 0;
+    tok_tipo[24] = 1; tok_inicio[24] = 68; tok_largo[24] = 5; tok_valor[24] = 0;
+    tok_tipo[25] = 29; tok_inicio[25] = 73; tok_largo[25] = 1; tok_valor[25] = 0;
+    tok_tipo[26] = 4; tok_inicio[26] = 74; tok_largo[26] = 3; tok_valor[26] = 0;
+    tok_tipo[27] = 1; tok_inicio[27] = 78; tok_largo[27] = 1; tok_valor[27] = 0;
+    tok_tipo[28] = 30; tok_inicio[28] = 79; tok_largo[28] = 1; tok_valor[28] = 0;
+    tok_tipo[29] = 33; tok_inicio[29] = 81; tok_largo[29] = 1; tok_valor[29] = 0;
+    tok_tipo[30] = 8; tok_inicio[30] = 83; tok_largo[30] = 6; tok_valor[30] = 0;
+    tok_tipo[31] = 1; tok_inicio[31] = 90; tok_largo[31] = 1; tok_valor[31] = 0;
+    tok_tipo[32] = 36; tok_inicio[32] = 91; tok_largo[32] = 1; tok_valor[32] = 0;
+    tok_tipo[33] = 34; tok_inicio[33] = 93; tok_largo[33] = 1; tok_valor[33] = 0;
+    partok[0] = 27;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 34; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 1; naux[1] = 0; nsize[1] = 2;
+    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 3; nfin[2] = 3; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 12; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = NodeKind::FunctionDeclaration; nini[3] = 6; nfin[3] = 6; nhijo1[3] = 4; nsig[3] = 7; nval[3] = 15; naux[3] = 0; nsize[3] = 0;
+    nkind[4] = NodeKind::Block; nini[4] = 0; nfin[4] = 0; nhijo1[4] = 5; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::ReturnStatement; nini[5] = 19; nfin[5] = 19; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = NodeKind::IntegerLiteral; nini[6] = 20; nfin[6] = 20; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::FunctionDeclaration; nini[7] = 11; nfin[7] = 11; nhijo1[7] = 8; nsig[7] = -1; nval[7] = 24; naux[7] = 0; nsize[7] = 1;
+    nkind[8] = NodeKind::Block; nini[8] = 0; nfin[8] = 0; nhijo1[8] = 9; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = NodeKind::ReturnStatement; nini[9] = 30; nfin[9] = 30; nhijo1[9] = 10; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = NodeKind::VariableExpression; nini[10] = 31; nfin[10] = 31; nhijo1[10] = -1; nsig[10] = -1; nval[10] = 31; naux[10] = -1; nsize[10] = 0;
+    nnodos = 11;
+    tok_count = 34;
     return 0;
 }
 
@@ -418,6 +913,7 @@ int inicia_nodos2()
     int nval[256];
     int naux[256];
     int nsize[256];
+    int partok[64];
     fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
     fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
     fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 125; fuente[23] = 59;
@@ -432,23 +928,61 @@ int inicia_nodos2()
     fuente[88] = 116; fuente[89] = 32; fuente[90] = 102; fuente[91] = 40; fuente[92] = 41; fuente[93] = 32; fuente[94] = 123; fuente[95] = 32;
     fuente[96] = 114; fuente[97] = 101; fuente[98] = 116; fuente[99] = 117; fuente[100] = 114; fuente[101] = 110; fuente[102] = 32; fuente[103] = 50;
     fuente[104] = 59; fuente[105] = 32; fuente[106] = 125;
-    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
-    tok_tipo[1] = 1; tok_inicio[1] = 32; tok_largo[1] = 5; tok_valor[1] = 0;
-    tok_tipo[2] = 1; tok_inicio[2] = 54; tok_largo[2] = 1; tok_valor[2] = 0;
-    tok_tipo[3] = 1; tok_inicio[3] = 61; tok_largo[3] = 1; tok_valor[3] = 0;
-    tok_tipo[4] = 1; tok_inicio[4] = 68; tok_largo[4] = 1; tok_valor[4] = 0;
-    tok_tipo[5] = 1; tok_inicio[5] = 90; tok_largo[5] = 1; tok_valor[5] = 0;
-    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 6; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
-    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 1;
-    nkind[2] = NodeKind::StructDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 1; naux[2] = 0; nsize[2] = 1;
-    nkind[3] = NodeKind::VariableDeclaration; nini[3] = 2; nfin[3] = 2; nhijo1[3] = -1; nsig[3] = 4; nval[3] = 2; naux[3] = -1; nsize[3] = 0;
-    nkind[4] = NodeKind::VariableDeclaration; nini[4] = 3; nfin[4] = 3; nhijo1[4] = -1; nsig[4] = 5; nval[4] = 3; naux[4] = -1; nsize[4] = 0;
-    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 4; nfin[5] = 4; nhijo1[5] = 6; nsig[5] = 7; nval[5] = 4; naux[5] = 0; nsize[5] = 0;
-    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
-    nkind[7] = NodeKind::FunctionDeclaration; nini[7] = 5; nfin[7] = 5; nhijo1[7] = 8; nsig[7] = -1; nval[7] = 5; naux[7] = 0; nsize[7] = 0;
-    nkind[8] = NodeKind::Block; nini[8] = 0; nfin[8] = 0; nhijo1[8] = -1; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
-    nnodos = 9;
-    tok_count = 6;
+    tok_tipo[0] = 6; tok_inicio[0] = 0; tok_largo[0] = 6; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 7; tok_largo[1] = 5; tok_valor[1] = 0;
+    tok_tipo[2] = 33; tok_inicio[2] = 13; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 15; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 19; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 36; tok_inicio[5] = 20; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 34; tok_inicio[6] = 22; tok_largo[6] = 1; tok_valor[6] = 0;
+    tok_tipo[7] = 36; tok_inicio[7] = 23; tok_largo[7] = 1; tok_valor[7] = 0;
+    tok_tipo[8] = 6; tok_inicio[8] = 25; tok_largo[8] = 6; tok_valor[8] = 0;
+    tok_tipo[9] = 1; tok_inicio[9] = 32; tok_largo[9] = 5; tok_valor[9] = 0;
+    tok_tipo[10] = 33; tok_inicio[10] = 38; tok_largo[10] = 1; tok_valor[10] = 0;
+    tok_tipo[11] = 4; tok_inicio[11] = 40; tok_largo[11] = 3; tok_valor[11] = 0;
+    tok_tipo[12] = 1; tok_inicio[12] = 44; tok_largo[12] = 1; tok_valor[12] = 0;
+    tok_tipo[13] = 36; tok_inicio[13] = 45; tok_largo[13] = 1; tok_valor[13] = 0;
+    tok_tipo[14] = 34; tok_inicio[14] = 47; tok_largo[14] = 1; tok_valor[14] = 0;
+    tok_tipo[15] = 36; tok_inicio[15] = 48; tok_largo[15] = 1; tok_valor[15] = 0;
+    tok_tipo[16] = 4; tok_inicio[16] = 50; tok_largo[16] = 3; tok_valor[16] = 0;
+    tok_tipo[17] = 1; tok_inicio[17] = 54; tok_largo[17] = 1; tok_valor[17] = 0;
+    tok_tipo[18] = 36; tok_inicio[18] = 55; tok_largo[18] = 1; tok_valor[18] = 0;
+    tok_tipo[19] = 4; tok_inicio[19] = 57; tok_largo[19] = 3; tok_valor[19] = 0;
+    tok_tipo[20] = 1; tok_inicio[20] = 61; tok_largo[20] = 1; tok_valor[20] = 0;
+    tok_tipo[21] = 36; tok_inicio[21] = 62; tok_largo[21] = 1; tok_valor[21] = 0;
+    tok_tipo[22] = 4; tok_inicio[22] = 64; tok_largo[22] = 3; tok_valor[22] = 0;
+    tok_tipo[23] = 1; tok_inicio[23] = 68; tok_largo[23] = 1; tok_valor[23] = 0;
+    tok_tipo[24] = 29; tok_inicio[24] = 69; tok_largo[24] = 1; tok_valor[24] = 0;
+    tok_tipo[25] = 30; tok_inicio[25] = 70; tok_largo[25] = 1; tok_valor[25] = 0;
+    tok_tipo[26] = 33; tok_inicio[26] = 72; tok_largo[26] = 1; tok_valor[26] = 0;
+    tok_tipo[27] = 8; tok_inicio[27] = 74; tok_largo[27] = 6; tok_valor[27] = 0;
+    tok_tipo[28] = 2; tok_inicio[28] = 81; tok_largo[28] = 1; tok_valor[28] = 1;
+    tok_tipo[29] = 36; tok_inicio[29] = 82; tok_largo[29] = 1; tok_valor[29] = 0;
+    tok_tipo[30] = 34; tok_inicio[30] = 84; tok_largo[30] = 1; tok_valor[30] = 0;
+    tok_tipo[31] = 4; tok_inicio[31] = 86; tok_largo[31] = 3; tok_valor[31] = 0;
+    tok_tipo[32] = 1; tok_inicio[32] = 90; tok_largo[32] = 1; tok_valor[32] = 0;
+    tok_tipo[33] = 29; tok_inicio[33] = 91; tok_largo[33] = 1; tok_valor[33] = 0;
+    tok_tipo[34] = 30; tok_inicio[34] = 92; tok_largo[34] = 1; tok_valor[34] = 0;
+    tok_tipo[35] = 33; tok_inicio[35] = 94; tok_largo[35] = 1; tok_valor[35] = 0;
+    tok_tipo[36] = 8; tok_inicio[36] = 96; tok_largo[36] = 6; tok_valor[36] = 0;
+    tok_tipo[37] = 2; tok_inicio[37] = 103; tok_largo[37] = 1; tok_valor[37] = 2;
+    tok_tipo[38] = 36; tok_inicio[38] = 104; tok_largo[38] = 1; tok_valor[38] = 0;
+    tok_tipo[39] = 34; tok_inicio[39] = 106; tok_largo[39] = 1; tok_valor[39] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 40; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 1; naux[1] = 0; nsize[1] = 1;
+    nkind[2] = NodeKind::StructDeclaration; nini[2] = 8; nfin[2] = 8; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 9; naux[2] = 0; nsize[2] = 1;
+    nkind[3] = NodeKind::VariableDeclaration; nini[3] = 3; nfin[3] = 3; nhijo1[3] = -1; nsig[3] = 4; nval[3] = 17; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = NodeKind::VariableDeclaration; nini[4] = 11; nfin[4] = 11; nhijo1[4] = -1; nsig[4] = 5; nval[4] = 20; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 16; nfin[5] = 16; nhijo1[5] = 6; nsig[5] = 9; nval[5] = 23; naux[5] = 0; nsize[5] = 0;
+    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = 7; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::ReturnStatement; nini[7] = 27; nfin[7] = 27; nhijo1[7] = 8; nsig[7] = -1; nval[7] = 0; naux[7] = -1; nsize[7] = 0;
+    nkind[8] = NodeKind::IntegerLiteral; nini[8] = 28; nfin[8] = 28; nhijo1[8] = -1; nsig[8] = -1; nval[8] = 1; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = NodeKind::FunctionDeclaration; nini[9] = 19; nfin[9] = 19; nhijo1[9] = 10; nsig[9] = -1; nval[9] = 32; naux[9] = 0; nsize[9] = 0;
+    nkind[10] = NodeKind::Block; nini[10] = 0; nfin[10] = 0; nhijo1[10] = 11; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
+    nkind[11] = NodeKind::ReturnStatement; nini[11] = 36; nfin[11] = 36; nhijo1[11] = 12; nsig[11] = -1; nval[11] = 0; naux[11] = -1; nsize[11] = 0;
+    nkind[12] = NodeKind::IntegerLiteral; nini[12] = 37; nfin[12] = 37; nhijo1[12] = -1; nsig[12] = -1; nval[12] = 2; naux[12] = -1; nsize[12] = 0;
+    nnodos = 13;
+    tok_count = 40;
     return 0;
 }
 
@@ -467,17 +1001,27 @@ int inicia_nodos3()
     int nval[256];
     int naux[256];
     int nsize[256];
+    int partok[64];
     fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
     fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
     fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 125; fuente[23] = 59;
     fuente[24] = 32; fuente[25] = 105; fuente[26] = 110; fuente[27] = 116; fuente[28] = 32; fuente[29] = 103; fuente[30] = 59;
-    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
-    tok_tipo[1] = 1; tok_inicio[1] = 29; tok_largo[1] = 1; tok_valor[1] = 0;
-    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 2; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
-    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 1;
-    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = -1; nval[2] = 1; naux[2] = -1; nsize[2] = 0;
+    tok_tipo[0] = 6; tok_inicio[0] = 0; tok_largo[0] = 6; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 7; tok_largo[1] = 5; tok_valor[1] = 0;
+    tok_tipo[2] = 33; tok_inicio[2] = 13; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 15; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 19; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 36; tok_inicio[5] = 20; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 34; tok_inicio[6] = 22; tok_largo[6] = 1; tok_valor[6] = 0;
+    tok_tipo[7] = 36; tok_inicio[7] = 23; tok_largo[7] = 1; tok_valor[7] = 0;
+    tok_tipo[8] = 4; tok_inicio[8] = 25; tok_largo[8] = 3; tok_valor[8] = 0;
+    tok_tipo[9] = 1; tok_inicio[9] = 29; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 36; tok_inicio[10] = 30; tok_largo[10] = 1; tok_valor[10] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 11; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 1; naux[1] = 0; nsize[1] = 1;
+    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 3; nfin[2] = 3; nhijo1[2] = -1; nsig[2] = -1; nval[2] = 9; naux[2] = -1; nsize[2] = 0;
     nnodos = 3;
-    tok_count = 2;
+    tok_count = 11;
     return 0;
 }
 
@@ -496,6 +1040,7 @@ int inicia_nodos4()
     int nval[256];
     int naux[256];
     int nsize[256];
+    int partok[64];
     fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
     fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
     fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 125; fuente[23] = 59;
@@ -507,19 +1052,457 @@ int inicia_nodos4()
     fuente[64] = 110; fuente[65] = 40; fuente[66] = 41; fuente[67] = 32; fuente[68] = 123; fuente[69] = 32; fuente[70] = 114; fuente[71] = 101;
     fuente[72] = 116; fuente[73] = 117; fuente[74] = 114; fuente[75] = 110; fuente[76] = 32; fuente[77] = 49; fuente[78] = 59; fuente[79] = 32;
     fuente[80] = 125;
-    tok_tipo[0] = 1; tok_inicio[0] = 7; tok_largo[0] = 5; tok_valor[0] = 0;
-    tok_tipo[1] = 1; tok_inicio[1] = 29; tok_largo[1] = 1; tok_valor[1] = 0;
-    tok_tipo[2] = 1; tok_inicio[2] = 36; tok_largo[2] = 4; tok_valor[2] = 0;
-    tok_tipo[3] = 1; tok_inicio[3] = 61; tok_largo[3] = 4; tok_valor[3] = 0;
-    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 4; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
-    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 0; naux[1] = 0; nsize[1] = 1;
-    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 1; nfin[2] = 1; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 1; naux[2] = -1; nsize[2] = 0;
-    nkind[3] = NodeKind::FunctionDeclaration; nini[3] = 2; nfin[3] = 2; nhijo1[3] = 4; nsig[3] = 5; nval[3] = 2; naux[3] = 0; nsize[3] = 0;
-    nkind[4] = NodeKind::Block; nini[4] = 0; nfin[4] = 0; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
-    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 3; nfin[5] = 3; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 3; naux[5] = 0; nsize[5] = 0;
-    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
-    nnodos = 7;
-    tok_count = 4;
+    tok_tipo[0] = 6; tok_inicio[0] = 0; tok_largo[0] = 6; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 7; tok_largo[1] = 5; tok_valor[1] = 0;
+    tok_tipo[2] = 33; tok_inicio[2] = 13; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 15; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 19; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 36; tok_inicio[5] = 20; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 34; tok_inicio[6] = 22; tok_largo[6] = 1; tok_valor[6] = 0;
+    tok_tipo[7] = 36; tok_inicio[7] = 23; tok_largo[7] = 1; tok_valor[7] = 0;
+    tok_tipo[8] = 4; tok_inicio[8] = 25; tok_largo[8] = 3; tok_valor[8] = 0;
+    tok_tipo[9] = 1; tok_inicio[9] = 29; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 36; tok_inicio[10] = 30; tok_largo[10] = 1; tok_valor[10] = 0;
+    tok_tipo[11] = 4; tok_inicio[11] = 32; tok_largo[11] = 3; tok_valor[11] = 0;
+    tok_tipo[12] = 1; tok_inicio[12] = 36; tok_largo[12] = 4; tok_valor[12] = 0;
+    tok_tipo[13] = 29; tok_inicio[13] = 40; tok_largo[13] = 1; tok_valor[13] = 0;
+    tok_tipo[14] = 30; tok_inicio[14] = 41; tok_largo[14] = 1; tok_valor[14] = 0;
+    tok_tipo[15] = 33; tok_inicio[15] = 43; tok_largo[15] = 1; tok_valor[15] = 0;
+    tok_tipo[16] = 8; tok_inicio[16] = 45; tok_largo[16] = 6; tok_valor[16] = 0;
+    tok_tipo[17] = 2; tok_inicio[17] = 52; tok_largo[17] = 1; tok_valor[17] = 0;
+    tok_tipo[18] = 36; tok_inicio[18] = 53; tok_largo[18] = 1; tok_valor[18] = 0;
+    tok_tipo[19] = 34; tok_inicio[19] = 55; tok_largo[19] = 1; tok_valor[19] = 0;
+    tok_tipo[20] = 4; tok_inicio[20] = 57; tok_largo[20] = 3; tok_valor[20] = 0;
+    tok_tipo[21] = 1; tok_inicio[21] = 61; tok_largo[21] = 4; tok_valor[21] = 0;
+    tok_tipo[22] = 29; tok_inicio[22] = 65; tok_largo[22] = 1; tok_valor[22] = 0;
+    tok_tipo[23] = 30; tok_inicio[23] = 66; tok_largo[23] = 1; tok_valor[23] = 0;
+    tok_tipo[24] = 33; tok_inicio[24] = 68; tok_largo[24] = 1; tok_valor[24] = 0;
+    tok_tipo[25] = 8; tok_inicio[25] = 70; tok_largo[25] = 6; tok_valor[25] = 0;
+    tok_tipo[26] = 2; tok_inicio[26] = 77; tok_largo[26] = 1; tok_valor[26] = 1;
+    tok_tipo[27] = 36; tok_inicio[27] = 78; tok_largo[27] = 1; tok_valor[27] = 0;
+    tok_tipo[28] = 34; tok_inicio[28] = 80; tok_largo[28] = 1; tok_valor[28] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 29; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 1; naux[1] = 0; nsize[1] = 1;
+    nkind[2] = NodeKind::VariableDeclaration; nini[2] = 3; nfin[2] = 3; nhijo1[2] = -1; nsig[2] = 3; nval[2] = 9; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = NodeKind::FunctionDeclaration; nini[3] = 8; nfin[3] = 8; nhijo1[3] = 4; nsig[3] = 7; nval[3] = 12; naux[3] = 0; nsize[3] = 0;
+    nkind[4] = NodeKind::Block; nini[4] = 0; nfin[4] = 0; nhijo1[4] = 5; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::ReturnStatement; nini[5] = 16; nfin[5] = 16; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = NodeKind::IntegerLiteral; nini[6] = 17; nfin[6] = 17; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::FunctionDeclaration; nini[7] = 11; nfin[7] = 11; nhijo1[7] = 8; nsig[7] = -1; nval[7] = 21; naux[7] = 0; nsize[7] = 0;
+    nkind[8] = NodeKind::Block; nini[8] = 0; nfin[8] = 0; nhijo1[8] = 9; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = NodeKind::ReturnStatement; nini[9] = 25; nfin[9] = 25; nhijo1[9] = 10; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = NodeKind::IntegerLiteral; nini[10] = 26; nfin[10] = 26; nhijo1[10] = -1; nsig[10] = -1; nval[10] = 1; naux[10] = -1; nsize[10] = 0;
+    nnodos = 11;
+    tok_count = 29;
+    return 0;
+}
+
+int inicia_nodos5()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[64];
+    fuente[0] = 105; fuente[1] = 110; fuente[2] = 116; fuente[3] = 32; fuente[4] = 100; fuente[5] = 111; fuente[6] = 98; fuente[7] = 108;
+    fuente[8] = 101; fuente[9] = 40; fuente[10] = 105; fuente[11] = 110; fuente[12] = 116; fuente[13] = 32; fuente[14] = 97; fuente[15] = 41;
+    fuente[16] = 32; fuente[17] = 123; fuente[18] = 32; fuente[19] = 105; fuente[20] = 110; fuente[21] = 116; fuente[22] = 32; fuente[23] = 114;
+    fuente[24] = 32; fuente[25] = 61; fuente[26] = 32; fuente[27] = 97; fuente[28] = 59; fuente[29] = 32; fuente[30] = 114; fuente[31] = 101;
+    fuente[32] = 116; fuente[33] = 117; fuente[34] = 114; fuente[35] = 110; fuente[36] = 32; fuente[37] = 114; fuente[38] = 59; fuente[39] = 32;
+    fuente[40] = 125; fuente[41] = 32; fuente[42] = 105; fuente[43] = 110; fuente[44] = 116; fuente[45] = 32; fuente[46] = 109; fuente[47] = 97;
+    fuente[48] = 105; fuente[49] = 110; fuente[50] = 40; fuente[51] = 41; fuente[52] = 32; fuente[53] = 123; fuente[54] = 32; fuente[55] = 105;
+    fuente[56] = 110; fuente[57] = 116; fuente[58] = 32; fuente[59] = 120; fuente[60] = 32; fuente[61] = 61; fuente[62] = 32; fuente[63] = 49;
+    fuente[64] = 59; fuente[65] = 32; fuente[66] = 123; fuente[67] = 32; fuente[68] = 105; fuente[69] = 110; fuente[70] = 116; fuente[71] = 32;
+    fuente[72] = 120; fuente[73] = 32; fuente[74] = 61; fuente[75] = 32; fuente[76] = 50; fuente[77] = 59; fuente[78] = 32; fuente[79] = 120;
+    fuente[80] = 32; fuente[81] = 61; fuente[82] = 32; fuente[83] = 51; fuente[84] = 59; fuente[85] = 32; fuente[86] = 125; fuente[87] = 32;
+    fuente[88] = 120; fuente[89] = 32; fuente[90] = 61; fuente[91] = 32; fuente[92] = 52; fuente[93] = 59; fuente[94] = 32; fuente[95] = 114;
+    fuente[96] = 101; fuente[97] = 116; fuente[98] = 117; fuente[99] = 114; fuente[100] = 110; fuente[101] = 32; fuente[102] = 120; fuente[103] = 59;
+    fuente[104] = 32; fuente[105] = 125;
+    tok_tipo[0] = 4; tok_inicio[0] = 0; tok_largo[0] = 3; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 4; tok_largo[1] = 5; tok_valor[1] = 0;
+    tok_tipo[2] = 29; tok_inicio[2] = 9; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 10; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 14; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 30; tok_inicio[5] = 15; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 33; tok_inicio[6] = 17; tok_largo[6] = 1; tok_valor[6] = 0;
+    tok_tipo[7] = 4; tok_inicio[7] = 19; tok_largo[7] = 3; tok_valor[7] = 0;
+    tok_tipo[8] = 1; tok_inicio[8] = 23; tok_largo[8] = 1; tok_valor[8] = 0;
+    tok_tipo[9] = 13; tok_inicio[9] = 25; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 1; tok_inicio[10] = 27; tok_largo[10] = 1; tok_valor[10] = 0;
+    tok_tipo[11] = 36; tok_inicio[11] = 28; tok_largo[11] = 1; tok_valor[11] = 0;
+    tok_tipo[12] = 8; tok_inicio[12] = 30; tok_largo[12] = 6; tok_valor[12] = 0;
+    tok_tipo[13] = 1; tok_inicio[13] = 37; tok_largo[13] = 1; tok_valor[13] = 0;
+    tok_tipo[14] = 36; tok_inicio[14] = 38; tok_largo[14] = 1; tok_valor[14] = 0;
+    tok_tipo[15] = 34; tok_inicio[15] = 40; tok_largo[15] = 1; tok_valor[15] = 0;
+    tok_tipo[16] = 4; tok_inicio[16] = 42; tok_largo[16] = 3; tok_valor[16] = 0;
+    tok_tipo[17] = 1; tok_inicio[17] = 46; tok_largo[17] = 4; tok_valor[17] = 0;
+    tok_tipo[18] = 29; tok_inicio[18] = 50; tok_largo[18] = 1; tok_valor[18] = 0;
+    tok_tipo[19] = 30; tok_inicio[19] = 51; tok_largo[19] = 1; tok_valor[19] = 0;
+    tok_tipo[20] = 33; tok_inicio[20] = 53; tok_largo[20] = 1; tok_valor[20] = 0;
+    tok_tipo[21] = 4; tok_inicio[21] = 55; tok_largo[21] = 3; tok_valor[21] = 0;
+    tok_tipo[22] = 1; tok_inicio[22] = 59; tok_largo[22] = 1; tok_valor[22] = 0;
+    tok_tipo[23] = 13; tok_inicio[23] = 61; tok_largo[23] = 1; tok_valor[23] = 0;
+    tok_tipo[24] = 2; tok_inicio[24] = 63; tok_largo[24] = 1; tok_valor[24] = 1;
+    tok_tipo[25] = 36; tok_inicio[25] = 64; tok_largo[25] = 1; tok_valor[25] = 0;
+    tok_tipo[26] = 33; tok_inicio[26] = 66; tok_largo[26] = 1; tok_valor[26] = 0;
+    tok_tipo[27] = 4; tok_inicio[27] = 68; tok_largo[27] = 3; tok_valor[27] = 0;
+    tok_tipo[28] = 1; tok_inicio[28] = 72; tok_largo[28] = 1; tok_valor[28] = 0;
+    tok_tipo[29] = 13; tok_inicio[29] = 74; tok_largo[29] = 1; tok_valor[29] = 0;
+    tok_tipo[30] = 2; tok_inicio[30] = 76; tok_largo[30] = 1; tok_valor[30] = 2;
+    tok_tipo[31] = 36; tok_inicio[31] = 77; tok_largo[31] = 1; tok_valor[31] = 0;
+    tok_tipo[32] = 1; tok_inicio[32] = 79; tok_largo[32] = 1; tok_valor[32] = 0;
+    tok_tipo[33] = 13; tok_inicio[33] = 81; tok_largo[33] = 1; tok_valor[33] = 0;
+    tok_tipo[34] = 2; tok_inicio[34] = 83; tok_largo[34] = 1; tok_valor[34] = 3;
+    tok_tipo[35] = 36; tok_inicio[35] = 84; tok_largo[35] = 1; tok_valor[35] = 0;
+    tok_tipo[36] = 34; tok_inicio[36] = 86; tok_largo[36] = 1; tok_valor[36] = 0;
+    tok_tipo[37] = 1; tok_inicio[37] = 88; tok_largo[37] = 1; tok_valor[37] = 0;
+    tok_tipo[38] = 13; tok_inicio[38] = 90; tok_largo[38] = 1; tok_valor[38] = 0;
+    tok_tipo[39] = 2; tok_inicio[39] = 92; tok_largo[39] = 1; tok_valor[39] = 4;
+    tok_tipo[40] = 36; tok_inicio[40] = 93; tok_largo[40] = 1; tok_valor[40] = 0;
+    tok_tipo[41] = 8; tok_inicio[41] = 95; tok_largo[41] = 6; tok_valor[41] = 0;
+    tok_tipo[42] = 1; tok_inicio[42] = 102; tok_largo[42] = 1; tok_valor[42] = 0;
+    tok_tipo[43] = 36; tok_inicio[43] = 103; tok_largo[43] = 1; tok_valor[43] = 0;
+    tok_tipo[44] = 34; tok_inicio[44] = 105; tok_largo[44] = 1; tok_valor[44] = 0;
+    partok[0] = 4;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 45; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::FunctionDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = 2; nsig[1] = 7; nval[1] = 1; naux[1] = 0; nsize[1] = 1;
+    nkind[2] = NodeKind::Block; nini[2] = 0; nfin[2] = 0; nhijo1[2] = 3; nsig[2] = -1; nval[2] = 0; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = NodeKind::VariableDeclaration; nini[3] = 3; nfin[3] = 3; nhijo1[3] = 4; nsig[3] = 5; nval[3] = 8; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = NodeKind::VariableExpression; nini[4] = 10; nfin[4] = 10; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 10; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::ReturnStatement; nini[5] = 12; nfin[5] = 12; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = NodeKind::VariableExpression; nini[6] = 13; nfin[6] = 13; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 13; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::FunctionDeclaration; nini[7] = 7; nfin[7] = 7; nhijo1[7] = 8; nsig[7] = -1; nval[7] = 17; naux[7] = 1; nsize[7] = 0;
+    nkind[8] = NodeKind::Block; nini[8] = 0; nfin[8] = 0; nhijo1[8] = 9; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = NodeKind::VariableDeclaration; nini[9] = 16; nfin[9] = 16; nhijo1[9] = 10; nsig[9] = 11; nval[9] = 22; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = NodeKind::IntegerLiteral; nini[10] = 24; nfin[10] = 24; nhijo1[10] = -1; nsig[10] = -1; nval[10] = 1; naux[10] = -1; nsize[10] = 0;
+    nkind[11] = NodeKind::Block; nini[11] = 0; nfin[11] = 0; nhijo1[11] = 12; nsig[11] = 16; nval[11] = 0; naux[11] = -1; nsize[11] = 0;
+    nkind[12] = NodeKind::VariableDeclaration; nini[12] = 21; nfin[12] = 21; nhijo1[12] = 13; nsig[12] = 14; nval[12] = 28; naux[12] = -1; nsize[12] = 0;
+    nkind[13] = NodeKind::IntegerLiteral; nini[13] = 30; nfin[13] = 30; nhijo1[13] = -1; nsig[13] = -1; nval[13] = 2; naux[13] = -1; nsize[13] = 0;
+    nkind[14] = NodeKind::AssignmentStatement; nini[14] = 32; nfin[14] = 32; nhijo1[14] = -1; nsig[14] = -1; nval[14] = 32; naux[14] = 15; nsize[14] = 0;
+    nkind[15] = NodeKind::IntegerLiteral; nini[15] = 34; nfin[15] = 34; nhijo1[15] = -1; nsig[15] = -1; nval[15] = 3; naux[15] = -1; nsize[15] = 0;
+    nkind[16] = NodeKind::AssignmentStatement; nini[16] = 37; nfin[16] = 37; nhijo1[16] = -1; nsig[16] = 18; nval[16] = 37; naux[16] = 17; nsize[16] = 0;
+    nkind[17] = NodeKind::IntegerLiteral; nini[17] = 39; nfin[17] = 39; nhijo1[17] = -1; nsig[17] = -1; nval[17] = 4; naux[17] = -1; nsize[17] = 0;
+    nkind[18] = NodeKind::ReturnStatement; nini[18] = 41; nfin[18] = 41; nhijo1[18] = 19; nsig[18] = -1; nval[18] = 0; naux[18] = -1; nsize[18] = 0;
+    nkind[19] = NodeKind::VariableExpression; nini[19] = 42; nfin[19] = 42; nhijo1[19] = -1; nsig[19] = -1; nval[19] = 42; naux[19] = -1; nsize[19] = 0;
+    nnodos = 20;
+    tok_count = 45;
+    return 0;
+}
+
+int inicia_nodos6()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[64];
+    fuente[0] = 105; fuente[1] = 110; fuente[2] = 116; fuente[3] = 32; fuente[4] = 102; fuente[5] = 40; fuente[6] = 105; fuente[7] = 110;
+    fuente[8] = 116; fuente[9] = 32; fuente[10] = 97; fuente[11] = 44; fuente[12] = 32; fuente[13] = 105; fuente[14] = 110; fuente[15] = 116;
+    fuente[16] = 32; fuente[17] = 97; fuente[18] = 41; fuente[19] = 32; fuente[20] = 123; fuente[21] = 32; fuente[22] = 105; fuente[23] = 110;
+    fuente[24] = 116; fuente[25] = 32; fuente[26] = 120; fuente[27] = 32; fuente[28] = 61; fuente[29] = 32; fuente[30] = 49; fuente[31] = 59;
+    fuente[32] = 32; fuente[33] = 105; fuente[34] = 110; fuente[35] = 116; fuente[36] = 32; fuente[37] = 120; fuente[38] = 32; fuente[39] = 61;
+    fuente[40] = 32; fuente[41] = 50; fuente[42] = 59; fuente[43] = 32; fuente[44] = 121; fuente[45] = 32; fuente[46] = 61; fuente[47] = 32;
+    fuente[48] = 51; fuente[49] = 59; fuente[50] = 32; fuente[51] = 114; fuente[52] = 101; fuente[53] = 116; fuente[54] = 117; fuente[55] = 114;
+    fuente[56] = 110; fuente[57] = 32; fuente[58] = 120; fuente[59] = 59; fuente[60] = 32; fuente[61] = 125; fuente[62] = 32; fuente[63] = 105;
+    fuente[64] = 110; fuente[65] = 116; fuente[66] = 32; fuente[67] = 109; fuente[68] = 97; fuente[69] = 105; fuente[70] = 110; fuente[71] = 40;
+    fuente[72] = 41; fuente[73] = 32; fuente[74] = 123; fuente[75] = 32; fuente[76] = 114; fuente[77] = 101; fuente[78] = 116; fuente[79] = 117;
+    fuente[80] = 114; fuente[81] = 110; fuente[82] = 32; fuente[83] = 48; fuente[84] = 59; fuente[85] = 32; fuente[86] = 125;
+    tok_tipo[0] = 4; tok_inicio[0] = 0; tok_largo[0] = 3; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 4; tok_largo[1] = 1; tok_valor[1] = 0;
+    tok_tipo[2] = 29; tok_inicio[2] = 5; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 6; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 10; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 35; tok_inicio[5] = 11; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 4; tok_inicio[6] = 13; tok_largo[6] = 3; tok_valor[6] = 0;
+    tok_tipo[7] = 1; tok_inicio[7] = 17; tok_largo[7] = 1; tok_valor[7] = 0;
+    tok_tipo[8] = 30; tok_inicio[8] = 18; tok_largo[8] = 1; tok_valor[8] = 0;
+    tok_tipo[9] = 33; tok_inicio[9] = 20; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 4; tok_inicio[10] = 22; tok_largo[10] = 3; tok_valor[10] = 0;
+    tok_tipo[11] = 1; tok_inicio[11] = 26; tok_largo[11] = 1; tok_valor[11] = 0;
+    tok_tipo[12] = 13; tok_inicio[12] = 28; tok_largo[12] = 1; tok_valor[12] = 0;
+    tok_tipo[13] = 2; tok_inicio[13] = 30; tok_largo[13] = 1; tok_valor[13] = 1;
+    tok_tipo[14] = 36; tok_inicio[14] = 31; tok_largo[14] = 1; tok_valor[14] = 0;
+    tok_tipo[15] = 4; tok_inicio[15] = 33; tok_largo[15] = 3; tok_valor[15] = 0;
+    tok_tipo[16] = 1; tok_inicio[16] = 37; tok_largo[16] = 1; tok_valor[16] = 0;
+    tok_tipo[17] = 13; tok_inicio[17] = 39; tok_largo[17] = 1; tok_valor[17] = 0;
+    tok_tipo[18] = 2; tok_inicio[18] = 41; tok_largo[18] = 1; tok_valor[18] = 2;
+    tok_tipo[19] = 36; tok_inicio[19] = 42; tok_largo[19] = 1; tok_valor[19] = 0;
+    tok_tipo[20] = 1; tok_inicio[20] = 44; tok_largo[20] = 1; tok_valor[20] = 0;
+    tok_tipo[21] = 13; tok_inicio[21] = 46; tok_largo[21] = 1; tok_valor[21] = 0;
+    tok_tipo[22] = 2; tok_inicio[22] = 48; tok_largo[22] = 1; tok_valor[22] = 3;
+    tok_tipo[23] = 36; tok_inicio[23] = 49; tok_largo[23] = 1; tok_valor[23] = 0;
+    tok_tipo[24] = 8; tok_inicio[24] = 51; tok_largo[24] = 6; tok_valor[24] = 0;
+    tok_tipo[25] = 1; tok_inicio[25] = 58; tok_largo[25] = 1; tok_valor[25] = 0;
+    tok_tipo[26] = 36; tok_inicio[26] = 59; tok_largo[26] = 1; tok_valor[26] = 0;
+    tok_tipo[27] = 34; tok_inicio[27] = 61; tok_largo[27] = 1; tok_valor[27] = 0;
+    tok_tipo[28] = 4; tok_inicio[28] = 63; tok_largo[28] = 3; tok_valor[28] = 0;
+    tok_tipo[29] = 1; tok_inicio[29] = 67; tok_largo[29] = 4; tok_valor[29] = 0;
+    tok_tipo[30] = 29; tok_inicio[30] = 71; tok_largo[30] = 1; tok_valor[30] = 0;
+    tok_tipo[31] = 30; tok_inicio[31] = 72; tok_largo[31] = 1; tok_valor[31] = 0;
+    tok_tipo[32] = 33; tok_inicio[32] = 74; tok_largo[32] = 1; tok_valor[32] = 0;
+    tok_tipo[33] = 8; tok_inicio[33] = 76; tok_largo[33] = 6; tok_valor[33] = 0;
+    tok_tipo[34] = 2; tok_inicio[34] = 83; tok_largo[34] = 1; tok_valor[34] = 0;
+    tok_tipo[35] = 36; tok_inicio[35] = 84; tok_largo[35] = 1; tok_valor[35] = 0;
+    tok_tipo[36] = 34; tok_inicio[36] = 86; tok_largo[36] = 1; tok_valor[36] = 0;
+    partok[0] = 4;
+    partok[1] = 7;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 37; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::FunctionDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = 2; nsig[1] = 11; nval[1] = 1; naux[1] = 0; nsize[1] = 2;
+    nkind[2] = NodeKind::Block; nini[2] = 0; nfin[2] = 0; nhijo1[2] = 3; nsig[2] = -1; nval[2] = 0; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = NodeKind::VariableDeclaration; nini[3] = 3; nfin[3] = 3; nhijo1[3] = 4; nsig[3] = 5; nval[3] = 11; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = NodeKind::IntegerLiteral; nini[4] = 13; nfin[4] = 13; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 1; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::VariableDeclaration; nini[5] = 6; nfin[5] = 6; nhijo1[5] = 6; nsig[5] = 7; nval[5] = 16; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = NodeKind::IntegerLiteral; nini[6] = 18; nfin[6] = 18; nhijo1[6] = -1; nsig[6] = -1; nval[6] = 2; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::AssignmentStatement; nini[7] = 20; nfin[7] = 20; nhijo1[7] = -1; nsig[7] = 9; nval[7] = 20; naux[7] = 8; nsize[7] = 0;
+    nkind[8] = NodeKind::IntegerLiteral; nini[8] = 22; nfin[8] = 22; nhijo1[8] = -1; nsig[8] = -1; nval[8] = 3; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = NodeKind::ReturnStatement; nini[9] = 24; nfin[9] = 24; nhijo1[9] = 10; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = NodeKind::VariableExpression; nini[10] = 25; nfin[10] = 25; nhijo1[10] = -1; nsig[10] = -1; nval[10] = 25; naux[10] = -1; nsize[10] = 0;
+    nkind[11] = NodeKind::FunctionDeclaration; nini[11] = 10; nfin[11] = 10; nhijo1[11] = 12; nsig[11] = -1; nval[11] = 29; naux[11] = 2; nsize[11] = 0;
+    nkind[12] = NodeKind::Block; nini[12] = 0; nfin[12] = 0; nhijo1[12] = 13; nsig[12] = -1; nval[12] = 0; naux[12] = -1; nsize[12] = 0;
+    nkind[13] = NodeKind::ReturnStatement; nini[13] = 33; nfin[13] = 33; nhijo1[13] = 14; nsig[13] = -1; nval[13] = 0; naux[13] = -1; nsize[13] = 0;
+    nkind[14] = NodeKind::IntegerLiteral; nini[14] = 34; nfin[14] = 34; nhijo1[14] = -1; nsig[14] = -1; nval[14] = 0; naux[14] = -1; nsize[14] = 0;
+    nnodos = 15;
+    tok_count = 37;
+    return 0;
+}
+
+int inicia_nodos7()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[64];
+    fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 117; fuente[4] = 99; fuente[5] = 116; fuente[6] = 32; fuente[7] = 80;
+    fuente[8] = 117; fuente[9] = 110; fuente[10] = 116; fuente[11] = 111; fuente[12] = 32; fuente[13] = 123; fuente[14] = 32; fuente[15] = 105;
+    fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 120; fuente[20] = 59; fuente[21] = 32; fuente[22] = 105; fuente[23] = 110;
+    fuente[24] = 116; fuente[25] = 32; fuente[26] = 121; fuente[27] = 59; fuente[28] = 32; fuente[29] = 125; fuente[30] = 59; fuente[31] = 32;
+    fuente[32] = 105; fuente[33] = 110; fuente[34] = 116; fuente[35] = 32; fuente[36] = 109; fuente[37] = 97; fuente[38] = 105; fuente[39] = 110;
+    fuente[40] = 40; fuente[41] = 41; fuente[42] = 32; fuente[43] = 123; fuente[44] = 32; fuente[45] = 80; fuente[46] = 117; fuente[47] = 110;
+    fuente[48] = 116; fuente[49] = 111; fuente[50] = 32; fuente[51] = 112; fuente[52] = 59; fuente[53] = 32; fuente[54] = 67; fuente[55] = 111;
+    fuente[56] = 115; fuente[57] = 97; fuente[58] = 32; fuente[59] = 99; fuente[60] = 59; fuente[61] = 32; fuente[62] = 105; fuente[63] = 110;
+    fuente[64] = 116; fuente[65] = 32; fuente[66] = 100; fuente[67] = 97; fuente[68] = 116; fuente[69] = 111; fuente[70] = 115; fuente[71] = 91;
+    fuente[72] = 49; fuente[73] = 48; fuente[74] = 93; fuente[75] = 59; fuente[76] = 32; fuente[77] = 115; fuente[78] = 116; fuente[79] = 114;
+    fuente[80] = 105; fuente[81] = 110; fuente[82] = 103; fuente[83] = 32; fuente[84] = 110; fuente[85] = 111; fuente[86] = 109; fuente[87] = 98;
+    fuente[88] = 114; fuente[89] = 101; fuente[90] = 115; fuente[91] = 91; fuente[92] = 53; fuente[93] = 93; fuente[94] = 59; fuente[95] = 32;
+    fuente[96] = 105; fuente[97] = 110; fuente[98] = 116; fuente[99] = 32; fuente[100] = 118; fuente[101] = 91; fuente[102] = 51; fuente[103] = 93;
+    fuente[104] = 32; fuente[105] = 61; fuente[106] = 32; fuente[107] = 49; fuente[108] = 59; fuente[109] = 32; fuente[110] = 114; fuente[111] = 101;
+    fuente[112] = 116; fuente[113] = 117; fuente[114] = 114; fuente[115] = 110; fuente[116] = 32; fuente[117] = 48; fuente[118] = 59; fuente[119] = 32;
+    fuente[120] = 125;
+    tok_tipo[0] = 6; tok_inicio[0] = 0; tok_largo[0] = 6; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 7; tok_largo[1] = 5; tok_valor[1] = 0;
+    tok_tipo[2] = 33; tok_inicio[2] = 13; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 15; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 19; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 36; tok_inicio[5] = 20; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 4; tok_inicio[6] = 22; tok_largo[6] = 3; tok_valor[6] = 0;
+    tok_tipo[7] = 1; tok_inicio[7] = 26; tok_largo[7] = 1; tok_valor[7] = 0;
+    tok_tipo[8] = 36; tok_inicio[8] = 27; tok_largo[8] = 1; tok_valor[8] = 0;
+    tok_tipo[9] = 34; tok_inicio[9] = 29; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 36; tok_inicio[10] = 30; tok_largo[10] = 1; tok_valor[10] = 0;
+    tok_tipo[11] = 4; tok_inicio[11] = 32; tok_largo[11] = 3; tok_valor[11] = 0;
+    tok_tipo[12] = 1; tok_inicio[12] = 36; tok_largo[12] = 4; tok_valor[12] = 0;
+    tok_tipo[13] = 29; tok_inicio[13] = 40; tok_largo[13] = 1; tok_valor[13] = 0;
+    tok_tipo[14] = 30; tok_inicio[14] = 41; tok_largo[14] = 1; tok_valor[14] = 0;
+    tok_tipo[15] = 33; tok_inicio[15] = 43; tok_largo[15] = 1; tok_valor[15] = 0;
+    tok_tipo[16] = 1; tok_inicio[16] = 45; tok_largo[16] = 5; tok_valor[16] = 0;
+    tok_tipo[17] = 1; tok_inicio[17] = 51; tok_largo[17] = 1; tok_valor[17] = 0;
+    tok_tipo[18] = 36; tok_inicio[18] = 52; tok_largo[18] = 1; tok_valor[18] = 0;
+    tok_tipo[19] = 1; tok_inicio[19] = 54; tok_largo[19] = 4; tok_valor[19] = 0;
+    tok_tipo[20] = 1; tok_inicio[20] = 59; tok_largo[20] = 1; tok_valor[20] = 0;
+    tok_tipo[21] = 36; tok_inicio[21] = 60; tok_largo[21] = 1; tok_valor[21] = 0;
+    tok_tipo[22] = 4; tok_inicio[22] = 62; tok_largo[22] = 3; tok_valor[22] = 0;
+    tok_tipo[23] = 1; tok_inicio[23] = 66; tok_largo[23] = 5; tok_valor[23] = 0;
+    tok_tipo[24] = 31; tok_inicio[24] = 71; tok_largo[24] = 1; tok_valor[24] = 0;
+    tok_tipo[25] = 2; tok_inicio[25] = 72; tok_largo[25] = 2; tok_valor[25] = 10;
+    tok_tipo[26] = 32; tok_inicio[26] = 74; tok_largo[26] = 1; tok_valor[26] = 0;
+    tok_tipo[27] = 36; tok_inicio[27] = 75; tok_largo[27] = 1; tok_valor[27] = 0;
+    tok_tipo[28] = 5; tok_inicio[28] = 77; tok_largo[28] = 6; tok_valor[28] = 0;
+    tok_tipo[29] = 1; tok_inicio[29] = 84; tok_largo[29] = 7; tok_valor[29] = 0;
+    tok_tipo[30] = 31; tok_inicio[30] = 91; tok_largo[30] = 1; tok_valor[30] = 0;
+    tok_tipo[31] = 2; tok_inicio[31] = 92; tok_largo[31] = 1; tok_valor[31] = 5;
+    tok_tipo[32] = 32; tok_inicio[32] = 93; tok_largo[32] = 1; tok_valor[32] = 0;
+    tok_tipo[33] = 36; tok_inicio[33] = 94; tok_largo[33] = 1; tok_valor[33] = 0;
+    tok_tipo[34] = 4; tok_inicio[34] = 96; tok_largo[34] = 3; tok_valor[34] = 0;
+    tok_tipo[35] = 1; tok_inicio[35] = 100; tok_largo[35] = 1; tok_valor[35] = 0;
+    tok_tipo[36] = 31; tok_inicio[36] = 101; tok_largo[36] = 1; tok_valor[36] = 0;
+    tok_tipo[37] = 2; tok_inicio[37] = 102; tok_largo[37] = 1; tok_valor[37] = 3;
+    tok_tipo[38] = 32; tok_inicio[38] = 103; tok_largo[38] = 1; tok_valor[38] = 0;
+    tok_tipo[39] = 13; tok_inicio[39] = 105; tok_largo[39] = 1; tok_valor[39] = 0;
+    tok_tipo[40] = 2; tok_inicio[40] = 107; tok_largo[40] = 1; tok_valor[40] = 1;
+    tok_tipo[41] = 36; tok_inicio[41] = 108; tok_largo[41] = 1; tok_valor[41] = 0;
+    tok_tipo[42] = 8; tok_inicio[42] = 110; tok_largo[42] = 6; tok_valor[42] = 0;
+    tok_tipo[43] = 2; tok_inicio[43] = 117; tok_largo[43] = 1; tok_valor[43] = 0;
+    tok_tipo[44] = 36; tok_inicio[44] = 118; tok_largo[44] = 1; tok_valor[44] = 0;
+    tok_tipo[45] = 34; tok_inicio[45] = 120; tok_largo[45] = 1; tok_valor[45] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 46; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::StructDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 1; naux[1] = 0; nsize[1] = 2;
+    nkind[2] = NodeKind::FunctionDeclaration; nini[2] = 3; nfin[2] = 3; nhijo1[2] = 3; nsig[2] = -1; nval[2] = 12; naux[2] = 0; nsize[2] = 0;
+    nkind[3] = NodeKind::Block; nini[3] = 0; nfin[3] = 0; nhijo1[3] = 4; nsig[3] = -1; nval[3] = 0; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = NodeKind::VariableDeclaration; nini[4] = 16; nfin[4] = 16; nhijo1[4] = -1; nsig[4] = 5; nval[4] = 17; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::VariableDeclaration; nini[5] = 19; nfin[5] = 19; nhijo1[5] = -1; nsig[5] = 6; nval[5] = 20; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = NodeKind::VariableDeclaration; nini[6] = 6; nfin[6] = 6; nhijo1[6] = -1; nsig[6] = 7; nval[6] = 23; naux[6] = -1; nsize[6] = 10;
+    nkind[7] = NodeKind::VariableDeclaration; nini[7] = 28; nfin[7] = 28; nhijo1[7] = -1; nsig[7] = 8; nval[7] = 29; naux[7] = -1; nsize[7] = 5;
+    nkind[8] = NodeKind::VariableDeclaration; nini[8] = 11; nfin[8] = 11; nhijo1[8] = 9; nsig[8] = 10; nval[8] = 35; naux[8] = -1; nsize[8] = 3;
+    nkind[9] = NodeKind::IntegerLiteral; nini[9] = 40; nfin[9] = 40; nhijo1[9] = -1; nsig[9] = -1; nval[9] = 1; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = NodeKind::ReturnStatement; nini[10] = 42; nfin[10] = 42; nhijo1[10] = 11; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
+    nkind[11] = NodeKind::IntegerLiteral; nini[11] = 43; nfin[11] = 43; nhijo1[11] = -1; nsig[11] = -1; nval[11] = 0; naux[11] = -1; nsize[11] = 0;
+    nnodos = 12;
+    tok_count = 46;
+    return 0;
+}
+
+int inicia_nodos8()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[64];
+    fuente[0] = 105; fuente[1] = 110; fuente[2] = 116; fuente[3] = 32; fuente[4] = 103; fuente[5] = 59; fuente[6] = 32; fuente[7] = 105;
+    fuente[8] = 110; fuente[9] = 116; fuente[10] = 32; fuente[11] = 102; fuente[12] = 40; fuente[13] = 41; fuente[14] = 32; fuente[15] = 123;
+    fuente[16] = 32; fuente[17] = 114; fuente[18] = 101; fuente[19] = 116; fuente[20] = 117; fuente[21] = 114; fuente[22] = 110; fuente[23] = 59;
+    fuente[24] = 32; fuente[25] = 125; fuente[26] = 32; fuente[27] = 105; fuente[28] = 110; fuente[29] = 116; fuente[30] = 32; fuente[31] = 109;
+    fuente[32] = 97; fuente[33] = 105; fuente[34] = 110; fuente[35] = 40; fuente[36] = 41; fuente[37] = 32; fuente[38] = 123; fuente[39] = 32;
+    fuente[40] = 103; fuente[41] = 32; fuente[42] = 61; fuente[43] = 32; fuente[44] = 49; fuente[45] = 59; fuente[46] = 32; fuente[47] = 112;
+    fuente[48] = 114; fuente[49] = 105; fuente[50] = 110; fuente[51] = 116; fuente[52] = 59; fuente[53] = 32; fuente[54] = 112; fuente[55] = 114;
+    fuente[56] = 105; fuente[57] = 110; fuente[58] = 116; fuente[59] = 95; fuente[60] = 105; fuente[61] = 110; fuente[62] = 116; fuente[63] = 59;
+    fuente[64] = 32; fuente[65] = 114; fuente[66] = 101; fuente[67] = 116; fuente[68] = 117; fuente[69] = 114; fuente[70] = 110; fuente[71] = 32;
+    fuente[72] = 48; fuente[73] = 59; fuente[74] = 32; fuente[75] = 125;
+    tok_tipo[0] = 4; tok_inicio[0] = 0; tok_largo[0] = 3; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 4; tok_largo[1] = 1; tok_valor[1] = 0;
+    tok_tipo[2] = 36; tok_inicio[2] = 5; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 4; tok_inicio[3] = 7; tok_largo[3] = 3; tok_valor[3] = 0;
+    tok_tipo[4] = 1; tok_inicio[4] = 11; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 29; tok_inicio[5] = 12; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 30; tok_inicio[6] = 13; tok_largo[6] = 1; tok_valor[6] = 0;
+    tok_tipo[7] = 33; tok_inicio[7] = 15; tok_largo[7] = 1; tok_valor[7] = 0;
+    tok_tipo[8] = 8; tok_inicio[8] = 17; tok_largo[8] = 6; tok_valor[8] = 0;
+    tok_tipo[9] = 36; tok_inicio[9] = 23; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 34; tok_inicio[10] = 25; tok_largo[10] = 1; tok_valor[10] = 0;
+    tok_tipo[11] = 4; tok_inicio[11] = 27; tok_largo[11] = 3; tok_valor[11] = 0;
+    tok_tipo[12] = 1; tok_inicio[12] = 31; tok_largo[12] = 4; tok_valor[12] = 0;
+    tok_tipo[13] = 29; tok_inicio[13] = 35; tok_largo[13] = 1; tok_valor[13] = 0;
+    tok_tipo[14] = 30; tok_inicio[14] = 36; tok_largo[14] = 1; tok_valor[14] = 0;
+    tok_tipo[15] = 33; tok_inicio[15] = 38; tok_largo[15] = 1; tok_valor[15] = 0;
+    tok_tipo[16] = 1; tok_inicio[16] = 40; tok_largo[16] = 1; tok_valor[16] = 0;
+    tok_tipo[17] = 13; tok_inicio[17] = 42; tok_largo[17] = 1; tok_valor[17] = 0;
+    tok_tipo[18] = 2; tok_inicio[18] = 44; tok_largo[18] = 1; tok_valor[18] = 1;
+    tok_tipo[19] = 36; tok_inicio[19] = 45; tok_largo[19] = 1; tok_valor[19] = 0;
+    tok_tipo[20] = 9; tok_inicio[20] = 47; tok_largo[20] = 5; tok_valor[20] = 0;
+    tok_tipo[21] = 36; tok_inicio[21] = 52; tok_largo[21] = 1; tok_valor[21] = 0;
+    tok_tipo[22] = 1; tok_inicio[22] = 54; tok_largo[22] = 9; tok_valor[22] = 0;
+    tok_tipo[23] = 36; tok_inicio[23] = 63; tok_largo[23] = 1; tok_valor[23] = 0;
+    tok_tipo[24] = 8; tok_inicio[24] = 65; tok_largo[24] = 6; tok_valor[24] = 0;
+    tok_tipo[25] = 2; tok_inicio[25] = 72; tok_largo[25] = 1; tok_valor[25] = 0;
+    tok_tipo[26] = 36; tok_inicio[26] = 73; tok_largo[26] = 1; tok_valor[26] = 0;
+    tok_tipo[27] = 34; tok_inicio[27] = 75; tok_largo[27] = 1; tok_valor[27] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 28; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::VariableDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 1; naux[1] = -1; nsize[1] = 0;
+    nkind[2] = NodeKind::FunctionDeclaration; nini[2] = 3; nfin[2] = 3; nhijo1[2] = 3; nsig[2] = 5; nval[2] = 4; naux[2] = 0; nsize[2] = 0;
+    nkind[3] = NodeKind::Block; nini[3] = 0; nfin[3] = 0; nhijo1[3] = 4; nsig[3] = -1; nval[3] = 0; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = NodeKind::ReturnStatement; nini[4] = 8; nfin[4] = 8; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = NodeKind::FunctionDeclaration; nini[5] = 11; nfin[5] = 11; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 12; naux[5] = 0; nsize[5] = 0;
+    nkind[6] = NodeKind::Block; nini[6] = 0; nfin[6] = 0; nhijo1[6] = 7; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::AssignmentStatement; nini[7] = 16; nfin[7] = 16; nhijo1[7] = -1; nsig[7] = 9; nval[7] = 16; naux[7] = 8; nsize[7] = 0;
+    nkind[8] = NodeKind::IntegerLiteral; nini[8] = 18; nfin[8] = 18; nhijo1[8] = -1; nsig[8] = -1; nval[8] = 1; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = NodeKind::PrintStatement; nini[9] = 20; nfin[9] = 20; nhijo1[9] = -1; nsig[9] = 10; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = NodeKind::PrintIntegerStatement; nini[10] = 22; nfin[10] = 22; nhijo1[10] = -1; nsig[10] = 11; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
+    nkind[11] = NodeKind::ReturnStatement; nini[11] = 24; nfin[11] = 24; nhijo1[11] = 12; nsig[11] = -1; nval[11] = 0; naux[11] = -1; nsize[11] = 0;
+    nkind[12] = NodeKind::IntegerLiteral; nini[12] = 25; nfin[12] = 25; nhijo1[12] = -1; nsig[12] = -1; nval[12] = 0; naux[12] = -1; nsize[12] = 0;
+    nnodos = 13;
+    tok_count = 28;
+    return 0;
+}
+
+int inicia_nodos9()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[64];
+    fuente[0] = 115; fuente[1] = 116; fuente[2] = 114; fuente[3] = 105; fuente[4] = 110; fuente[5] = 103; fuente[6] = 32; fuente[7] = 102;
+    fuente[8] = 40; fuente[9] = 41; fuente[10] = 32; fuente[11] = 123; fuente[12] = 32; fuente[13] = 125; fuente[14] = 32; fuente[15] = 105;
+    fuente[16] = 110; fuente[17] = 116; fuente[18] = 32; fuente[19] = 114; fuente[20] = 111; fuente[21] = 116; fuente[22] = 111; fuente[23] = 40;
+    fuente[24] = 41; fuente[25] = 32; fuente[26] = 105; fuente[27] = 110; fuente[28] = 116; fuente[29] = 32; fuente[30] = 109; fuente[31] = 97;
+    fuente[32] = 105; fuente[33] = 110; fuente[34] = 40; fuente[35] = 41; fuente[36] = 32; fuente[37] = 123; fuente[38] = 32; fuente[39] = 114;
+    fuente[40] = 101; fuente[41] = 116; fuente[42] = 117; fuente[43] = 114; fuente[44] = 110; fuente[45] = 32; fuente[46] = 48; fuente[47] = 59;
+    fuente[48] = 32; fuente[49] = 125;
+    tok_tipo[0] = 5; tok_inicio[0] = 0; tok_largo[0] = 6; tok_valor[0] = 0;
+    tok_tipo[1] = 1; tok_inicio[1] = 7; tok_largo[1] = 1; tok_valor[1] = 0;
+    tok_tipo[2] = 29; tok_inicio[2] = 8; tok_largo[2] = 1; tok_valor[2] = 0;
+    tok_tipo[3] = 30; tok_inicio[3] = 9; tok_largo[3] = 1; tok_valor[3] = 0;
+    tok_tipo[4] = 33; tok_inicio[4] = 11; tok_largo[4] = 1; tok_valor[4] = 0;
+    tok_tipo[5] = 34; tok_inicio[5] = 13; tok_largo[5] = 1; tok_valor[5] = 0;
+    tok_tipo[6] = 4; tok_inicio[6] = 15; tok_largo[6] = 3; tok_valor[6] = 0;
+    tok_tipo[7] = 1; tok_inicio[7] = 19; tok_largo[7] = 4; tok_valor[7] = 0;
+    tok_tipo[8] = 29; tok_inicio[8] = 23; tok_largo[8] = 1; tok_valor[8] = 0;
+    tok_tipo[9] = 30; tok_inicio[9] = 24; tok_largo[9] = 1; tok_valor[9] = 0;
+    tok_tipo[10] = 4; tok_inicio[10] = 26; tok_largo[10] = 3; tok_valor[10] = 0;
+    tok_tipo[11] = 1; tok_inicio[11] = 30; tok_largo[11] = 4; tok_valor[11] = 0;
+    tok_tipo[12] = 29; tok_inicio[12] = 34; tok_largo[12] = 1; tok_valor[12] = 0;
+    tok_tipo[13] = 30; tok_inicio[13] = 35; tok_largo[13] = 1; tok_valor[13] = 0;
+    tok_tipo[14] = 33; tok_inicio[14] = 37; tok_largo[14] = 1; tok_valor[14] = 0;
+    tok_tipo[15] = 8; tok_inicio[15] = 39; tok_largo[15] = 6; tok_valor[15] = 0;
+    tok_tipo[16] = 2; tok_inicio[16] = 46; tok_largo[16] = 1; tok_valor[16] = 0;
+    tok_tipo[17] = 36; tok_inicio[17] = 47; tok_largo[17] = 1; tok_valor[17] = 0;
+    tok_tipo[18] = 34; tok_inicio[18] = 49; tok_largo[18] = 1; tok_valor[18] = 0;
+    nkind[0] = NodeKind::Program; nini[0] = 0; nfin[0] = 19; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = NodeKind::FunctionDeclaration; nini[1] = 0; nfin[1] = 0; nhijo1[1] = 2; nsig[1] = 3; nval[1] = 1; naux[1] = 0; nsize[1] = 0;
+    nkind[2] = NodeKind::Block; nini[2] = 0; nfin[2] = 0; nhijo1[2] = -1; nsig[2] = -1; nval[2] = 0; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = NodeKind::FunctionDeclaration; nini[3] = 6; nfin[3] = 6; nhijo1[3] = -1; nsig[3] = 4; nval[3] = 7; naux[3] = 0; nsize[3] = 0;
+    nkind[4] = NodeKind::FunctionDeclaration; nini[4] = 10; nfin[4] = 10; nhijo1[4] = 5; nsig[4] = -1; nval[4] = 11; naux[4] = 0; nsize[4] = 0;
+    nkind[5] = NodeKind::Block; nini[5] = 0; nfin[5] = 0; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = NodeKind::ReturnStatement; nini[6] = 15; nfin[6] = 15; nhijo1[6] = 7; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = NodeKind::IntegerLiteral; nini[7] = 16; nfin[7] = 16; nhijo1[7] = -1; nsig[7] = -1; nval[7] = 0; naux[7] = -1; nsize[7] = 0;
+    nnodos = 8;
+    tok_count = 19;
     return 0;
 }
 
@@ -537,5 +1520,20 @@ int main()
     int a4 = inicia_nodos4();
     int r4 = analiza();
     int p4 = imprime_fila();
+    int a5 = inicia_nodos5();
+    int r5 = analiza();
+    int p5 = imprime_fila();
+    int a6 = inicia_nodos6();
+    int r6 = analiza();
+    int p6 = imprime_fila();
+    int a7 = inicia_nodos7();
+    int r7 = analiza();
+    int p7 = imprime_fila();
+    int a8 = inicia_nodos8();
+    int r8 = analiza();
+    int p8 = imprime_fila();
+    int a9 = inicia_nodos9();
+    int r9 = analiza();
+    int p9 = imprime_fila();
     return 0;
 }
