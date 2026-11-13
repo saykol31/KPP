@@ -1,4 +1,4 @@
-// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 7.
+// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 8.
 // Traduccion de src/frontend/Parser.cpp (Stage 0) a K++, en el
 // estilo de subrutinas con estado compartido:
 //
@@ -73,6 +73,16 @@
 //     variable, una llamada anidada y un
 //     literal, junto a un print que sigue
 //     siendo PrintStatement.
+//   - Rebanada 8: la declaracion de tipo
+//     personalizado (Persona p;) y la asignacion
+//     a campo (p.edad = 30;) — la ultima pieza
+//     de parseStatement. La declaracion se
+//     decide como en Stage 0, sin tabla de
+//     tipos: dos Identifier seguidos. La
+//     asignacion a campo guarda el token del
+//     campo en hijo1, el mismo pliegue que la
+//     lectura de la rebanada 2. Con esta
+//     rebanada el Parser queda completo.
 //
 // Aceptacion de la rebanada (en campo, Studio):
 //   Tabla de FUENTE: 1, 4, 0, 27, 14, 1, 3 (como en la
@@ -100,6 +110,12 @@
 //   PrintStatement: el 3 contra el 1 prueba que
 //   print_int ya no cae en la asignacion ni se
 //   disfraza de llamada.
+//   Tabla 7 (Persona): 1, 4, 0, 36, 11, 2, 1, 1
+//   — funciones, sentencias, errores, tokens,
+//   nodos, campos, VariableDeclaration y
+//   AssignmentStatement: la Persona p; es la
+//   unica declaracion y el p.edad = 30 la
+//   unica asignacion de la corrida.
 //
 // Tabla de tokens: el enum TokenType de include/kpp/Token.hpp
 // (Stage 0) traducido 1:1. Los valores salen del ORDEN de
@@ -992,6 +1008,28 @@ int parse_sentencia()
         }
     }
 
+    // Declaracion de tipo personalizado:
+    // Persona p; — dos Identifier seguidos solo
+    // pueden ser una declaracion (Stage 0 lo
+    // decide asi, sin consultar ninguna tabla
+    // de tipos: si el tipo existe es asunto del
+    // semantico). Sin inicializador y sin
+    // arreglo. El nodo es el mismo
+    // VariableDeclaration: el tipo queda en el
+    // token inicial y el nombre en el siguiente.
+    if (t == TokenType::Identifier)
+    {
+        if (mira(1, TokenType::Identifier) == 1)
+        {
+            int c1 = consume();
+            int c2 = consume();
+            int ok = espera(TokenType::Semicolon);
+            int n = emite(NodeKind::VariableDeclaration, ini);
+            nsent = nsent + 1;
+            return 1;
+        }
+    }
+
     // Asignacion: nombre = expr;  /  nombre[i] = expr;
     // El nombre queda en nval (indice de su token); el
     // indice, si lo hay, en hijo1; el valor en hijo2.
@@ -1005,6 +1043,17 @@ int parse_sentencia()
             idx = parse_expresion();
             int ok = espera(TokenType::RBracket);
         }
+        // Acceso a campo: nombre.campo — el token
+        // del campo queda guardado para hijo1 (no
+        // es un nodo), el mismo pliegue que la
+        // lectura de parse_primario.
+        int campo = 0 - 1;
+        if (es(TokenType::Dot) == 1)
+        {
+            int c5 = consume();
+            campo = pos;
+            int ok5 = espera(TokenType::Identifier);
+        }
         int ok2 = espera(TokenType::Assign);
         int valor = parse_expresion();
         int ok3 = espera(TokenType::Semicolon);
@@ -1014,6 +1063,10 @@ int parse_sentencia()
         if (idx != 0 - 1)
         {
             int c3 = pon_hijo1(n, idx);
+        }
+        if (campo != 0 - 1)
+        {
+            int c6 = pon_hijo1(n, campo);
         }
         nsent = nsent + 1;
         return 1;
@@ -2076,6 +2129,76 @@ int inicia_tokens6()
     return 0;
 }
 
+int inicia_tokens7()
+{
+    int tipo[80];
+    int tinicio[80];
+    int tlargo[80];
+    int tvalor[80];
+    int fuente[512];
+
+    tipo[0 ] = TokenType::KwStruct;    tinicio[0 ] = 0   ; tlargo[0 ] = 6;
+    tipo[1 ] = TokenType::Identifier;  tinicio[1 ] = 7   ; tlargo[1 ] = 7;
+    tipo[2 ] = TokenType::LBrace;      tinicio[2 ] = 15  ; tlargo[2 ] = 1;
+    tipo[3 ] = TokenType::KwString;    tinicio[3 ] = 21  ; tlargo[3 ] = 6;
+    tipo[4 ] = TokenType::Identifier;  tinicio[4 ] = 28  ; tlargo[4 ] = 6;
+    tipo[5 ] = TokenType::Semicolon;   tinicio[5 ] = 34  ; tlargo[5 ] = 1;
+    tipo[6 ] = TokenType::KwInt;       tinicio[6 ] = 40  ; tlargo[6 ] = 3;
+    tipo[7 ] = TokenType::Identifier;  tinicio[7 ] = 44  ; tlargo[7 ] = 4;
+    tipo[8 ] = TokenType::Semicolon;   tinicio[8 ] = 48  ; tlargo[8 ] = 1;
+    tipo[9 ] = TokenType::RBrace;      tinicio[9 ] = 50  ; tlargo[9 ] = 1;
+    tipo[10] = TokenType::Semicolon;   tinicio[10] = 51  ; tlargo[10] = 1;
+    tipo[11] = TokenType::KwInt;       tinicio[11] = 53  ; tlargo[11] = 3;
+    tipo[12] = TokenType::Identifier;  tinicio[12] = 57  ; tlargo[12] = 4;
+    tipo[13] = TokenType::LParen;      tinicio[13] = 61  ; tlargo[13] = 1;
+    tipo[14] = TokenType::RParen;      tinicio[14] = 62  ; tlargo[14] = 1;
+    tipo[15] = TokenType::LBrace;      tinicio[15] = 64  ; tlargo[15] = 1;
+    tipo[16] = TokenType::Identifier;  tinicio[16] = 70  ; tlargo[16] = 7;
+    tipo[17] = TokenType::Identifier;  tinicio[17] = 78  ; tlargo[17] = 1;
+    tipo[18] = TokenType::Semicolon;   tinicio[18] = 79  ; tlargo[18] = 1;
+    tipo[19] = TokenType::Identifier;  tinicio[19] = 85  ; tlargo[19] = 1;
+    tipo[20] = TokenType::Dot;         tinicio[20] = 86  ; tlargo[20] = 1;
+    tipo[21] = TokenType::Identifier;  tinicio[21] = 87  ; tlargo[21] = 4;
+    tipo[22] = TokenType::Assign;      tinicio[22] = 92  ; tlargo[22] = 1;
+    tipo[23] = TokenType::Number;      tinicio[23] = 94  ; tlargo[23] = 2;
+    tipo[24] = TokenType::Semicolon;   tinicio[24] = 96  ; tlargo[24] = 1;
+    tipo[25] = TokenType::Identifier;  tinicio[25] = 102 ; tlargo[25] = 9;
+    tipo[26] = TokenType::LParen;      tinicio[26] = 111 ; tlargo[26] = 1;
+    tipo[27] = TokenType::Identifier;  tinicio[27] = 112 ; tlargo[27] = 1;
+    tipo[28] = TokenType::Dot;         tinicio[28] = 113 ; tlargo[28] = 1;
+    tipo[29] = TokenType::Identifier;  tinicio[29] = 114 ; tlargo[29] = 4;
+    tipo[30] = TokenType::RParen;      tinicio[30] = 118 ; tlargo[30] = 1;
+    tipo[31] = TokenType::Semicolon;   tinicio[31] = 119 ; tlargo[31] = 1;
+    tipo[32] = TokenType::KwReturn;    tinicio[32] = 125 ; tlargo[32] = 6;
+    tipo[33] = TokenType::Number;      tinicio[33] = 132 ; tlargo[33] = 1;
+    tipo[34] = TokenType::Semicolon;   tinicio[34] = 133 ; tlargo[34] = 1;
+    tipo[35] = TokenType::RBrace;      tinicio[35] = 135 ; tlargo[35] = 1;
+
+    tvalor[23] = 30;
+    tvalor[33] = 0;
+
+    fuente[0] = 115;  fuente[1] = 116;  fuente[2] = 114;  fuente[3] = 117;  fuente[4] = 99;  fuente[5] = 116;  fuente[6] = 32;  fuente[7] = 80;
+    fuente[8] = 101;  fuente[9] = 114;  fuente[10] = 115;  fuente[11] = 111;  fuente[12] = 110;  fuente[13] = 97;  fuente[14] = 10;  fuente[15] = 123;
+    fuente[16] = 10;  fuente[17] = 32;  fuente[18] = 32;  fuente[19] = 32;  fuente[20] = 32;  fuente[21] = 115;  fuente[22] = 116;  fuente[23] = 114;
+    fuente[24] = 105;  fuente[25] = 110;  fuente[26] = 103;  fuente[27] = 32;  fuente[28] = 110;  fuente[29] = 111;  fuente[30] = 109;  fuente[31] = 98;
+    fuente[32] = 114;  fuente[33] = 101;  fuente[34] = 59;  fuente[35] = 10;  fuente[36] = 32;  fuente[37] = 32;  fuente[38] = 32;  fuente[39] = 32;
+    fuente[40] = 105;  fuente[41] = 110;  fuente[42] = 116;  fuente[43] = 32;  fuente[44] = 101;  fuente[45] = 100;  fuente[46] = 97;  fuente[47] = 100;
+    fuente[48] = 59;  fuente[49] = 10;  fuente[50] = 125;  fuente[51] = 59;  fuente[52] = 10;  fuente[53] = 105;  fuente[54] = 110;  fuente[55] = 116;
+    fuente[56] = 32;  fuente[57] = 109;  fuente[58] = 97;  fuente[59] = 105;  fuente[60] = 110;  fuente[61] = 40;  fuente[62] = 41;  fuente[63] = 10;
+    fuente[64] = 123;  fuente[65] = 10;  fuente[66] = 32;  fuente[67] = 32;  fuente[68] = 32;  fuente[69] = 32;  fuente[70] = 80;  fuente[71] = 101;
+    fuente[72] = 114;  fuente[73] = 115;  fuente[74] = 111;  fuente[75] = 110;  fuente[76] = 97;  fuente[77] = 32;  fuente[78] = 112;  fuente[79] = 59;
+    fuente[80] = 10;  fuente[81] = 32;  fuente[82] = 32;  fuente[83] = 32;  fuente[84] = 32;  fuente[85] = 112;  fuente[86] = 46;  fuente[87] = 101;
+    fuente[88] = 100;  fuente[89] = 97;  fuente[90] = 100;  fuente[91] = 32;  fuente[92] = 61;  fuente[93] = 32;  fuente[94] = 51;  fuente[95] = 48;
+    fuente[96] = 59;  fuente[97] = 10;  fuente[98] = 32;  fuente[99] = 32;  fuente[100] = 32;  fuente[101] = 32;  fuente[102] = 112;  fuente[103] = 114;
+    fuente[104] = 105;  fuente[105] = 110;  fuente[106] = 116;  fuente[107] = 95;  fuente[108] = 105;  fuente[109] = 110;  fuente[110] = 116;  fuente[111] = 40;
+    fuente[112] = 112;  fuente[113] = 46;  fuente[114] = 101;  fuente[115] = 100;  fuente[116] = 97;  fuente[117] = 100;  fuente[118] = 41;  fuente[119] = 59;
+    fuente[120] = 10;  fuente[121] = 32;  fuente[122] = 32;  fuente[123] = 32;  fuente[124] = 32;  fuente[125] = 114;  fuente[126] = 101;  fuente[127] = 116;
+    fuente[128] = 117;  fuente[129] = 114;  fuente[130] = 110;  fuente[131] = 32;  fuente[132] = 48;  fuente[133] = 59;  fuente[134] = 10;  fuente[135] = 125;
+    ntok = 36;
+    pos = 0;
+    return 0;
+}
+
 // Deja el estado compartido como recien nacido, para
 // correr las demas tablas en el mismo programa.
 int reinicia()
@@ -2164,5 +2287,17 @@ int main()
     print_int(cuenta(NodeKind::PrintIntegerStatement));
     print_int(cuenta(NodeKind::CallExpression));
     print_int(cuenta(NodeKind::PrintStatement));
+
+    int r5 = reinicia();
+    int a7 = inicia_tokens7();
+    int p7 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(ncam);
+    print_int(cuenta(NodeKind::VariableDeclaration));
+    print_int(cuenta(NodeKind::AssignmentStatement));
     return 0;
 }
