@@ -516,6 +516,12 @@ X86Backend::generate(
     // KPP_CURSOR_DATA
     std::size_t cursorDataOffset = 0;
 
+    // Buffer de líneas del writer (DATA): contador,
+    // cursor de repintado y las 128 ranuras de 64 bytes.
+    std::size_t lineCountDataOffset = 0;
+    std::size_t repaintCursorDataOffset = 0;
+    std::size_t lineBufferDataOffset = 0;
+
     // --------------------------------------------------------
     // Título automático
     // --------------------------------------------------------
@@ -4741,9 +4747,9 @@ else if (instruction.opcode ==
         runtimeResult.mainEntryPatch,
         mainBody);
 
-    emitter.patchRel32(
-        runtimeResult.redrawMainPatch,
-        mainBody);
+    // REDRAW ya no entra a MAIN_BODY: el runtime lo
+    // devuelve el solo al EVENT_LOOP y DRAW_WINDOW
+    // repinta el buffer de lineas (parche del writer).
 
 
     // ========================================================
@@ -4877,6 +4883,39 @@ cursorDataOffset =
 // X/Y empaquetado: 4 bytes.
 data.resize(
     data.size() + 4,
+    0);
+
+
+// ========================================================
+// BUFFER DE LÍNEAS DEL WRITER (DATA)
+//
+// lineCount: cuántas líneas van anotadas (4 bytes).
+// repaintCursor: X/Y empaquetado del repintado
+// (4 bytes). lineBuffer: 128 ranuras de 64 bytes —
+// [longitud de dibujo (4)][40 bytes de texto].
+// Todo nace en cero: sin líneas, la ventana repinta
+// vacía.
+// ========================================================
+
+lineCountDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+repaintCursorDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+lineBufferDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 8192,
     0);
 
 
@@ -5566,6 +5605,10 @@ for (const auto& patch :
         runtimeResult.titleAddressPatch,
         titleAddress);
 
+    emitter.patch32(
+        runtimeResult.titleCaptionPatch,
+        titleAddress);
+
 
 
 
@@ -5616,6 +5659,56 @@ for (const auto& patch :
             emitter.patch32(
                 patch,
                 cursorAddress);
+        }
+    }
+
+
+    // ========================================================
+    // PATCH BUFFER DE LÍNEAS — el contador, el cursor
+    // de repintado y la base de las ranuras.
+    // ========================================================
+
+    {
+        const std::uint32_t
+            lineCountAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    lineCountDataOffset);
+
+        for (const std::size_t patch :
+             runtime.lineCountPatches())
+        {
+            emitter.patch32(
+                patch,
+                lineCountAddress);
+        }
+
+        const std::uint32_t
+            repaintCursorAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    repaintCursorDataOffset);
+
+        for (const std::size_t patch :
+             runtime.repaintCursorPatches())
+        {
+            emitter.patch32(
+                patch,
+                repaintCursorAddress);
+        }
+
+        const std::uint32_t
+            lineBufferAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    lineBufferDataOffset);
+
+        for (const std::size_t patch :
+             runtime.lineBufferPatches())
+        {
+            emitter.patch32(
+                patch,
+                lineBufferAddress);
         }
     }
 

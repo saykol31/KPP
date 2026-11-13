@@ -312,14 +312,16 @@ struct KolibriRuntimeResult
     // JMP MAIN_BODY desde START
     std::size_t mainEntryPatch = 0;
 
-    // JMP MAIN_BODY después de REDRAW
-    std::size_t redrawMainPatch = 0;
-
     // Dirección relativa dentro del código
     std::size_t eventLoopAddress = 0;
 
     // Dirección del título
     std::size_t titleAddressPatch = 0;
+
+    // Segunda referencia al título: la función 71.1
+    // lo reafirma en cada dibujo (en los redibujos la
+    // función 0 no vuelve a pintar su texto).
+    std::size_t titleCaptionPatch = 0;
 };
 
 
@@ -425,12 +427,47 @@ public:
     const std::vector<std::size_t>&
     cursorPatches() const;
 
+    // Posiciones que referencian la base del buffer de
+    // líneas, su contador y el cursor de repintado.
+    // El backend las parchea igual que las del cursor.
+    const std::vector<std::size_t>&
+    lineBufferPatches() const;
+
+    const std::vector<std::size_t>&
+    lineCountPatches() const;
+
+    const std::vector<std::size_t>&
+    repaintCursorPatches() const;
+
 private:
+
+    // Anota la línea recién dibujada en el buffer de
+    // líneas. Al entrar, EDX apunta al texto y la
+    // longitud de dibujo es la que usó la función 4
+    // (40 en textos, 16 en enteros).
+    void
+    emitRecordLine(
+        X86Emitter& emitter,
+        std::uint32_t drawLength);
+
+    // Repinta las líneas del buffer desde (35, 40),
+    // con la regla de columnas, sobre la celda del
+    // cursor de repintado. Se emite dentro de
+    // DRAW_WINDOW, entre la función 0 y el fin del
+    // redibujo: el contenido se repinta desde el
+    // estado, el cuerpo del programa no se re-ejecuta.
+    void
+    emitRepaint(
+        X86Emitter& emitter);
 
     // Cursor gráfico: X/Y empaquetado en una variable
     // de DATA. Antes vivía en EBP; EBP es ahora el
     // puntero de marco de las funciones (Rebanada 1).
     std::vector<std::size_t> cursorPatchList;
+
+    std::vector<std::size_t> lineBufferPatchList;
+    std::vector<std::size_t> lineCountPatchList;
+    std::vector<std::size_t> repaintCursorPatchList;
 };
 
 }

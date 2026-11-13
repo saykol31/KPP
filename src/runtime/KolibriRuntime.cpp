@@ -143,14 +143,19 @@ KolibriRuntime::emitGraphicsRuntime(
         emitter.emitRel32Placeholder();
 
     /*
-     * Después del redraw volvemos a ejecutar MAIN_BODY.
+     * Después del redraw volvemos al EVENT_LOOP.
      *
-     * Esto permite que los PRINT vuelvan a aparecer
-     * si KolibriOS solicita redibujar la ventana.
+     * El contenido NO se re-ejecuta: DRAW_WINDOW
+     * repinta las líneas guardadas en el buffer de
+     * líneas (cada PRINT anota la suya al imprimir).
+     * Re-ejecutar MAIN_BODY volvía a correr el
+     * programa entero sobre datos vivos: la salida
+     * se pisaba y el estado compartido cambiaba
+     * entre redibujos.
      */
     emitter.emitByte(0xE9);
 
-    result.redrawMainPatch =
+    const std::size_t redrawLoopPatch =
         emitter.emitRel32Placeholder();
 
 
@@ -264,6 +269,41 @@ KolibriRuntime::emitGraphicsRuntime(
 
 
     // --------------------------------------------------------
+    // REPAINT
+    //
+    // El contenido de la ventana no es persistente:
+    // se repinta desde el buffer de líneas, dentro
+    // del mismo begin/end redraw.
+    // --------------------------------------------------------
+
+    emitRepaint(emitter);
+
+
+    // --------------------------------------------------------
+    // TÍTULO — reafirmarlo con la función 71.1: en
+    // los redibujos la función 0 pinta el marco pero
+    // no el texto del título, y el header quedaba
+    // borrado al mover la ventana.
+    // --------------------------------------------------------
+
+    // mov eax, 71
+    emitter.emitMovEaxImm32(71);
+
+    // mov ebx, 1 (subfunción: poner título)
+    emitter.emitMovRegImm32(
+        0xBB,
+        1);
+
+    // mov ecx, título
+    emitter.emitByte(0xB9);
+
+    result.titleCaptionPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.emitInt(0x40);
+
+
+    // --------------------------------------------------------
     // END REDRAW
     // --------------------------------------------------------
 
@@ -305,6 +345,10 @@ KolibriRuntime::emitGraphicsRuntime(
     emitter.patchRel32(
         redrawWindowPatch,
         drawWindow);
+
+    emitter.patchRel32(
+        redrawLoopPatch,
+        eventLoop);
 
     emitter.patchRel32(
         keyLoopPatch,
@@ -1444,6 +1488,10 @@ KolibriRuntime::emitPrint(
     // int 0x40
     emitter.emitInt(0x40);
 
+    // Anotar la línea en el buffer (EDX sigue en el
+    // texto: la función 4 no lo toca).
+    emitRecordLine(emitter, 40);
+
     // Avanzar el cursor: Y baja 10; si pasa del fondo
     // (440), Y vuelve a 40 y X salta una columna
     // (+110). Solo se toca EAX y la pila queda
@@ -1519,6 +1567,9 @@ KolibriRuntime::emitPrintFromEdx(
 
     // int 0x40
     emitter.emitInt(0x40);
+
+    // Anotar la línea en el buffer.
+    emitRecordLine(emitter, 40);
 
     // Avanzar el cursor: Y baja 10; si pasa del fondo
     // (440), Y vuelve a 40 y X salta una columna
@@ -1717,6 +1768,13 @@ KolibriRuntime::emitPrintInteger(
 
     emitter.emitInt(0x40);
 
+    // Anotar la línea en el buffer: el texto son los
+    // dígitos a los que EDI apunta; EDX = EDI para la
+    // rutina común de anotación.
+    emitter.emitMovEdxEdi();
+
+    emitRecordLine(emitter, 16);
+
     // Avanzar el cursor: Y baja 10; si pasa del fondo
     // (440), Y vuelve a 40 y X salta una columna
     // (+110). Solo se toca EAX y la pila queda
@@ -1770,6 +1828,284 @@ KolibriRuntime::emitPrintInteger(
 
     return bufferPatch;
 }
+
+// ============================================================
+// BUFFER DE LÍNEAS — ANOTAR
+//
+// Cada PRINT, tras dibujar su línea, la anota en la
+// siguiente ranura del buffer:
+//
+//   ranura (64 bytes) = [longitud de dibujo (4)]
+//                       [40 bytes de texto]
+//
+// Se copian los mismos 40 bytes que la función 4
+// dibuja desde el puntero del texto (en el entero se
+// guardan con longitud 16, la suya: el repintado solo
+// redibuja esa longitud). Con el buffer lleno (128
+// líneas) se sigue imprimiendo; solo se deja de
+// anotar. Al entrar: EDX = texto. Se tocan EAX, ECX,
+// ESI y EDI — muertos tras el dibujo en los tres
+// emisores de impresión — y la pila no se toca.
+// ============================================================
+
+void
+KolibriRuntime::emitRecordLine(
+    X86Emitter& emitter,
+    std::uint32_t drawLength)
+{
+    // EAX = líneas ya anotadas.
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // ¿Buffer lleno?
+    emitter.emitCmpEaxImm32(128);
+
+    // jae fin
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x83);
+
+    const std::size_t llenoPatch =
+        emitter.emitRel32Placeholder();
+
+    // EAX = línea * 64 + base del buffer.
+    // shl eax, 6
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0xE0);
+    emitter.emitByte(0x06);
+
+    // add eax, imm32 (la base)
+    emitter.emitByte(0x05);
+
+    lineBufferPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // mov esi, eax  (ESI = ranura)
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC6);
+
+    // mov dword [esi], drawLength
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x06);
+
+    const std::size_t lenPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(lenPatch, drawLength);
+
+    // mov edi, esi
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xF7);
+
+    // add edi, 4
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x04);
+
+    // Copiar 40 bytes: [EDX] -> [EDI].
+    emitter.emitMovEcxImm32(40);
+
+    const std::size_t copia =
+        emitter.size();
+
+    // mov al, [edx]
+    emitter.emitByte(0x8A);
+    emitter.emitByte(0x02);
+
+    // mov [edi], al
+    emitter.emitByte(0x88);
+    emitter.emitByte(0x07);
+
+    // inc edx / inc edi / dec ecx
+    emitter.emitByte(0x42);
+    emitter.emitByte(0x47);
+    emitter.emitByte(0x49);
+
+    const std::size_t copiaJump =
+        emitter.emitJneRel32Placeholder();
+
+    emitter.patchRel32(copiaJump, copia);
+
+    // líneas++
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(1);
+
+    lineCountPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    const std::size_t fin =
+        emitter.size();
+
+    emitter.patchRel32(llenoPatch, fin);
+}
+
+
+// ============================================================
+// BUFFER DE LÍNEAS — REPINTAR
+//
+// Se emite dentro de DRAW_WINDOW, entre la función 0
+// y el fin del redibujo. Recorre el buffer por índice
+// (EDI) y redibuja cada línea guardada con su longitud
+// propia, avanzando el cursor DE REPINTADO — su propia
+// celda, con la misma regla de columnas de los PRINT —
+// desde (35, 40). El cursor de impresión y el cuerpo
+// del programa no se tocan: repintar es repetir la
+// página desde el estado, nunca continuarla.
+// ============================================================
+
+void
+KolibriRuntime::emitRepaint(
+    X86Emitter& emitter)
+{
+    // cursorRepintado = (35, 40)
+    emitter.emitMovEaxImm32(
+        (35u << 16) + 40u);
+
+    repaintCursorPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // EDI = índice de línea.
+    emitter.emitMovEdiImm32(0);
+
+    const std::size_t bucle =
+        emitter.size();
+
+    // ¿Índice >= líneas? -> fin.
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // cmp eax, edi
+    emitter.emitByte(0x39);
+    emitter.emitByte(0xF8);
+
+    const std::size_t finPatch =
+        emitter.emitJbeRel32Placeholder();
+
+    // EAX = índice * 64 + base del buffer.
+    // mov eax, edi
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xF8);
+
+    // shl eax, 6
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0xE0);
+    emitter.emitByte(0x06);
+
+    // add eax, imm32 (la base)
+    emitter.emitByte(0x05);
+
+    lineBufferPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // mov edx, eax  (EDX = ranura)
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC2);
+
+    // mov esi, [eax]  (ESI = longitud de dibujo)
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x30);
+
+    // add edx, 4  (EDX = texto)
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC2);
+    emitter.emitByte(0x04);
+
+    // EBX = cursor de repintado.
+    repaintCursorPatchList.push_back(
+        emitter.emitMovEbxMem32Placeholder());
+
+    // ECX = color
+    emitter.emitMovRegImm32(
+        0xB9,
+        0x80FFFFFFu);
+
+    // Dibujar la línea.
+    emitter.emitMovEaxImm32(4);
+
+    emitter.emitInt(0x40);
+
+    // Avanzar el cursor de repintado: la misma
+    // secuencia de columnas que usan los PRINT,
+    // sobre su propia celda.
+    repaintCursorPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(10);
+
+    emitter.emitPushEax();
+
+    emitter.emitAndEaxImm32(0x0000FFFF);
+
+    emitter.emitCmpEaxImm32(440);
+
+    const std::size_t sinSalto =
+        emitter.emitJbeRel32Placeholder();
+
+    emitter.emitPopEax();
+
+    emitter.emitAndEaxImm32(
+        static_cast<std::int32_t>(0xFFFF0000u));
+
+    emitter.emitAddEaxImm32(40);
+
+    emitter.emitAddEaxImm32(110u << 16);
+
+    const std::size_t saltoFin =
+        emitter.emitJmpRel32Placeholder();
+
+    const std::size_t sigue =
+        emitter.size();
+
+    emitter.emitPopEax();
+
+    const std::size_t avanceFin =
+        emitter.size();
+
+    emitter.patchRel32(sinSalto, sigue);
+
+    emitter.patchRel32(saltoFin, avanceFin);
+
+    repaintCursorPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // inc edi
+    emitter.emitByte(0x47);
+
+    const std::size_t otraPatch =
+        emitter.emitJmpRel32Placeholder();
+
+    emitter.patchRel32(otraPatch, bucle);
+
+    const std::size_t fin =
+        emitter.size();
+
+    emitter.patchRel32(finPatch, fin);
+}
+
+
+// ============================================================
+// ACCESORES DEL BUFFER DE LÍNEAS
+// ============================================================
+
+const std::vector<std::size_t>&
+KolibriRuntime::lineBufferPatches() const
+{
+    return lineBufferPatchList;
+}
+
+const std::vector<std::size_t>&
+KolibriRuntime::lineCountPatches() const
+{
+    return lineCountPatchList;
+}
+
+const std::vector<std::size_t>&
+KolibriRuntime::repaintCursorPatches() const
+{
+    return repaintCursorPatchList;
+}
+
 
 void
 KolibriRuntime::emitExit(
