@@ -23,7 +23,8 @@
 //     sentencias la usan de verdad: inicializadores,
 //     condiciones, argumentos de print, return y la
 //     asignacion. Los nodos de expresion cuelgan de los
-//     de sentencia por hijo1/hijo2/nsig.
+//     de sentencia por hijo1/nsig (contrato definitivo,
+//     rebanada 15: sin hijo2).
 //   - Rebanada 3: la declaracion de funcion completa de
 //     Stage 0 — parametros int en tabla lateral (Parameter
 //     no es un NodeKind) — y la bifurcacion de parse():
@@ -288,7 +289,8 @@ int espera(int t)
 // nini   primer token del nodo.
 // nfin   token siguiente al ultimo del nodo.
 //
-// Enlaces (rebanada 13, hijo/hermano):
+// EL CONTRATO AST DEFINITIVO (rebanada 15).
+//
 // nhijo1 primer hijo: la primera sentencia de un
 //        Block, la primera declaracion del Program,
 //        la condicion de if/while, el hijo izquierdo
@@ -298,17 +300,31 @@ int espera(int t)
 //        asignacion a arreglo. Excepcion documentada
 //        (rebanada 8): en el acceso y la asignacion
 //        a campo guarda el TOKEN del campo.
-// nhijo2 segundo hijo: el bloque del then (if), el
-//        cuerpo (while), el hijo derecho de un
-//        binario, el valor de una asignacion. En las
-//        declaraciones guarda el INICIO de su tabla
-//        lateral (parametros, campos, constantes),
-//        que no es un nodo.
-// nsig   siguiente hermano — un solo significado en
-//        todo el arbol: sentencias de un bloque,
-//        declaraciones del programa, argumentos de
-//        una llamada, y el else colgando del nsig
-//        del bloque del then.
+// nsig   siguiente hermano, y NADA mas que eso: la
+//        segunda pieza de una relacion cuelga del
+//        nsig de la primera — el operando derecho
+//        del nsig del izquierdo, el bloque del then
+//        del nsig de la condicion, el cuerpo del
+//        while del nsig de su condicion, el else
+//        del nsig del bloque del then. Tambien:
+//        sentencias de un bloque, declaraciones
+//        del programa y argumentos de una llamada.
+//        nsig NUNCA representa una cantidad: solo
+//        enlaza nodos.
+// naux   atributo auxiliar, con significado fijado
+//        por la clase del nodo:
+//        - AssignmentStatement: el nodo del valor.
+//        - FunctionDeclaration, StructDeclaration y
+//          EnumDeclaration: el INICIO de su tabla
+//          lateral (parametros, campos, constantes),
+//          que no es un nodo.
+// nsize  tamano o cantidad, segun la clase: el
+//        tamano del arreglo en VariableDeclaration
+//        (0 = no es arreglo) y la cantidad de su
+//        grupo en las declaraciones (parametros,
+//        campos, constantes). Las cantidades viven
+//        aqui desde la rebanada 15 (en la 10 vivian
+//        en arrays propios).
 // nval   carga util: valor de un literal entero, codigo
 //        TokenType del operador de un nodo binario, o
 //        indice del token del nombre (variable, llamada).
@@ -320,23 +336,17 @@ int emite(int kind, int ini)
     int nini[256];
     int nfin[256];
     int nhijo1[256];
-    int nhijo2[256];
     int nsig[256];
     int nval[256];
-    int nparam_cantidad[256];
-    int ncampo_cantidad[256];
-    int nconst_cantidad[256];
+    int naux[256];
     int nsize[256];
     nkind[nnodos] = kind;
     nini[nnodos] = ini;
     nfin[nnodos] = pos;
     nhijo1[nnodos] = 0 - 1;
-    nhijo2[nnodos] = 0 - 1;
     nsig[nnodos] = 0 - 1;
     nval[nnodos] = 0;
-    nparam_cantidad[nnodos] = 0;
-    ncampo_cantidad[nnodos] = 0;
-    nconst_cantidad[nnodos] = 0;
+    naux[nnodos] = 0 - 1;
     nsize[nnodos] = 0;
     nnodos = nnodos + 1;
     return nnodos - 1;
@@ -349,10 +359,14 @@ int pon_hijo1(int nodo, int hijo)
     return 0;
 }
 
-int pon_hijo2(int nodo, int hijo)
+// El atributo auxiliar del contrato (rebanada 15):
+// el valor de una asignacion, o el inicio de la
+// tabla lateral de una declaracion. Nada mas vive
+// en naux, y ningun otro setter lo escribe.
+int pon_aux(int nodo, int aux)
 {
-    int nhijo2[256];
-    nhijo2[nodo] = hijo;
+    int naux[256];
+    naux[nodo] = aux;
     return 0;
 }
 
@@ -363,30 +377,13 @@ int pon_sig(int nodo, int hermano)
     return 0;
 }
 
-// Las cantidades de las declaraciones viven en arrays
-// propios desde la rebanada 10: nsig es SOLO el siguiente
-// hermano (su unico uso vivo, la cadena de argumentos de
-// las llamadas). El inicio de cada grupo sigue en hijo2.
-int pon_cant_params(int nodo, int cantidad)
-{
-    int nparam_cantidad[256];
-    nparam_cantidad[nodo] = cantidad;
-    return 0;
-}
-
-int pon_cant_campos(int nodo, int cantidad)
-{
-    int ncampo_cantidad[256];
-    ncampo_cantidad[nodo] = cantidad;
-    return 0;
-}
-
-int pon_cant_consts(int nodo, int cantidad)
-{
-    int nconst_cantidad[256];
-    nconst_cantidad[nodo] = cantidad;
-    return 0;
-}
+// Las cantidades de las declaraciones vivieron en
+// arrays propios en la rebanada 10 (pon_cant_params,
+// pon_cant_campos, pon_cant_consts). Desde la
+// rebanada 15 viven en nsize, escritas con pon_size:
+// tamano o cantidad segun la clase del nodo. El
+// inicio de cada grupo vive en naux (pon_aux). nsig
+// es SOLO el siguiente hermano: nunca una cantidad.
 
 int pon_val(int nodo, int valor)
 {
@@ -433,7 +430,7 @@ int emite_bin(int op, int izq, int der)
 {
     int n = emite(NodeKind::BinaryExpression, nodo_ini(izq));
     int a = pon_hijo1(n, izq);
-    int b = pon_hijo2(n, der);
+    int b = pon_sig(izq, der);
     int c = pon_val(n, op);
     return n;
 }
@@ -483,20 +480,20 @@ int suma_literales()
 }
 
 // Suma de las cantidades de parametros de todas las
-// FunctionDeclaration, leidas de nparam_cantidad (la
-// prueba de la rebanada 10: la cantidad ya no vive en
-// nsig).
+// FunctionDeclaration, leidas de nsize (el contrato:
+// la cantidad vive en nsize segun la clase; nsig
+// jamas es una cantidad).
 int params_total()
 {
     int nkind[256];
-    int nparam_cantidad[256];
+    int nsize[256];
     int total = 0;
     int i = 0;
     while (i < nnodos)
     {
         if (nkind[i] == NodeKind::FunctionDeclaration)
         {
-            int c = nparam_cantidad[i];
+            int c = nsize[i];
             total = total + c;
         }
         i = i + 1;
@@ -505,18 +502,18 @@ int params_total()
 }
 
 // Suma de las cantidades de campos de todas las
-// StructDeclaration, leidas de ncampo_cantidad.
+// StructDeclaration, leidas de nsize.
 int campos_total()
 {
     int nkind[256];
-    int ncampo_cantidad[256];
+    int nsize[256];
     int total = 0;
     int i = 0;
     while (i < nnodos)
     {
         if (nkind[i] == NodeKind::StructDeclaration)
         {
-            int c = ncampo_cantidad[i];
+            int c = nsize[i];
             total = total + c;
         }
         i = i + 1;
@@ -525,18 +522,18 @@ int campos_total()
 }
 
 // Suma de las cantidades de constantes de todas las
-// EnumDeclaration, leidas de nconst_cantidad.
+// EnumDeclaration, leidas de nsize.
 int consts_total()
 {
     int nkind[256];
-    int nconst_cantidad[256];
+    int nsize[256];
     int total = 0;
     int i = 0;
     while (i < nnodos)
     {
         if (nkind[i] == NodeKind::EnumDeclaration)
         {
-            int c = nconst_cantidad[i];
+            int c = nsize[i];
             total = total + c;
         }
         i = i + 1;
@@ -645,20 +642,23 @@ int bloques_abiertos()
 }
 
 // ============================================================
-// ALCANCE — LA PRUEBA DE LOS ENLACES (rebanada 13).
+// ALCANCE — LA PRUEBA DE LOS ENLACES (rebanada 13;
+// contrato definitivo, rebanada 15).
 //
 // visita() recorre el arbol desde un nodo siguiendo
-// SOLO los enlaces: hijo1, hijo2 donde es nodo, y
-// nsig en todo nodo, y marca cada nodo alcanzado en
-// el arreglo compartido marca[]. alcanzables() corre
+// el recorrido ordinario del contrato: hijo1 y nsig
+// en todo nodo, y marca cada nodo alcanzado en el
+// arreglo compartido marca[]. alcanzables() corre
 // la visita desde el Program (nodo 0) y cuenta las
 // marcas: si todo lo emitido esta enlazado, el
 // conteo es exactamente nnodos — ningun nodo queda
 // colgando del orden de emision.
 //
-// Dos no-enlaces que la visita respeta:
-//   - El hijo2 de funcion/struct/enum es el inicio
-//     de su tabla lateral, no un nodo: no se sigue.
+// Lo que la visita consulta fuera del recorrido:
+//   - naux SOLO en AssignmentStatement: es el nodo
+//     del valor asignado. En las declaraciones naux
+//     es el inicio de una tabla lateral, no un
+//     nodo: no se sigue.
 //   - El hijo1 del acceso y la asignacion a campo
 //     es el token del campo: se reconoce porque el
 //     token siguiente al nombre es Dot, y no se
@@ -671,8 +671,8 @@ int visita(int nodo)
     int nkind[256];
     int nini[256];
     int nhijo1[256];
-    int nhijo2[256];
     int nsig[256];
+    int naux[256];
     int tok_tipo[80];
     int marca[256];
     if (nodo < 0)
@@ -692,7 +692,6 @@ int visita(int nodo)
     int ini_n = nini[nodo];
     int tok_sig = tok_tipo[ini_n + 1];
     int h1 = nhijo1[nodo];
-    int h2 = nhijo2[nodo];
     int sg = nsig[nodo];
 
     // hijo1: no se sigue cuando es el token del campo.
@@ -713,28 +712,15 @@ int visita(int nodo)
     }
     int a = visita(sigue1);
 
-    // hijo2: solo es nodo en asignacion, if, while
-    // y binario.
-    int sigue2 = 0 - 1;
+    // naux: solo se sigue en la asignacion, donde es
+    // el nodo del valor (contrato, rebanada 15).
     if (k == NodeKind::AssignmentStatement)
     {
-        sigue2 = h2;
+        int b = visita(naux[nodo]);
     }
-    if (k == NodeKind::IfStatement)
-    {
-        sigue2 = h2;
-    }
-    if (k == NodeKind::WhileStatement)
-    {
-        sigue2 = h2;
-    }
-    if (k == NodeKind::BinaryExpression)
-    {
-        sigue2 = h2;
-    }
-    int b = visita(sigue2);
 
-    // nsig: el siguiente hermano, en todo nodo.
+    // nsig: el siguiente hermano, en todo nodo — y
+    // por el, la segunda pieza de cada relacion.
     int c = visita(sg);
     return 0;
 }
@@ -1285,9 +1271,10 @@ int parse_sentencia()
 
     // if (condicion) bloque [else bloque | else if ...]
     // La condicion cuelga de hijo1, el bloque del
-    // then de hijo2, y el bloque del else (real o el
-    // sintetico del else if) del nsig del bloque del
-    // then — la forma hijo/hermano de la rebanada 13.
+    // then del nsig de la condicion, y el bloque del
+    // else (real o el sintetico del else if) del
+    // nsig del bloque del then: los hijos del if son
+    // hijo1 y luego puro nsig (contrato, rebanada 15).
     if (t == TokenType::KwIf)
     {
         int c1 = consume();
@@ -1298,7 +1285,7 @@ int parse_sentencia()
         int a = pon_hijo1(n, cond);
         nsent = nsent + 1;
         int b = parse_bloque();
-        int h = pon_hijo2(n, b);
+        int h = pon_sig(cond, b);
         if (es(TokenType::KwElse) == 1)
         {
             int c2 = consume();
@@ -1330,7 +1317,7 @@ int parse_sentencia()
     }
 
     // while (condicion) bloque — la condicion en
-    // hijo1 y el cuerpo en hijo2.
+    // hijo1 y el cuerpo en el nsig de la condicion.
     if (t == TokenType::KwWhile)
     {
         int c1 = consume();
@@ -1341,7 +1328,7 @@ int parse_sentencia()
         int a = pon_hijo1(n, cond);
         nsent = nsent + 1;
         int b = parse_bloque();
-        int h = pon_hijo2(n, b);
+        int h = pon_sig(cond, b);
         int f = pon_fin(n, pos);
         return n;
     }
@@ -1445,7 +1432,8 @@ int parse_sentencia()
 
     // Asignacion: nombre = expr;  /  nombre[i] = expr;
     // El nombre queda en nval (indice de su token); el
-    // indice, si lo hay, en hijo1; el valor en hijo2.
+    // indice, si lo hay, en hijo1; el valor en naux
+    // (el contrato: unico naux que es un nodo).
     if (t == TokenType::Identifier)
     {
         int c1 = consume();
@@ -1472,7 +1460,7 @@ int parse_sentencia()
         int ok3 = espera(TokenType::Semicolon);
         int n = emite(NodeKind::AssignmentStatement, ini);
         int a = pon_val(n, ini);
-        int b = pon_hijo2(n, valor);
+        int b = pon_aux(n, valor);
         if (idx != 0 - 1)
         {
             int c3 = pon_hijo1(n, idx);
@@ -1556,9 +1544,9 @@ int parse_funcion()
 
     // Parametros: solamente int (FASE 4.2.1 de Stage 0).
     // Parameter no es un NodeKind: los parametros viven
-    // en su tabla lateral partok, y la funcion guarda en
-    // hijo2 el inicio de los suyos y cuantos son en
-    // nparam_cantidad (rebanada 10; antes nsig).
+    // en su tabla lateral partok, y la funcion guarda el
+    // inicio de los suyos en naux y cuantos son en
+    // nsize (contrato definitivo, rebanada 15).
     int pini = npar;
     if (es(TokenType::RParen) == 0)
     {
@@ -1585,8 +1573,8 @@ int parse_funcion()
 
     int n = emite(NodeKind::FunctionDeclaration, ini);
     int a = pon_val(n, nombre);
-    int b = pon_hijo2(n, pini);
-    int c = pon_cant_params(n, npar - pini);
+    int b = pon_aux(n, pini);
+    int c = pon_size(n, npar - pini);
     nfun = nfun + 1;
 
     int bl = parse_bloque();
@@ -1629,9 +1617,9 @@ int pon_campo(int tipo, int tok)
 //
 // Tipos de campo admitidos: int y string, nada mas
 // (Stage 0 no admite structs anidados). La estructura
-// guarda su nombre en nval, el inicio de sus campos en
-// hijo2 y cuantos son en ncampo_cantidad (rebanada 10;
-// antes nsig). La declaracion cierra
+// guarda su nombre en nval, el inicio de sus campos
+// en naux y cuantos son en nsize (contrato
+// definitivo, rebanada 15). La declaracion cierra
 // con ';' tras la '}', como exige Stage 0.
 // ============================================================
 
@@ -1686,8 +1674,8 @@ int parse_estructura()
 
     int n = emite(NodeKind::StructDeclaration, ini);
     int a = pon_val(n, nombre);
-    int b = pon_hijo2(n, cini);
-    int c = pon_cant_campos(n, ncam - cini);
+    int b = pon_aux(n, cini);
+    int c = pon_size(n, ncam - cini);
     return n;
 }
 
@@ -1877,8 +1865,8 @@ int es_print_int(int tok)
 // nombre en OTRO enum es legal (bateria L08). La
 // declaracion cierra con ';' tras la '}', como la
 // de struct. El nodo guarda su nombre en nval, el
-// inicio de sus constantes en hijo2 y cuantas son
-// en nconst_cantidad (rebanada 10; antes nsig).
+// inicio de sus constantes en naux y cuantas son
+// en nsize (contrato definitivo, rebanada 15).
 // ============================================================
 
 int parse_enum()
@@ -1947,8 +1935,8 @@ int parse_enum()
 
     int n = emite(NodeKind::EnumDeclaration, ini);
     int a = pon_val(n, nombre);
-    int b = pon_hijo2(n, cini);
-    int c = pon_cant_consts(n, nconst - cini);
+    int b = pon_aux(n, cini);
+    int c = pon_size(n, nconst - cini);
     return n;
 }
 
