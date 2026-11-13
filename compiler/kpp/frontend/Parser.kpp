@@ -304,6 +304,9 @@ int emite(int kind, int ini)
     int nhijo2[256];
     int nsig[256];
     int nval[256];
+    int nparam_cantidad[256];
+    int ncampo_cantidad[256];
+    int nconst_cantidad[256];
     nkind[nnodos] = kind;
     nini[nnodos] = ini;
     nfin[nnodos] = pos;
@@ -311,6 +314,9 @@ int emite(int kind, int ini)
     nhijo2[nnodos] = 0 - 1;
     nsig[nnodos] = 0 - 1;
     nval[nnodos] = 0;
+    nparam_cantidad[nnodos] = 0;
+    ncampo_cantidad[nnodos] = 0;
+    nconst_cantidad[nnodos] = 0;
     nnodos = nnodos + 1;
     return nnodos - 1;
 }
@@ -333,6 +339,31 @@ int pon_sig(int nodo, int hermano)
 {
     int nsig[256];
     nsig[nodo] = hermano;
+    return 0;
+}
+
+// Las cantidades de las declaraciones viven en arrays
+// propios desde la rebanada 10: nsig es SOLO el siguiente
+// hermano (su unico uso vivo, la cadena de argumentos de
+// las llamadas). El inicio de cada grupo sigue en hijo2.
+int pon_cant_params(int nodo, int cantidad)
+{
+    int nparam_cantidad[256];
+    nparam_cantidad[nodo] = cantidad;
+    return 0;
+}
+
+int pon_cant_campos(int nodo, int cantidad)
+{
+    int ncampo_cantidad[256];
+    ncampo_cantidad[nodo] = cantidad;
+    return 0;
+}
+
+int pon_cant_consts(int nodo, int cantidad)
+{
+    int nconst_cantidad[256];
+    nconst_cantidad[nodo] = cantidad;
     return 0;
 }
 
@@ -403,6 +434,68 @@ int suma_literales()
         if (nkind[i] == NodeKind::IntegerLiteral)
         {
             total = total + nval[i];
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// Suma de las cantidades de parametros de todas las
+// FunctionDeclaration, leidas de nparam_cantidad (la
+// prueba de la rebanada 10: la cantidad ya no vive en
+// nsig).
+int params_total()
+{
+    int nkind[256];
+    int nparam_cantidad[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == NodeKind::FunctionDeclaration)
+        {
+            int c = nparam_cantidad[i];
+            total = total + c;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// Suma de las cantidades de campos de todas las
+// StructDeclaration, leidas de ncampo_cantidad.
+int campos_total()
+{
+    int nkind[256];
+    int ncampo_cantidad[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == NodeKind::StructDeclaration)
+        {
+            int c = ncampo_cantidad[i];
+            total = total + c;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// Suma de las cantidades de constantes de todas las
+// EnumDeclaration, leidas de nconst_cantidad.
+int consts_total()
+{
+    int nkind[256];
+    int nconst_cantidad[256];
+    int total = 0;
+    int i = 0;
+    while (i < nnodos)
+    {
+        if (nkind[i] == NodeKind::EnumDeclaration)
+        {
+            int c = nconst_cantidad[i];
+            total = total + c;
         }
         i = i + 1;
     }
@@ -1126,7 +1219,8 @@ int parse_funcion()
     // Parametros: solamente int (FASE 4.2.1 de Stage 0).
     // Parameter no es un NodeKind: los parametros viven
     // en su tabla lateral partok, y la funcion guarda en
-    // hijo2 el inicio de los suyos y en nsig cuantos son.
+    // hijo2 el inicio de los suyos y cuantos son en
+    // nparam_cantidad (rebanada 10; antes nsig).
     int pini = npar;
     if (es(TokenType::RParen) == 0)
     {
@@ -1154,7 +1248,7 @@ int parse_funcion()
     int n = emite(NodeKind::FunctionDeclaration, ini);
     int a = pon_val(n, nombre);
     int b = pon_hijo2(n, pini);
-    int c = pon_sig(n, npar - pini);
+    int c = pon_cant_params(n, npar - pini);
     nfun = nfun + 1;
 
     int bloque = nnodos;
@@ -1198,7 +1292,8 @@ int pon_campo(int tipo, int tok)
 // Tipos de campo admitidos: int y string, nada mas
 // (Stage 0 no admite structs anidados). La estructura
 // guarda su nombre en nval, el inicio de sus campos en
-// hijo2 y cuantos son en nsig. La declaracion cierra
+// hijo2 y cuantos son en ncampo_cantidad (rebanada 10;
+// antes nsig). La declaracion cierra
 // con ';' tras la '}', como exige Stage 0.
 // ============================================================
 
@@ -1254,7 +1349,7 @@ int parse_estructura()
     int n = emite(NodeKind::StructDeclaration, ini);
     int a = pon_val(n, nombre);
     int b = pon_hijo2(n, cini);
-    int c = pon_sig(n, ncam - cini);
+    int c = pon_cant_campos(n, ncam - cini);
     return 1;
 }
 
@@ -1445,7 +1540,7 @@ int es_print_int(int tok)
 // declaracion cierra con ';' tras la '}', como la
 // de struct. El nodo guarda su nombre en nval, el
 // inicio de sus constantes en hijo2 y cuantas son
-// en nsig.
+// en nconst_cantidad (rebanada 10; antes nsig).
 // ============================================================
 
 int parse_enum()
@@ -1515,7 +1610,7 @@ int parse_enum()
     int n = emite(NodeKind::EnumDeclaration, ini);
     int a = pon_val(n, nombre);
     int b = pon_hijo2(n, cini);
-    int c = pon_sig(n, nconst - cini);
+    int c = pon_cant_consts(n, nconst - cini);
     return 1;
 }
 
@@ -2240,6 +2335,7 @@ int main()
     print_int(nnodos);
     print_int(npar);
     print_int(cuenta(NodeKind::FunctionDeclaration));
+    print_int(params_total());
 
     int r1 = reinicia();
     int a3 = inicia_tokens3();
@@ -2251,6 +2347,7 @@ int main()
     print_int(nnodos);
     print_int(ncam);
     print_int(cuenta(NodeKind::StructDeclaration));
+    print_int(campos_total());
 
     int r2 = reinicia();
     int a4 = inicia_tokens4();
@@ -2263,6 +2360,7 @@ int main()
     print_int(nconst);
     print_int(cuenta(NodeKind::EnumDeclaration));
     print_int(suma_literales());
+    print_int(consts_total());
 
     int r3 = reinicia();
     int a5 = inicia_tokens5();
@@ -2287,6 +2385,7 @@ int main()
     print_int(cuenta(NodeKind::PrintIntegerStatement));
     print_int(cuenta(NodeKind::CallExpression));
     print_int(cuenta(NodeKind::PrintStatement));
+    print_int(params_total());
 
     int r5 = reinicia();
     int a7 = inicia_tokens7();
@@ -2299,5 +2398,6 @@ int main()
     print_int(ncam);
     print_int(cuenta(NodeKind::VariableDeclaration));
     print_int(cuenta(NodeKind::AssignmentStatement));
+    print_int(campos_total());
     return 0;
 }
