@@ -47,6 +47,12 @@
 //     fuente[] que la tabla 4 carga: el mapa de texto
 //     de Stage 0 (enumConstants) escrito con
 //     posiciones, porque este Parser no guarda texto.
+//     Correccion en campo (la misma noche):
+//     mismo_texto lee cada largo y cada caracter a
+//     variables locales antes de comparar — comparar
+//     dos cargas calculadas dentro de una sola
+//     expresion devolvia siempre distinto
+//     (sonda_mismo_texto.kpp).
 //
 // Aceptacion de la rebanada (en campo, Studio):
 //   Tabla de FUENTE: 1, 4, 0, 27, 14, 1, 3 (como en la
@@ -1149,14 +1155,28 @@ int mismo_texto(int a, int b)
     int tinicio[64];
     int tlargo[64];
     int fuente[512];
-    if (tlargo[a] != tlargo[b])
+    // Cada largo y cada caracter se lee primero a una
+    // variable local y se compara despues, en
+    // sentencias separadas. La forma directa —
+    // comparar dos cargas calculadas dentro de una
+    // sola expresion — devolvio siempre distinto en
+    // campo, con el IR correcto: es la forma que esta
+    // funcion evita a proposito
+    // (sonda_mismo_texto.kpp).
+    int la = tlargo[a];
+    int lb = tlargo[b];
+    if (la != lb)
     {
         return 0;
     }
+    int ia = tinicio[a];
+    int ib = tinicio[b];
     int i = 0;
-    while (i < tlargo[a])
+    while (i < la)
     {
-        if (fuente[tinicio[a] + i] != fuente[tinicio[b] + i])
+        int ca = fuente[ia + i];
+        int cb = fuente[ib + i];
+        if (ca != cb)
         {
             return 0;
         }
