@@ -340,6 +340,16 @@ int emite(int kind, int ini)
     int nval[256];
     int naux[256];
     int nsize[256];
+    // Guarda de capacidad: el nodo 257 no nace. Con
+    // la tabla llena, emite acusa error y devuelve
+    // -1 sin escribir fuera de los ocho arreglos; y
+    // los pon_ ignoran ese -1, asi que ningun
+    // consumidor enlaza un nodo inexistente.
+    if (nnodos >= 256)
+    {
+        errores = errores + 1;
+        return 0 - 1;
+    }
     nkind[nnodos] = kind;
     nini[nnodos] = ini;
     nfin[nnodos] = pos;
@@ -355,6 +365,14 @@ int emite(int kind, int ini)
 int pon_hijo1(int nodo, int hijo)
 {
     int nhijo1[256];
+    if (nodo < 0)
+    {
+        return 0;
+    }
+    if (nodo >= 256)
+    {
+        return 0;
+    }
     nhijo1[nodo] = hijo;
     return 0;
 }
@@ -366,6 +384,14 @@ int pon_hijo1(int nodo, int hijo)
 int pon_aux(int nodo, int aux)
 {
     int naux[256];
+    if (nodo < 0)
+    {
+        return 0;
+    }
+    if (nodo >= 256)
+    {
+        return 0;
+    }
     naux[nodo] = aux;
     return 0;
 }
@@ -373,6 +399,14 @@ int pon_aux(int nodo, int aux)
 int pon_sig(int nodo, int hermano)
 {
     int nsig[256];
+    if (nodo < 0)
+    {
+        return 0;
+    }
+    if (nodo >= 256)
+    {
+        return 0;
+    }
     nsig[nodo] = hermano;
     return 0;
 }
@@ -388,6 +422,14 @@ int pon_sig(int nodo, int hermano)
 int pon_val(int nodo, int valor)
 {
     int nval[256];
+    if (nodo < 0)
+    {
+        return 0;
+    }
+    if (nodo >= 256)
+    {
+        return 0;
+    }
     nval[nodo] = valor;
     return 0;
 }
@@ -398,6 +440,14 @@ int pon_val(int nodo, int valor)
 int pon_size(int nodo, int tam)
 {
     int nsize[256];
+    if (nodo < 0)
+    {
+        return 0;
+    }
+    if (nodo >= 256)
+    {
+        return 0;
+    }
     nsize[nodo] = tam;
     return 0;
 }
@@ -409,6 +459,14 @@ int pon_size(int nodo, int tam)
 int pon_fin(int nodo, int fin)
 {
     int nfin[256];
+    if (nodo < 0)
+    {
+        return 0;
+    }
+    if (nodo >= 256)
+    {
+        return 0;
+    }
     nfin[nodo] = fin;
     return 0;
 }
@@ -3025,6 +3083,59 @@ int carga_fuente9()
 // minimo: la tabla de constantes pasa el viejo tope
 // de 64 y registra las setenta, sin errores.
 // ============================================================
+// ============================================================
+// CARGA FUENTE12 — la sonda de la guarda de emite.
+//
+// Un return con ciento treinta menos unarios: sin
+// guarda serian 265 nodos. Con la guarda, nnodos
+// se queda en 256, los nueve emite de mas acusan
+// error y devuelven -1, ningun pon_ enlaza ese -1
+// y el bloque queda vacio: alcanzables 3.
+// ============================================================
+int carga_fuente12()
+{
+    int fuente[1024];
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
+    fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 114;  fuente[18] = 101;  fuente[19] = 116;  fuente[20] = 117;  fuente[21] = 114;  fuente[22] = 110;  fuente[23] = 32;
+    fuente[24] = 45;  fuente[25] = 32;  fuente[26] = 45;  fuente[27] = 32;  fuente[28] = 45;  fuente[29] = 32;  fuente[30] = 45;  fuente[31] = 32;
+    fuente[32] = 45;  fuente[33] = 32;  fuente[34] = 45;  fuente[35] = 32;  fuente[36] = 45;  fuente[37] = 32;  fuente[38] = 45;  fuente[39] = 32;
+    fuente[40] = 45;  fuente[41] = 32;  fuente[42] = 45;  fuente[43] = 32;  fuente[44] = 45;  fuente[45] = 32;  fuente[46] = 45;  fuente[47] = 32;
+    fuente[48] = 45;  fuente[49] = 32;  fuente[50] = 45;  fuente[51] = 32;  fuente[52] = 45;  fuente[53] = 32;  fuente[54] = 45;  fuente[55] = 32;
+    fuente[56] = 45;  fuente[57] = 32;  fuente[58] = 45;  fuente[59] = 32;  fuente[60] = 45;  fuente[61] = 32;  fuente[62] = 45;  fuente[63] = 32;
+    fuente[64] = 45;  fuente[65] = 32;  fuente[66] = 45;  fuente[67] = 32;  fuente[68] = 45;  fuente[69] = 32;  fuente[70] = 45;  fuente[71] = 32;
+    fuente[72] = 45;  fuente[73] = 32;  fuente[74] = 45;  fuente[75] = 32;  fuente[76] = 45;  fuente[77] = 32;  fuente[78] = 45;  fuente[79] = 32;
+    fuente[80] = 45;  fuente[81] = 32;  fuente[82] = 45;  fuente[83] = 32;  fuente[84] = 45;  fuente[85] = 32;  fuente[86] = 45;  fuente[87] = 32;
+    fuente[88] = 45;  fuente[89] = 32;  fuente[90] = 45;  fuente[91] = 32;  fuente[92] = 45;  fuente[93] = 32;  fuente[94] = 45;  fuente[95] = 32;
+    fuente[96] = 45;  fuente[97] = 32;  fuente[98] = 45;  fuente[99] = 32;  fuente[100] = 45;  fuente[101] = 32;  fuente[102] = 45;  fuente[103] = 32;
+    fuente[104] = 45;  fuente[105] = 32;  fuente[106] = 45;  fuente[107] = 32;  fuente[108] = 45;  fuente[109] = 32;  fuente[110] = 45;  fuente[111] = 32;
+    fuente[112] = 45;  fuente[113] = 32;  fuente[114] = 45;  fuente[115] = 32;  fuente[116] = 45;  fuente[117] = 32;  fuente[118] = 45;  fuente[119] = 32;
+    fuente[120] = 45;  fuente[121] = 32;  fuente[122] = 45;  fuente[123] = 32;  fuente[124] = 45;  fuente[125] = 32;  fuente[126] = 45;  fuente[127] = 32;
+    fuente[128] = 45;  fuente[129] = 32;  fuente[130] = 45;  fuente[131] = 32;  fuente[132] = 45;  fuente[133] = 32;  fuente[134] = 45;  fuente[135] = 32;
+    fuente[136] = 45;  fuente[137] = 32;  fuente[138] = 45;  fuente[139] = 32;  fuente[140] = 45;  fuente[141] = 32;  fuente[142] = 45;  fuente[143] = 32;
+    fuente[144] = 45;  fuente[145] = 32;  fuente[146] = 45;  fuente[147] = 32;  fuente[148] = 45;  fuente[149] = 32;  fuente[150] = 45;  fuente[151] = 32;
+    fuente[152] = 45;  fuente[153] = 32;  fuente[154] = 45;  fuente[155] = 32;  fuente[156] = 45;  fuente[157] = 32;  fuente[158] = 45;  fuente[159] = 32;
+    fuente[160] = 45;  fuente[161] = 32;  fuente[162] = 45;  fuente[163] = 32;  fuente[164] = 45;  fuente[165] = 32;  fuente[166] = 45;  fuente[167] = 32;
+    fuente[168] = 45;  fuente[169] = 32;  fuente[170] = 45;  fuente[171] = 32;  fuente[172] = 45;  fuente[173] = 32;  fuente[174] = 45;  fuente[175] = 32;
+    fuente[176] = 45;  fuente[177] = 32;  fuente[178] = 45;  fuente[179] = 32;  fuente[180] = 45;  fuente[181] = 32;  fuente[182] = 45;  fuente[183] = 32;
+    fuente[184] = 45;  fuente[185] = 32;  fuente[186] = 45;  fuente[187] = 32;  fuente[188] = 45;  fuente[189] = 32;  fuente[190] = 45;  fuente[191] = 32;
+    fuente[192] = 45;  fuente[193] = 32;  fuente[194] = 45;  fuente[195] = 32;  fuente[196] = 45;  fuente[197] = 32;  fuente[198] = 45;  fuente[199] = 32;
+    fuente[200] = 45;  fuente[201] = 32;  fuente[202] = 45;  fuente[203] = 32;  fuente[204] = 45;  fuente[205] = 32;  fuente[206] = 45;  fuente[207] = 32;
+    fuente[208] = 45;  fuente[209] = 32;  fuente[210] = 45;  fuente[211] = 32;  fuente[212] = 45;  fuente[213] = 32;  fuente[214] = 45;  fuente[215] = 32;
+    fuente[216] = 45;  fuente[217] = 32;  fuente[218] = 45;  fuente[219] = 32;  fuente[220] = 45;  fuente[221] = 32;  fuente[222] = 45;  fuente[223] = 32;
+    fuente[224] = 45;  fuente[225] = 32;  fuente[226] = 45;  fuente[227] = 32;  fuente[228] = 45;  fuente[229] = 32;  fuente[230] = 45;  fuente[231] = 32;
+    fuente[232] = 45;  fuente[233] = 32;  fuente[234] = 45;  fuente[235] = 32;  fuente[236] = 45;  fuente[237] = 32;  fuente[238] = 45;  fuente[239] = 32;
+    fuente[240] = 45;  fuente[241] = 32;  fuente[242] = 45;  fuente[243] = 32;  fuente[244] = 45;  fuente[245] = 32;  fuente[246] = 45;  fuente[247] = 32;
+    fuente[248] = 45;  fuente[249] = 32;  fuente[250] = 45;  fuente[251] = 32;  fuente[252] = 45;  fuente[253] = 32;  fuente[254] = 45;  fuente[255] = 32;
+    fuente[256] = 45;  fuente[257] = 32;  fuente[258] = 45;  fuente[259] = 32;  fuente[260] = 45;  fuente[261] = 32;  fuente[262] = 45;  fuente[263] = 32;
+    fuente[264] = 45;  fuente[265] = 32;  fuente[266] = 45;  fuente[267] = 32;  fuente[268] = 45;  fuente[269] = 32;  fuente[270] = 45;  fuente[271] = 32;
+    fuente[272] = 45;  fuente[273] = 32;  fuente[274] = 45;  fuente[275] = 32;  fuente[276] = 45;  fuente[277] = 32;  fuente[278] = 45;  fuente[279] = 32;
+    fuente[280] = 45;  fuente[281] = 32;  fuente[282] = 45;  fuente[283] = 32;  fuente[284] = 49;  fuente[285] = 59;  fuente[286] = 10;  fuente[287] = 125;
+    fuente[288] = 10;
+    total = 289;
+    return 0;
+}
+
 int carga_fuente11()
 {
     int fuente[1024];
@@ -3317,6 +3428,18 @@ int main()
     int cf11 = carga_fuente11();
     int es11 = escanea();
     int p11 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(alcanzables());
+    int r10 = reinicia();
+    int cf12 = carga_fuente12();
+    int es12 = escanea();
+    int p12 = parse_programa();
     print_int(nfun);
     print_int(nsent);
     print_int(errores);
