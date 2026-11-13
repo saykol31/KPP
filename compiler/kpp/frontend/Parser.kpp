@@ -1,4 +1,4 @@
-// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 5.
+// Parser.kpp — Stage 1, pieza 2 (parser), rebanada 6.
 // Traduccion de src/frontend/Parser.cpp (Stage 0) a K++, en el
 // estilo de subrutinas con estado compartido:
 //
@@ -53,6 +53,14 @@
 //     dos cargas calculadas dentro de una sola
 //     expresion devolvia siempre distinto
 //     (sonda_mismo_texto.kpp).
+//   - Rebanada 6: el else if de Stage 0 — la ultima
+//     pieza del grupo de control de flujo. El else
+//     seguido de if envuelve el if anidado en un
+//     Block sintetico de una sola sentencia, como en
+//     el parseStatement original. La tabla 5 ejercita
+//     a la vez el while y el else, traducidos en la
+//     rebanada 1 pero sin corrida de aceptacion
+//     propia hasta hoy.
 //
 // Aceptacion de la rebanada (en campo, Studio):
 //   Tabla de FUENTE: 1, 4, 0, 27, 14, 1, 3 (como en la
@@ -68,6 +76,11 @@
 //   literales (0 + 10 + 11 del pliegue, mas el 0 del
 //   return): la prueba numerica de que cada
 //   Color::Miembro cayo en su valor.
+//   Tabla 5 (else if): 1, 11, 0, 74, 40, 1, 2, 6 —
+//   funciones, sentencias, errores, tokens, nodos,
+//   WhileStatement, IfStatement y Block: el 2 de
+//   if es el anidado del else if, y el 6 de bloques
+//   incluye el sintetico que lo envuelve.
 //
 // Tabla de tokens: el enum TokenType de include/kpp/Token.hpp
 // (Stage 0) traducido 1:1. Los valores salen del ORDEN de
@@ -847,9 +860,10 @@ int parse_sentencia()
         return 1;
     }
 
-    // if (condicion) bloque [else bloque]
+    // if (condicion) bloque [else bloque | else if ...]
     // La condicion ya no se salta: se analiza y cuelga
-    // de hijo1 del nodo If.
+    // de hijo1 del nodo If. Los bloques caen detras
+    // del nodo, en orden de emision.
     if (t == TokenType::KwIf)
     {
         int c1 = consume();
@@ -863,7 +877,25 @@ int parse_sentencia()
         if (es(TokenType::KwElse) == 1)
         {
             int c2 = consume();
-            int b2 = parse_bloque();
+            // La decision se lee una sola vez, antes de
+            // analizar nada: tras el if anidado, el
+            // token actual ya es otro.
+            int esif = es(TokenType::KwIf);
+            if (esif == 1)
+            {
+                // ELSE IF (Stage 0): el if anidado va
+                // envuelto en un Block sintetico de una
+                // sola sentencia. El Block se emite y
+                // la sentencia if cae detras de el, en
+                // orden de emision, igual que las
+                // sentencias de un bloque real.
+                int nb = emite(NodeKind::Block, pos);
+                int s = parse_sentencia();
+            }
+            if (esif == 0)
+            {
+                int b2 = parse_bloque();
+            }
         }
         return 1;
     }
@@ -1705,6 +1737,136 @@ int inicia_tokens4()
     return 0;
 }
 
+// ============================================================
+// TABLA LITERAL 5 — LA SONDA DE CONTROL DE FLUJO.
+//
+// int main()
+// {
+//     int i = 0;
+//     int s = 0;
+//     while (i < 3)
+//     {
+//         s = s + i;
+//         i = i + 1;
+//     }
+//     if (s == 3)
+//     {
+//         print(s);
+//     }
+//     else if (s == 2)
+//     {
+//         print(2);
+//     }
+//     else
+//     {
+//         print(9);
+//     }
+//     return s;
+// }
+//
+// Generada mecanicamente desde esa fuente: 74 tokens.
+// La sonda se compilo con Stage 0: su IR trae el
+// bucle completo y la cadena if / else if / else con
+// sus tres print — lo que esta tabla debe reproducir
+// en nodos.
+// ============================================================
+
+int inicia_tokens5()
+{
+    int tipo[80];
+    int tinicio[80];
+    int tlargo[80];
+    int tvalor[80];
+
+    tipo[0 ] = TokenType::KwInt;      tinicio[0 ] = 0   ; tlargo[0 ] = 3;
+    tipo[1 ] = TokenType::Identifier; tinicio[1 ] = 4   ; tlargo[1 ] = 4;
+    tipo[2 ] = TokenType::LParen;     tinicio[2 ] = 8   ; tlargo[2 ] = 1;
+    tipo[3 ] = TokenType::RParen;     tinicio[3 ] = 9   ; tlargo[3 ] = 1;
+    tipo[4 ] = TokenType::LBrace;     tinicio[4 ] = 11  ; tlargo[4 ] = 1;
+    tipo[5 ] = TokenType::KwInt;      tinicio[5 ] = 17  ; tlargo[5 ] = 3;
+    tipo[6 ] = TokenType::Identifier; tinicio[6 ] = 21  ; tlargo[6 ] = 1;
+    tipo[7 ] = TokenType::Assign;     tinicio[7 ] = 23  ; tlargo[7 ] = 1;
+    tipo[8 ] = TokenType::Number;     tinicio[8 ] = 25  ; tlargo[8 ] = 1;
+    tipo[9 ] = TokenType::Semicolon;  tinicio[9 ] = 26  ; tlargo[9 ] = 1;
+    tipo[10] = TokenType::KwInt;      tinicio[10] = 32  ; tlargo[10] = 3;
+    tipo[11] = TokenType::Identifier; tinicio[11] = 36  ; tlargo[11] = 1;
+    tipo[12] = TokenType::Assign;     tinicio[12] = 38  ; tlargo[12] = 1;
+    tipo[13] = TokenType::Number;     tinicio[13] = 40  ; tlargo[13] = 1;
+    tipo[14] = TokenType::Semicolon;  tinicio[14] = 41  ; tlargo[14] = 1;
+    tipo[15] = TokenType::KwWhile;    tinicio[15] = 47  ; tlargo[15] = 5;
+    tipo[16] = TokenType::LParen;     tinicio[16] = 53  ; tlargo[16] = 1;
+    tipo[17] = TokenType::Identifier; tinicio[17] = 54  ; tlargo[17] = 1;
+    tipo[18] = TokenType::Less;       tinicio[18] = 56  ; tlargo[18] = 1;
+    tipo[19] = TokenType::Number;     tinicio[19] = 58  ; tlargo[19] = 1;
+    tipo[20] = TokenType::RParen;     tinicio[20] = 59  ; tlargo[20] = 1;
+    tipo[21] = TokenType::LBrace;     tinicio[21] = 65  ; tlargo[21] = 1;
+    tipo[22] = TokenType::Identifier; tinicio[22] = 75  ; tlargo[22] = 1;
+    tipo[23] = TokenType::Assign;     tinicio[23] = 77  ; tlargo[23] = 1;
+    tipo[24] = TokenType::Identifier; tinicio[24] = 79  ; tlargo[24] = 1;
+    tipo[25] = TokenType::Plus;       tinicio[25] = 81  ; tlargo[25] = 1;
+    tipo[26] = TokenType::Identifier; tinicio[26] = 83  ; tlargo[26] = 1;
+    tipo[27] = TokenType::Semicolon;  tinicio[27] = 84  ; tlargo[27] = 1;
+    tipo[28] = TokenType::Identifier; tinicio[28] = 94  ; tlargo[28] = 1;
+    tipo[29] = TokenType::Assign;     tinicio[29] = 96  ; tlargo[29] = 1;
+    tipo[30] = TokenType::Identifier; tinicio[30] = 98  ; tlargo[30] = 1;
+    tipo[31] = TokenType::Plus;       tinicio[31] = 100 ; tlargo[31] = 1;
+    tipo[32] = TokenType::Number;     tinicio[32] = 102 ; tlargo[32] = 1;
+    tipo[33] = TokenType::Semicolon;  tinicio[33] = 103 ; tlargo[33] = 1;
+    tipo[34] = TokenType::RBrace;     tinicio[34] = 109 ; tlargo[34] = 1;
+    tipo[35] = TokenType::KwIf;       tinicio[35] = 115 ; tlargo[35] = 2;
+    tipo[36] = TokenType::LParen;     tinicio[36] = 118 ; tlargo[36] = 1;
+    tipo[37] = TokenType::Identifier; tinicio[37] = 119 ; tlargo[37] = 1;
+    tipo[38] = TokenType::Equal;      tinicio[38] = 121 ; tlargo[38] = 2;
+    tipo[39] = TokenType::Number;     tinicio[39] = 124 ; tlargo[39] = 1;
+    tipo[40] = TokenType::RParen;     tinicio[40] = 125 ; tlargo[40] = 1;
+    tipo[41] = TokenType::LBrace;     tinicio[41] = 131 ; tlargo[41] = 1;
+    tipo[42] = TokenType::KwPrint;    tinicio[42] = 141 ; tlargo[42] = 5;
+    tipo[43] = TokenType::LParen;     tinicio[43] = 146 ; tlargo[43] = 1;
+    tipo[44] = TokenType::Identifier; tinicio[44] = 147 ; tlargo[44] = 1;
+    tipo[45] = TokenType::RParen;     tinicio[45] = 148 ; tlargo[45] = 1;
+    tipo[46] = TokenType::Semicolon;  tinicio[46] = 149 ; tlargo[46] = 1;
+    tipo[47] = TokenType::RBrace;     tinicio[47] = 155 ; tlargo[47] = 1;
+    tipo[48] = TokenType::KwElse;     tinicio[48] = 161 ; tlargo[48] = 4;
+    tipo[49] = TokenType::KwIf;       tinicio[49] = 166 ; tlargo[49] = 2;
+    tipo[50] = TokenType::LParen;     tinicio[50] = 169 ; tlargo[50] = 1;
+    tipo[51] = TokenType::Identifier; tinicio[51] = 170 ; tlargo[51] = 1;
+    tipo[52] = TokenType::Equal;      tinicio[52] = 172 ; tlargo[52] = 2;
+    tipo[53] = TokenType::Number;     tinicio[53] = 175 ; tlargo[53] = 1;
+    tipo[54] = TokenType::RParen;     tinicio[54] = 176 ; tlargo[54] = 1;
+    tipo[55] = TokenType::LBrace;     tinicio[55] = 182 ; tlargo[55] = 1;
+    tipo[56] = TokenType::KwPrint;    tinicio[56] = 192 ; tlargo[56] = 5;
+    tipo[57] = TokenType::LParen;     tinicio[57] = 197 ; tlargo[57] = 1;
+    tipo[58] = TokenType::Number;     tinicio[58] = 198 ; tlargo[58] = 1;
+    tipo[59] = TokenType::RParen;     tinicio[59] = 199 ; tlargo[59] = 1;
+    tipo[60] = TokenType::Semicolon;  tinicio[60] = 200 ; tlargo[60] = 1;
+    tipo[61] = TokenType::RBrace;     tinicio[61] = 206 ; tlargo[61] = 1;
+    tipo[62] = TokenType::KwElse;     tinicio[62] = 212 ; tlargo[62] = 4;
+    tipo[63] = TokenType::LBrace;     tinicio[63] = 221 ; tlargo[63] = 1;
+    tipo[64] = TokenType::KwPrint;    tinicio[64] = 231 ; tlargo[64] = 5;
+    tipo[65] = TokenType::LParen;     tinicio[65] = 236 ; tlargo[65] = 1;
+    tipo[66] = TokenType::Number;     tinicio[66] = 237 ; tlargo[66] = 1;
+    tipo[67] = TokenType::RParen;     tinicio[67] = 238 ; tlargo[67] = 1;
+    tipo[68] = TokenType::Semicolon;  tinicio[68] = 239 ; tlargo[68] = 1;
+    tipo[69] = TokenType::RBrace;     tinicio[69] = 245 ; tlargo[69] = 1;
+    tipo[70] = TokenType::KwReturn;   tinicio[70] = 251 ; tlargo[70] = 6;
+    tipo[71] = TokenType::Identifier; tinicio[71] = 258 ; tlargo[71] = 1;
+    tipo[72] = TokenType::Semicolon;  tinicio[72] = 259 ; tlargo[72] = 1;
+    tipo[73] = TokenType::RBrace;     tinicio[73] = 261 ; tlargo[73] = 1;
+
+    tvalor[8] = 0;
+    tvalor[13] = 0;
+    tvalor[19] = 3;
+    tvalor[32] = 1;
+    tvalor[39] = 3;
+    tvalor[53] = 2;
+    tvalor[58] = 2;
+    tvalor[66] = 9;
+
+    ntok = 74;
+    pos = 0;
+    return 0;
+}
+
 // Deja el estado compartido como recien nacido, para
 // correr las demas tablas en el mismo programa.
 int reinicia()
@@ -1769,5 +1931,17 @@ int main()
     print_int(nconst);
     print_int(cuenta(NodeKind::EnumDeclaration));
     print_int(suma_literales());
+
+    int r3 = reinicia();
+    int a5 = inicia_tokens5();
+    int p5 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(cuenta(NodeKind::WhileStatement));
+    print_int(cuenta(NodeKind::IfStatement));
+    print_int(cuenta(NodeKind::Block));
     return 0;
 }
