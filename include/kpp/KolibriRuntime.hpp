@@ -322,6 +322,12 @@ struct KolibriRuntimeResult
     // lo reafirma en cada dibujo (en los redibujos la
     // función 0 no vuelve a pintar su texto).
     std::size_t titleCaptionPatch = 0;
+
+    // Konsole (rebanada 3): dirección de la rutina
+    // REFRESH_OUTPUT. El backend parchea con ella
+    // las llamadas que los PRINT emiten tras
+    // registrar su línea.
+    std::size_t refreshOutputAddress = 0;
 };
 
 
@@ -448,6 +454,25 @@ public:
     const std::vector<std::size_t>&
     repaintCursorPatches() const;
 
+    // Konsole (rebanada 3): posiciones de las
+    // llamadas de los PRINT a REFRESH_OUTPUT.
+    const std::vector<std::size_t>&
+    refreshCallPatches() const;
+
+    // Konsole (rebanada 4): la geometría de la barra
+    // y el estado del arrastre del ratón.
+    const std::vector<std::size_t>&
+    thumbTopPatches() const;
+
+    const std::vector<std::size_t>&
+    thumbHeightPatches() const;
+
+    const std::vector<std::size_t>&
+    dragStatePatches() const;
+
+    const std::vector<std::size_t>&
+    dragGrabPatches() const;
+
 private:
 
     // Konsole (rebanada 2): anota la línea en el
@@ -463,15 +488,59 @@ private:
         X86Emitter& emitter,
         std::uint32_t drawLength);
 
-    // Repinta las líneas del buffer desde (35, 40),
-    // con la regla de columnas, sobre la celda del
-    // cursor de repintado. Se emite dentro de
-    // DRAW_WINDOW, entre la función 0 y el fin del
-    // redibujo: el contenido se repinta desde el
-    // estado, el cuerpo del programa no se re-ejecuta.
-    void
-    emitRepaint(
+    // Konsole (rebanada 3): dibuja las líneas
+    // visibles del buffer circular en vertical —
+    // X = 35, Y = 40 + fila * 10 — desde
+    // firstVisible y hasta 41 líneas. Es una rutina
+    // con RET: la llaman DRAW_WINDOW (tras la
+    // función 0) y REFRESH_OUTPUT (tras limpiar el
+    // área de texto con la función 13). El cuerpo
+    // del programa no se re-ejecuta nunca.
+    // Rebanada 4: el dibujo se cierra llamando a la
+    // barra de desplazamiento; devuelve la posición
+    // del parche de esa llamada.
+    std::size_t
+    emitDrawLines(
         X86Emitter& emitter);
+
+    // Konsole (rebanada 3): emite la rutina
+    // REFRESH_OUTPUT — begin redraw, limpieza del
+    // área de texto (función 13), llamada a la
+    // rutina de dibujo, end redraw, RET. Los PRINT
+    // la llaman tras registrar su línea. Devuelve
+    // la posición del parche de su llamada interna
+    // a la rutina de dibujo.
+    std::size_t
+    emitRefreshOutput(
+        X86Emitter& emitter);
+
+    // Konsole (rebanada 4): emite la rutina de la
+    // barra de desplazamiento — carril y pulgar con
+    // la función 13, en X = 478, Y = 40, alto 410.
+    // El pulgar es proporcional al historial
+    // (alto = 410 * min(lineCount, 41) / lineCount)
+    // y su posición sigue a firstVisible. Guarda la
+    // geometría en las celdas thumbTop/thumbHeight
+    // para el manejador del ratón. Rutina con RET.
+    void
+    emitScrollbar(
+        X86Emitter& emitter);
+
+    // Konsole (rebanada 4): emite el manejador del
+    // evento 6 en el runtime gráfico. Consulta
+    // botones y coordenadas con la función 37:
+    // clic sobre el carril pagina arriba o abajo
+    // (41 líneas), clic sobre el pulgar lo arrastra
+    // con desplazamiento proporcional, y soltar el
+    // botón cancela el arrastre. Si firstVisible
+    // cambia, llama a DRAW_WINDOW (su parche es lo
+    // que devuelve); si no, vuelve al bucle sin
+    // repintar. eventLoop ya se conoce al emitirlo
+    // y sus saltos de salida se parchean dentro.
+    std::size_t
+    emitMouseHandler(
+        X86Emitter& emitter,
+        std::size_t eventLoop);
 
     // Cursor gráfico: X/Y empaquetado en una variable
     // de DATA. Antes vivía en EBP; EBP es ahora el
@@ -483,6 +552,11 @@ private:
     std::vector<std::size_t> lineHeadPatchList;
     std::vector<std::size_t> firstVisiblePatchList;
     std::vector<std::size_t> repaintCursorPatchList;
+    std::vector<std::size_t> refreshCallPatchList;
+    std::vector<std::size_t> thumbTopPatchList;
+    std::vector<std::size_t> thumbHeightPatchList;
+    std::vector<std::size_t> dragStatePatchList;
+    std::vector<std::size_t> dragGrabPatchList;
 };
 
 }

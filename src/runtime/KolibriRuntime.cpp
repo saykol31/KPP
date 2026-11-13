@@ -16,22 +16,15 @@ KolibriRuntime::emitGraphicsRuntime(
     KolibriRuntimeResult result;
 
     // ========================================================
-    // PRINT CURSOR
+    // PRINT CURSOR — celda retirada (Konsole)
     // ========================================================
     //
-    // El cursor gráfico vive en una variable de DATA:
-    // EBP queda libre como puntero de marco (Rebanada 1).
-    //
-    // X = 35
-    // Y = 40
-    //
-    // KolibriOS recibe X/Y empaquetado en EBX.
-    // El valor inicial se mantiene durante la ejecución
-    // y cada PRINT / PRINT_INT avanza el cursor: Y baja
-    // 10, y si pasa del fondo de la zona de texto
-    // (Y > 440) vuelve a 40 y X salta una columna
-    // (+110) — la ventana no tiene scroll y una sola
-    // columna se quedaba corta.
+    // El cursor gráfico de las columnas vive aún en
+    // DATA y se inicializa como siempre, pero desde
+    // la rebanada 3 de la Konsole ningún PRINT lo
+    // usa: la salida es vertical y se dibuja desde
+    // el buffer circular. Su retiro de DATA es
+    // limpieza de la rebanada 5.
     //
 
     emitter.emitMovEaxImm32(
@@ -251,6 +244,17 @@ KolibriRuntime::emitGraphicsRuntime(
 
 
     // ========================================================
+    // MOUSE (Konsole, rebanada 4)
+    // ========================================================
+
+    const std::size_t mouseHandler =
+        emitter.size();
+
+    const std::size_t mouseDrawPatch =
+        emitMouseHandler(emitter, eventLoop);
+
+
+    // ========================================================
     // DRAW WINDOW
     // ========================================================
 
@@ -309,14 +313,19 @@ KolibriRuntime::emitGraphicsRuntime(
 
 
     // --------------------------------------------------------
-    // REPAINT
+    // REPINTAR LAS LÍNEAS
     //
     // El contenido de la ventana no es persistente:
-    // se repinta desde el buffer de líneas, dentro
-    // del mismo begin/end redraw.
+    // se redibuja desde el buffer circular con la
+    // rutina común de la Konsole, dentro del mismo
+    // begin/end redraw.
     // --------------------------------------------------------
 
-    emitRepaint(emitter);
+    // call DIBUJA_LINEAS
+    emitter.emitByte(0xE8);
+
+    const std::size_t drawLinesCallPatch =
+        emitter.emitRel32Placeholder();
 
 
     // --------------------------------------------------------
@@ -356,6 +365,46 @@ KolibriRuntime::emitGraphicsRuntime(
     emitter.emitInt(0x40);
 
     emitter.emitRet();
+
+
+    // ========================================================
+    // REFRESH_OUTPUT — LA RUTINA DE REFRESCO (Konsole 3)
+    //
+    // Los PRINT la llaman tras registrar su línea:
+    // begin redraw, limpieza del área de texto con
+    // la función 13, la rutina común de dibujo y
+    // end redraw. No ejecuta código del programa ni
+    // toca su estado lógico.
+    // ========================================================
+
+    result.refreshOutputAddress =
+        emitter.size();
+
+    const std::size_t refreshLinesCallPatch =
+        emitRefreshOutput(emitter);
+
+
+    // ========================================================
+    // DIBUJA_LINEAS — la rutina común de dibujo
+    // vertical de la Konsole.
+    // ========================================================
+
+    const std::size_t drawLinesAddress =
+        emitter.size();
+
+    const std::size_t scrollbarCallPatch =
+        emitDrawLines(emitter);
+
+
+    // ========================================================
+    // BARRA — la rutina de la barra de desplazamiento
+    // de la Konsole (rebanada 4).
+    // ========================================================
+
+    const std::size_t scrollbarAddress =
+        emitter.size();
+
+    emitScrollbar(emitter);
 
 
     // ========================================================
@@ -400,7 +449,23 @@ KolibriRuntime::emitGraphicsRuntime(
 
     emitter.patchRel32(
         mousePatch,
-        eventLoop);
+        mouseHandler);
+
+    emitter.patchRel32(
+        mouseDrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        drawLinesCallPatch,
+        drawLinesAddress);
+
+    emitter.patchRel32(
+        refreshLinesCallPatch,
+        drawLinesAddress);
+
+    emitter.patchRel32(
+        scrollbarCallPatch,
+        scrollbarAddress);
 
 
     return result;
@@ -1499,24 +1564,10 @@ KolibriRuntime::emitPrint(
     X86Emitter& emitter,
     [[maybe_unused]] std::uint32_t y)
 {
-    // mov eax, 4
-    emitter.emitMovEaxImm32(4);
-
-    /*
-     * KolibriOS:
-     *
-     * EBX = X << 16 + Y
-     *
-     * X = 35
-     */
-    // EBX = cursor gráfico actual (variable en DATA).
-    cursorPatchList.push_back(
-        emitter.emitMovEbxMem32Placeholder());
-
-    // Text color
-    emitter.emitMovRegImm32(
-        0xB9,
-        0x80FFFFFFu);
+    // KONSOLE (rebanada 3): registrar y refrescar.
+    // El PRINT ya no dibuja sobre el cursor: la
+    // línea se anota en el buffer circular y la
+    // rutina REFRESH_OUTPUT redibuja lo visible.
 
     // EDX = string
     emitter.emitByte(0xBA);
@@ -1524,62 +1575,14 @@ KolibriRuntime::emitPrint(
     const std::size_t textPatch =
         emitter.emitImm32Placeholder();
 
-    // Text size
-    emitter.emitMovRegImm32(
-        0xBE,
-        40);
-
-    // int 0x40
-    emitter.emitInt(0x40);
-
-    // Anotar la línea en el buffer (EDX sigue en el
-    // texto: la función 4 no lo toca).
+    // Anotar la línea en el buffer circular.
     emitRecordLine(emitter, 40);
 
-    // Avanzar el cursor: Y baja 10; si pasa del fondo
-    // (440), Y vuelve a 40 y X salta una columna
-    // (+110). Solo se toca EAX y la pila queda
-    // balanceada en los dos caminos.
-    cursorPatchList.push_back(
-        emitter.emitMovEaxMem32Placeholder());
+    // call REFRESH_OUTPUT
+    emitter.emitByte(0xE8);
 
-    emitter.emitAddEaxImm32(10);
-
-    emitter.emitPushEax();
-
-    emitter.emitAndEaxImm32(0x0000FFFF);
-
-    emitter.emitCmpEaxImm32(440);
-
-    const std::size_t sinSalto =
-        emitter.emitJbeRel32Placeholder();
-
-    emitter.emitPopEax();
-
-    emitter.emitAndEaxImm32(
-        static_cast<std::int32_t>(0xFFFF0000u));
-
-    emitter.emitAddEaxImm32(40);
-
-    emitter.emitAddEaxImm32(110u << 16);
-
-    const std::size_t saltoFin =
-        emitter.emitJmpRel32Placeholder();
-
-    const std::size_t sigue =
-        emitter.size();
-
-    emitter.emitPopEax();
-
-    const std::size_t fin =
-        emitter.size();
-
-    emitter.patchRel32(sinSalto, sigue);
-
-    emitter.patchRel32(saltoFin, fin);
-
-    cursorPatchList.push_back(
-        emitter.emitMovMemEax32Placeholder());
+    refreshCallPatchList.push_back(
+        emitter.emitRel32Placeholder());
 
     return textPatch;
 }
@@ -1590,75 +1593,18 @@ KolibriRuntime::emitPrintFromEdx(
     X86Emitter& emitter,
     [[maybe_unused]] std::uint32_t y)
 {
-    // mov eax, 4
-    emitter.emitMovEaxImm32(4);
+    // KONSOLE (rebanada 3): registrar y refrescar.
+    // EDX ya contiene la dirección del string; la
+    // rutina de anotación lo consume, como antes.
 
-    // EBX = cursor gráfico actual (variable en DATA).
-    cursorPatchList.push_back(
-        emitter.emitMovEbxMem32Placeholder());
-
-    // Text color
-    emitter.emitMovRegImm32(
-        0xB9,
-        0x80FFFFFFu);
-
-    // EDX ya contiene la dirección del string.
-
-    // Text size
-    emitter.emitMovRegImm32(
-        0xBE,
-        40);
-
-    // int 0x40
-    emitter.emitInt(0x40);
-
-    // Anotar la línea en el buffer.
+    // Anotar la línea en el buffer circular.
     emitRecordLine(emitter, 40);
 
-    // Avanzar el cursor: Y baja 10; si pasa del fondo
-    // (440), Y vuelve a 40 y X salta una columna
-    // (+110). Solo se toca EAX y la pila queda
-    // balanceada en los dos caminos.
-    cursorPatchList.push_back(
-        emitter.emitMovEaxMem32Placeholder());
+    // call REFRESH_OUTPUT
+    emitter.emitByte(0xE8);
 
-    emitter.emitAddEaxImm32(10);
-
-    emitter.emitPushEax();
-
-    emitter.emitAndEaxImm32(0x0000FFFF);
-
-    emitter.emitCmpEaxImm32(440);
-
-    const std::size_t sinSalto =
-        emitter.emitJbeRel32Placeholder();
-
-    emitter.emitPopEax();
-
-    emitter.emitAndEaxImm32(
-        static_cast<std::int32_t>(0xFFFF0000u));
-
-    emitter.emitAddEaxImm32(40);
-
-    emitter.emitAddEaxImm32(110u << 16);
-
-    const std::size_t saltoFin =
-        emitter.emitJmpRel32Placeholder();
-
-    const std::size_t sigue =
-        emitter.size();
-
-    emitter.emitPopEax();
-
-    const std::size_t fin =
-        emitter.size();
-
-    emitter.patchRel32(sinSalto, sigue);
-
-    emitter.patchRel32(saltoFin, fin);
-
-    cursorPatchList.push_back(
-        emitter.emitMovMemEax32Placeholder());
+    refreshCallPatchList.push_back(
+        emitter.emitRel32Placeholder());
 
     return 0;
 }
@@ -1794,75 +1740,19 @@ KolibriRuntime::emitPrintInteger(
      * EDX = puntero al texto
      * ESI = tamaño máximo
      */
+    // EDX = EDI: el texto son los dígitos
+    // convertidos, a los que EDI apunta.
     emitter.emitMovEdxEdi();
 
-    emitter.emitMovEaxImm32(4);
-
-    // EBX = cursor gráfico actual (variable en DATA).
-    cursorPatchList.push_back(
-        emitter.emitMovEbxMem32Placeholder());
-
-    emitter.emitMovRegImm32(
-        0xB9,
-        0x80FFFFFFu);
-
-    emitter.emitMovRegImm32(
-        0xBE,
-        16);
-
-    emitter.emitInt(0x40);
-
-    // Anotar la línea en el buffer: el texto son los
-    // dígitos a los que EDI apunta; EDX = EDI para la
-    // rutina común de anotación.
-    emitter.emitMovEdxEdi();
-
+    // Registrar la línea y refrescar la Konsole.
     emitRecordLine(emitter, 16);
 
-    // Avanzar el cursor: Y baja 10; si pasa del fondo
-    // (440), Y vuelve a 40 y X salta una columna
-    // (+110). Solo se toca EAX y la pila queda
-    // balanceada en los dos caminos.
-    cursorPatchList.push_back(
-        emitter.emitMovEaxMem32Placeholder());
+    // call REFRESH_OUTPUT
+    emitter.emitByte(0xE8);
 
-    emitter.emitAddEaxImm32(10);
+    refreshCallPatchList.push_back(
+        emitter.emitRel32Placeholder());
 
-    emitter.emitPushEax();
-
-    emitter.emitAndEaxImm32(0x0000FFFF);
-
-    emitter.emitCmpEaxImm32(440);
-
-    const std::size_t sinSalto =
-        emitter.emitJbeRel32Placeholder();
-
-    emitter.emitPopEax();
-
-    emitter.emitAndEaxImm32(
-        static_cast<std::int32_t>(0xFFFF0000u));
-
-    emitter.emitAddEaxImm32(40);
-
-    emitter.emitAddEaxImm32(110u << 16);
-
-    const std::size_t saltoFin =
-        emitter.emitJmpRel32Placeholder();
-
-    const std::size_t sigue =
-        emitter.size();
-
-    emitter.emitPopEax();
-
-    const std::size_t fin =
-        emitter.size();
-
-    emitter.patchRel32(sinSalto, sigue);
-
-    emitter.patchRel32(saltoFin, fin);
-
-    cursorPatchList.push_back(
-        emitter.emitMovMemEax32Placeholder());
 
     /*
      * Restaurar el resultado original.
@@ -1874,22 +1764,25 @@ KolibriRuntime::emitPrintInteger(
 }
 
 // ============================================================
-// BUFFER DE LÍNEAS — ANOTAR
+// BUFFER DE LÍNEAS — ANOTAR (Konsole)
 //
-// Cada PRINT, tras dibujar su línea, la anota en la
-// siguiente ranura del buffer:
+// Cada PRINT anota su línea en el buffer CIRCULAR
+// de 512 registros antes de refrescar:
 //
 //   ranura (64 bytes) = [longitud de dibujo (4)]
 //                       [40 bytes de texto]
+//                       [20 bytes reservados]
 //
 // Se copian los mismos 40 bytes que la función 4
-// dibuja desde el puntero del texto (en el entero se
-// guardan con longitud 16, la suya: el repintado solo
-// redibuja esa longitud). Con el buffer lleno (128
-// líneas) se sigue imprimiendo; solo se deja de
-// anotar. Al entrar: EDX = texto. Se tocan EAX, ECX,
-// ESI y EDI — muertos tras el dibujo en los tres
-// emisores de impresión — y la pila no se toca.
+// dibuja desde el puntero del texto (en el entero
+// se guardan con longitud 16, la suya: el
+// repintado solo redibuja esa longitud). Al
+// entrar: EDX = texto. Se tocan EAX, ECX, ESI y
+// EDI — muertos tras el dibujo en los tres
+// emisores de impresión. La pila se usa y se
+// equilibra dentro de la rutina: al entrar se
+// apilan las banderas del modo (LIVE/HISTORIAL)
+// y al salir se desapilan.
 // ============================================================
 
 void
@@ -1905,8 +1798,73 @@ KolibriRuntime::emitRecordLine(
     // salida nunca se detiene. lineCount cuenta
     // las líneas vivas y se queda en 512. Al
     // entrar, EDX apunta al texto. Se tocan EAX,
-    // ECX, ESI y EDI, como en la versión lineal
-    // que esto sustituye.
+    // ECX, ESI y EDI.
+
+    // KONSOLE — banderas del modo (rebanada 4):
+    // antes de tocar nada se anota en la pila el
+    // estado de la vista. Bit 0 = modo LIVE: la
+    // vista está pegada al final (firstVisible +
+    // 41 >= lineCount). Bit 1 = el historial está
+    // lleno: esta línea desaloja a la más vieja.
+    // El cierre de la rutina las lee al salir.
+
+    // xor ecx, ecx
+    emitter.emitByte(0x31);
+    emitter.emitByte(0xC9);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(41);
+
+    // cmp eax, [lineCount]
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0x05);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // jb noLive
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x82);
+
+    const std::size_t noLivePatch =
+        emitter.emitRel32Placeholder();
+
+    // or ecx, 1
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC9);
+    emitter.emitByte(0x01);
+
+    const std::size_t noLive =
+        emitter.size();
+
+    emitter.patchRel32(noLivePatch, noLive);
+
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(512);
+
+    // jne noLleno
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x85);
+
+    const std::size_t noLlenoPatch =
+        emitter.emitRel32Placeholder();
+
+    // or ecx, 2
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC9);
+    emitter.emitByte(0x02);
+
+    const std::size_t noLleno =
+        emitter.size();
+
+    emitter.patchRel32(noLlenoPatch, noLleno);
+
+    // push ecx (las banderas)
+    emitter.emitByte(0x51);
 
     // EAX = lineHead (la próxima ranura física).
     lineHeadPatchList.push_back(
@@ -2002,7 +1960,8 @@ KolibriRuntime::emitRecordLine(
 
     emitter.emitCmpEaxImm32(512);
 
-    // jae fin
+    // jae sigue (con el buffer lleno el conteo no
+    // cambia; la ventana LIVE se mantiene igual)
     emitter.emitByte(0x0F);
     emitter.emitByte(0x83);
 
@@ -2014,58 +1973,316 @@ KolibriRuntime::emitRecordLine(
     lineCountPatchList.push_back(
         emitter.emitMovMemEax32Placeholder());
 
+    const std::size_t sigue =
+        emitter.size();
+
+    emitter.patchRel32(llenoPatch, sigue);
+
+    // KONSOLE — cierre de los modos (rebanada 4).
+
+    // pop ecx (las banderas del entrar)
+    emitter.emitByte(0x59);
+
+    // test ecx, 1 — ¿modo LIVE?
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0x01);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+
+    // jnz live
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x85);
+
+    const std::size_t livePatch =
+        emitter.emitRel32Placeholder();
+
+    // Modo HISTORIAL: la posición se CONSERVA. Si
+    // la línea nueva desalojó a la más vieja (bit
+    // 1), todas las líneas lógicas bajan un
+    // puesto: firstVisible baja uno y la vista
+    // enseña las mismas; en 0 se queda (su línea
+    // más vieja ya no existe).
+
+    // test ecx, 2 — ¿hubo desalojo?
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0x02);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+
+    // jz fin
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t sinDesalojoPatch =
+        emitter.emitRel32Placeholder();
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // sub eax, 1
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xE8);
+    emitter.emitByte(0x01);
+
+    // jns guardaHistorial
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x89);
+
+    const std::size_t histPosPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov eax, 0
+    emitter.emitMovEaxImm32(0);
+
+    const std::size_t guardaHistorial =
+        emitter.size();
+
+    emitter.patchRel32(histPosPatch, guardaHistorial);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // jmp fin
+    emitter.emitByte(0xE9);
+
+    const std::size_t histFinPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t live =
+        emitter.size();
+
+    emitter.patchRel32(livePatch, live);
+
+    // Modo LIVE: firstVisible sigue al final del
+    // historial — lineCount - 41, y 0 mientras el
+    // historial no llena la ventana (el
+    // seguimiento de la rebanada 3, ahora solo
+    // para este modo).
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(
+        static_cast<std::int32_t>(-41));
+
+    // jge guarda
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x8D);
+
+    const std::size_t positivoPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov eax, 0
+    emitter.emitMovEaxImm32(0);
+
+    const std::size_t guarda =
+        emitter.size();
+
+    emitter.patchRel32(positivoPatch, guarda);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
     const std::size_t fin =
         emitter.size();
 
-    emitter.patchRel32(llenoPatch, fin);
+    emitter.patchRel32(sinDesalojoPatch, fin);
+    emitter.patchRel32(histFinPatch, fin);
 }
 
 
 // ============================================================
-// BUFFER DE LÍNEAS — REPINTAR
+// KONSOLE — REFRESCO Y DIBUJO VERTICAL (rebanada 3)
 //
-// Se emite dentro de DRAW_WINDOW, entre la función 0
-// y el fin del redibujo. Recorre el buffer por índice
-// (EDI) y redibuja cada línea guardada con su longitud
-// propia, avanzando el cursor DE REPINTADO — su propia
-// celda, con la misma regla de columnas de los PRINT —
-// desde (35, 40). El cursor de impresión y el cuerpo
-// del programa no se tocan: repintar es repetir la
-// página desde el estado, nunca continuarla.
+// REFRESH_OUTPUT es la rutina que los PRINT llaman
+// tras registrar su línea: begin redraw (12.1),
+// limpieza del área de texto con la función 13 (sin
+// ella, los glifos de las líneas desplazadas
+// quedarían como residuo), la rutina común de
+// dibujo y end redraw (12.2). No pasa por la
+// función 0: la ventana no se recrea y no salta a
+// su posición de nacimiento si el usuario la movió.
+//
+// DIBUJA_LINEAS es la rutina común: recorre el
+// buffer circular desde firstVisible — la ranura
+// física de la línea lógica firstVisible es
+// (lineHead - lineCount + firstVisible) & 511 — y
+// dibuja hasta 41 líneas en vertical: X = 35,
+// Y = 40 + fila * 10, sobre la celda del cursor de
+// repintado, que ya solo baja. Sin columnas.
+// El estado del bucle (filas restantes y ranura
+// actual) vive en la pila; EBX, ESI y EDI se
+// preservan. El cuerpo del programa no se toca.
 // ============================================================
 
-void
-KolibriRuntime::emitRepaint(
+std::size_t
+KolibriRuntime::emitRefreshOutput(
     X86Emitter& emitter)
 {
-    // cursorRepintado = (35, 40)
+    // begin redraw (función 12.1)
+    emitter.emitMovEaxImm32(12);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        1);
+
+    emitter.emitInt(0x40);
+
+    // Limpiar el área de texto (función 13): un
+    // rectángulo del color del área de trabajo.
+    emitter.emitMovEaxImm32(13);
+
+    // EBX = X << 16 + ancho: 30, 440 (hasta 470;
+    // la barra vive en 478 y no se toca al limpiar)
+    emitter.emitMovRegImm32(
+        0xBB,
+        (30u << 16) + 440u);
+
+    // ECX = Y << 16 + alto: 38, 414 (hasta 452)
+    emitter.emitMovRegImm32(
+        0xB9,
+        (38u << 16) + 414u);
+
+    // EDX = color (el negro de la función 0)
+    emitter.emitMovRegImm32(
+        0xBA,
+        0x000000u);
+
+    emitter.emitInt(0x40);
+
+    // call DIBUJA_LINEAS
+    emitter.emitByte(0xE8);
+
+    const std::size_t lineasPatch =
+        emitter.emitRel32Placeholder();
+
+    // end redraw (función 12.2)
+    emitter.emitMovEaxImm32(12);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        2);
+
+    emitter.emitInt(0x40);
+
+    emitter.emitRet();
+
+    return lineasPatch;
+}
+
+
+std::size_t
+KolibriRuntime::emitDrawLines(
+    X86Emitter& emitter)
+{
+    // Preservar EBX, ESI y EDI.
+    emitter.emitPushEbx();
+
+    // push esi / push edi
+    emitter.emitByte(0x56);
+    emitter.emitByte(0x57);
+
+    // filas = lineCount - firstVisible.
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // sub eax, [firstVisible]
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x05);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // jle fin (no hay líneas visibles)
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x8E);
+
+    const std::size_t sinLineasPatch =
+        emitter.emitRel32Placeholder();
+
+    // filas = min(filas, 41).
+    emitter.emitCmpEaxImm32(41);
+
+    // jbe sigue
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x86);
+
+    const std::size_t cabePatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitMovEaxImm32(41);
+
+    const std::size_t sigue =
+        emitter.size();
+
+    emitter.patchRel32(cabePatch, sigue);
+
+    // mov edi, eax  (EDI = filas por dibujar)
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC7);
+
+    // ranura inicial = (lineHead - lineCount
+    // + firstVisible) & 511.
+    lineHeadPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // sub eax, [lineCount]
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x05);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // add eax, [firstVisible]
+    emitter.emitByte(0x03);
+    emitter.emitByte(0x05);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    emitter.emitAndEaxImm32(511);
+
+    // mov esi, eax  (ESI = ranura actual)
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC6);
+
+    // El estado del bucle pasa a la pila:
+    // [ESP] = filas restantes, [ESP + 4] = ranura.
+    // push esi (la ranura) / push edi (las filas)
+    emitter.emitByte(0x56);
+    emitter.emitByte(0x57);
+
+    // cursor de repintado = (35, 40)
     emitter.emitMovEaxImm32(
         (35u << 16) + 40u);
 
     repaintCursorPatchList.push_back(
         emitter.emitMovMemEax32Placeholder());
 
-    // EDI = índice de línea.
-    emitter.emitMovEdiImm32(0);
-
     const std::size_t bucle =
         emitter.size();
 
-    // ¿Índice >= líneas? -> fin.
-    lineCountPatchList.push_back(
-        emitter.emitMovEaxMem32Placeholder());
+    // ¿filas restantes == 0? -> fin del bucle.
+    // mov eax, [esp]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x00);
 
-    // cmp eax, edi
-    emitter.emitByte(0x39);
-    emitter.emitByte(0xF8);
+    emitter.emitCmpEaxImm32(0);
 
-    const std::size_t finPatch =
-        emitter.emitJbeRel32Placeholder();
+    const std::size_t finBuclePatch =
+        emitter.emitJeRel32Placeholder();
 
-    // EAX = índice * 64 + base del buffer.
-    // mov eax, edi
-    emitter.emitByte(0x89);
-    emitter.emitByte(0xF8);
+    // EAX = ranura * 64 + base del buffer.
+    // mov eax, [esp + 4]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x04);
 
     // shl eax, 6
     emitter.emitByte(0xC1);
@@ -2100,67 +2317,763 @@ KolibriRuntime::emitRepaint(
         0xB9,
         0x80FFFFFFu);
 
-    // Dibujar la línea.
+    // Dibujar la línea (función 4).
     emitter.emitMovEaxImm32(4);
 
     emitter.emitInt(0x40);
 
-    // Avanzar el cursor de repintado: la misma
-    // secuencia de columnas que usan los PRINT,
-    // sobre su propia celda.
+    // El cursor de repintado solo baja: Y += 10.
     repaintCursorPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
     emitter.emitAddEaxImm32(10);
 
-    emitter.emitPushEax();
-
-    emitter.emitAndEaxImm32(0x0000FFFF);
-
-    emitter.emitCmpEaxImm32(440);
-
-    const std::size_t sinSalto =
-        emitter.emitJbeRel32Placeholder();
-
-    emitter.emitPopEax();
-
-    emitter.emitAndEaxImm32(
-        static_cast<std::int32_t>(0xFFFF0000u));
-
-    emitter.emitAddEaxImm32(40);
-
-    emitter.emitAddEaxImm32(110u << 16);
-
-    const std::size_t saltoFin =
-        emitter.emitJmpRel32Placeholder();
-
-    const std::size_t sigue =
-        emitter.size();
-
-    emitter.emitPopEax();
-
-    const std::size_t avanceFin =
-        emitter.size();
-
-    emitter.patchRel32(sinSalto, sigue);
-
-    emitter.patchRel32(saltoFin, avanceFin);
-
     repaintCursorPatchList.push_back(
         emitter.emitMovMemEax32Placeholder());
 
-    // inc edi
-    emitter.emitByte(0x47);
+    // ranura = (ranura + 1) & 511 (circular).
+    // mov eax, [esp + 4]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x04);
+
+    emitter.emitAddEaxImm32(1);
+
+    emitter.emitAndEaxImm32(511);
+
+    // mov [esp + 4], eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x04);
+
+    // filas--
+    // mov eax, [esp]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x00);
+
+    // dec eax
+    emitter.emitByte(0x48);
+
+    // mov [esp], eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x00);
 
     const std::size_t otraPatch =
         emitter.emitJmpRel32Placeholder();
 
     emitter.patchRel32(otraPatch, bucle);
 
+    const std::size_t finBucle =
+        emitter.size();
+
+    emitter.patchRel32(finBuclePatch, finBucle);
+
+    // add esp, 8 (soltar el estado del bucle)
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC4);
+    emitter.emitByte(0x08);
+
     const std::size_t fin =
         emitter.size();
 
-    emitter.patchRel32(finPatch, fin);
+    emitter.patchRel32(sinLineasPatch, fin);
+
+    // La barra de desplazamiento cierra el dibujo.
+    // call BARRA
+    emitter.emitByte(0xE8);
+
+    const std::size_t barraPatch =
+        emitter.emitRel32Placeholder();
+
+    // pop edi / pop esi / pop ebx
+    emitter.emitByte(0x5F);
+    emitter.emitByte(0x5E);
+
+    emitter.emitPopEbx();
+
+    emitter.emitRet();
+
+    return barraPatch;
+}
+
+
+// ============================================================
+// KONSOLE — LA BARRA DE DESPLAZAMIENTO (rebanada 4)
+//
+// Rutina con RET. Dibuja con la función 13 el
+// carril (X = 478, ancho 12, Y = 40, alto 410: el
+// tramo de las 41 líneas) y el pulgar encima. El
+// alto del pulgar es 410 * 41 / lineCount (con 41
+// líneas o menos llena el carril) y su posición es
+// 40 + (410 - alto) * firstVisible /
+// (lineCount - 41). La geometría queda guardada en
+// las celdas thumbTop / thumbHeight para el
+// manejador del ratón.
+// ============================================================
+
+void
+KolibriRuntime::emitScrollbar(
+    X86Emitter& emitter)
+{
+    // El carril.
+    emitter.emitMovEaxImm32(13);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (478u << 16) + 12u);
+
+    emitter.emitMovRegImm32(
+        0xB9,
+        (40u << 16) + 410u);
+
+    emitter.emitMovRegImm32(
+        0xBA,
+        0x00303030u);
+
+    emitter.emitInt(0x40);
+
+    // ¿lineCount <= 41? El pulgar llena el carril.
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(41);
+
+    // jbe lleno
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x86);
+
+    const std::size_t llenoPatch =
+        emitter.emitRel32Placeholder();
+
+    // alto = 410 * 41 / lineCount
+    emitter.emitMovEaxImm32(410 * 41);
+
+    emitter.emitXorEdxEdx();
+
+    // div dword [lineCount]
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0x35);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    thumbHeightPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // posición = 40 + (410 - alto) * firstVisible
+    //            / (lineCount - 41)
+    emitter.emitMovEaxImm32(410);
+
+    // sub eax, [thumbHeight]
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x05);
+
+    thumbHeightPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // mul dword [firstVisible]
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0x25);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // mov ecx, [lineCount]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x0D);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // sub ecx, 41
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xE9);
+    emitter.emitByte(0x29);
+
+    // div ecx
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0xF1);
+
+    emitter.emitAddEaxImm32(40);
+
+    thumbTopPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // jmp dibuja
+    emitter.emitByte(0xE9);
+
+    const std::size_t dibujaPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t lleno =
+        emitter.size();
+
+    emitter.patchRel32(llenoPatch, lleno);
+
+    emitter.emitMovEaxImm32(410);
+
+    thumbHeightPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitMovEaxImm32(40);
+
+    thumbTopPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    const std::size_t dibuja =
+        emitter.size();
+
+    emitter.patchRel32(dibujaPatch, dibuja);
+
+    // El pulgar, con la geometría guardada.
+    emitter.emitMovEaxImm32(13);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (478u << 16) + 12u);
+
+    // mov ecx, [thumbTop]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x0D);
+
+    thumbTopPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // shl ecx, 16
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0xE1);
+    emitter.emitByte(0x10);
+
+    // add ecx, [thumbHeight]
+    emitter.emitByte(0x03);
+    emitter.emitByte(0x0D);
+
+    thumbHeightPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    emitter.emitMovRegImm32(
+        0xBA,
+        0x00909090u);
+
+    emitter.emitInt(0x40);
+
+    emitter.emitRet();
+}
+
+
+// ============================================================
+// KONSOLE — EL MANEJADOR DEL RATÓN (rebanada 4)
+//
+// Se emite en el runtime gráfico, en el camino del
+// evento 6. Botones y coordenadas con la función
+// 37 (37.2 y 37.1: son consultas distintas).
+//   - Sin botón izquierdo: el arrastre se cancela.
+//   - Clic en el carril sobre el pulgar: página
+//     arriba (41 líneas). Debajo: página abajo.
+//   - Clic en el pulgar: agarre; mientras el botón
+//     siga, la posición del puntero manda con
+//     desplazamiento proporcional.
+// Si firstVisible cambia se llama a DRAW_WINDOW
+// (contenido y barra se repintan sin re-ejecutar
+// el programa); si no cambia, no se repinta nada.
+// Devuelve el parche de la llamada a DRAW_WINDOW;
+// los saltos al bucle se parchean dentro porque
+// eventLoop ya se conoce al emitir.
+// ============================================================
+
+std::size_t
+KolibriRuntime::emitMouseHandler(
+    X86Emitter& emitter,
+    std::size_t eventLoop)
+{
+    using PatchList = std::vector<std::size_t>;
+
+    PatchList aFuera;
+
+    const auto salto =
+        [&emitter, &aFuera]()
+        {
+            emitter.emitByte(0xE9);
+            aFuera.push_back(
+                emitter.emitRel32Placeholder());
+        };
+
+    // Botones (37.2).
+    emitter.emitMovEaxImm32(37);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        2);
+
+    emitter.emitInt(0x40);
+
+    // test eax, 1 (botón izquierdo)
+    emitter.emitByte(0xA9);
+    emitter.emitByte(0x01);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+
+    // jnz pulsado
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x85);
+
+    const std::size_t pulsadoPatch =
+        emitter.emitRel32Placeholder();
+
+    // Soltado: se cancela el arrastre y se vuelve.
+    emitter.emitMovEaxImm32(0);
+
+    dragStatePatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    salto();
+
+    const std::size_t pulsado =
+        emitter.size();
+
+    emitter.patchRel32(pulsadoPatch, pulsado);
+
+    // Coordenadas (37.1): EDX = y, ECX = x.
+    emitter.emitMovEaxImm32(37);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        1);
+
+    emitter.emitInt(0x40);
+
+    // mov edx, eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC2);
+
+    // mov ecx, edx
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xD1);
+
+    // shr ecx, 16
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0xE9);
+    emitter.emitByte(0x10);
+
+    // and edx, 0xFFFF
+    emitter.emitByte(0x81);
+    emitter.emitByte(0xE2);
+    emitter.emitByte(0xFF);
+    emitter.emitByte(0xFF);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+
+    // ¿Arrastrando? El agarre manda sobre la banda.
+    dragStatePatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    // jne arrastra
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x85);
+
+    const std::size_t arrastraPatch =
+        emitter.emitRel32Placeholder();
+
+    // La banda X de la barra: 478..490.
+    // cmp ecx, 478
+    emitter.emitByte(0x81);
+    emitter.emitByte(0xF9);
+    emitter.emitByte(0xDE);
+    emitter.emitByte(0x01);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+
+    // jb fuera
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x82);
+
+    aFuera.push_back(
+        emitter.emitRel32Placeholder());
+
+    // cmp ecx, 490
+    emitter.emitByte(0x81);
+    emitter.emitByte(0xF9);
+    emitter.emitByte(0xEA);
+    emitter.emitByte(0x01);
+    emitter.emitByte(0x00);
+    emitter.emitByte(0x00);
+
+    // ja fuera
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x87);
+
+    aFuera.push_back(
+        emitter.emitRel32Placeholder());
+
+    // ¿Encima del pulgar? -> página arriba.
+    thumbTopPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // cmp edx, eax
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0xD0);
+
+    // jb paginaArriba
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x82);
+
+    const std::size_t paginaArribaPatch =
+        emitter.emitRel32Placeholder();
+
+    // ¿Debajo del pulgar? -> página abajo.
+    thumbTopPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // add eax, [thumbHeight]
+    emitter.emitByte(0x03);
+    emitter.emitByte(0x05);
+
+    thumbHeightPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // cmp edx, eax
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0xD0);
+
+    // jae paginaAbajo
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x83);
+
+    const std::size_t paginaAbajoPatch =
+        emitter.emitRel32Placeholder();
+
+    // Agarre: dragGrab = y - thumbTop; dragState = 1.
+    // mov eax, edx
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xD0);
+
+    // sub eax, [thumbTop]
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x05);
+
+    thumbTopPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    dragGrabPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitMovEaxImm32(1);
+
+    dragStatePatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    salto();
+
+    // ------------------------------------------------
+    // PÁGINA ARRIBA: firstVisible - 41, suelo 0.
+    // ------------------------------------------------
+
+    const std::size_t paginaArriba =
+        emitter.size();
+
+    emitter.patchRel32(
+        paginaArribaPatch, paginaArriba);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // sub eax, 41
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xE8);
+    emitter.emitByte(0x29);
+
+    // jge aplica
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x8D);
+
+    const std::size_t pagAplicaPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitMovEaxImm32(0);
+
+    // jmp aplica
+    emitter.emitByte(0xE9);
+
+    const std::size_t pagAplica2Patch =
+        emitter.emitRel32Placeholder();
+
+    // ------------------------------------------------
+    // PÁGINA ABAJO: firstVisible + 41, techo en
+    // lineCount - 41 (suelo 0 si no hay página).
+    // ------------------------------------------------
+
+    const std::size_t paginaAbajo =
+        emitter.size();
+
+    emitter.patchRel32(
+        paginaAbajoPatch, paginaAbajo);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitAddEaxImm32(41);
+
+    // mov ecx, [lineCount]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x0D);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // sub ecx, 41
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xE9);
+    emitter.emitByte(0x29);
+
+    // jns techoOk
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x89);
+
+    const std::size_t techoPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitMovEcxImm32(0);
+
+    const std::size_t techoOk =
+        emitter.size();
+
+    emitter.patchRel32(techoPatch, techoOk);
+
+    // cmp eax, ecx
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0xC1);
+
+    // jbe aplica
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x86);
+
+    const std::size_t pagbAplicaPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov eax, ecx
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC8);
+
+    // jmp aplica
+    emitter.emitByte(0xE9);
+
+    const std::size_t pagbAplica2Patch =
+        emitter.emitRel32Placeholder();
+
+    // ------------------------------------------------
+    // ARRASTRE: el pulgar sigue al puntero.
+    // nuevoTop = y - dragGrab, sujeto a [40,
+    // 40 + 410 - thumbHeight]; firstVisible =
+    // (nuevoTop - 40) * (lineCount - 41) /
+    // (410 - thumbHeight).
+    // ------------------------------------------------
+
+    const std::size_t arrastra =
+        emitter.size();
+
+    emitter.patchRel32(arrastraPatch, arrastra);
+
+    // EBX = 410 - thumbHeight (el rango del pulgar)
+    emitter.emitMovRegImm32(
+        0xBB,
+        410);
+
+    // sub ebx, [thumbHeight]
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x1D);
+
+    thumbHeightPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // ECX = lineCount - 41 (el rango de líneas)
+    // mov ecx, [lineCount]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x0D);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // sub ecx, 41
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xE9);
+    emitter.emitByte(0x29);
+
+    // Sin rango no hay desplazamiento: fuera.
+    // cmp ebx, 0
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xFB);
+    emitter.emitByte(0x00);
+
+    // jle fuera
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x8E);
+
+    aFuera.push_back(
+        emitter.emitRel32Placeholder());
+
+    // cmp ecx, 0
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xF9);
+    emitter.emitByte(0x00);
+
+    // jle fuera
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x8E);
+
+    aFuera.push_back(
+        emitter.emitRel32Placeholder());
+
+    // mov eax, edx (la y del puntero)
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xD0);
+
+    // sub eax, [dragGrab]
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x05);
+
+    dragGrabPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    emitter.emitCmpEaxImm32(40);
+
+    // jae topOk
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x83);
+
+    const std::size_t topPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitMovEaxImm32(40);
+
+    const std::size_t topOk =
+        emitter.size();
+
+    emitter.patchRel32(topPatch, topOk);
+
+    // El techo del carril: 40 + rango.
+    // mov edx, ebx
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xDA);
+
+    // add edx, 40
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC2);
+    emitter.emitByte(0x28);
+
+    // cmp eax, edx
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0xC2);
+
+    // jbe rangoOk
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x86);
+
+    const std::size_t rangoPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov eax, edx
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xD0);
+
+    const std::size_t rangoOk =
+        emitter.size();
+
+    emitter.patchRel32(rangoPatch, rangoOk);
+
+    // sub eax, 40
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xE8);
+    emitter.emitByte(0x28);
+
+    // mul ecx (EDX:EAX = EAX * rango de líneas)
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0xE1);
+
+    // div ebx (entre el rango del pulgar)
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0xF3);
+
+    // cmp eax, ecx (techo, por seguridad)
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0xC1);
+
+    // jbe aplica
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x86);
+
+    const std::size_t arrAplicaPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov eax, ecx
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC8);
+
+    // ------------------------------------------------
+    // APLICAR: solo si el valor cambia.
+    // ------------------------------------------------
+
+    const std::size_t aplica =
+        emitter.size();
+
+    emitter.patchRel32(pagAplicaPatch, aplica);
+    emitter.patchRel32(pagAplica2Patch, aplica);
+    emitter.patchRel32(pagbAplicaPatch, aplica);
+    emitter.patchRel32(pagbAplica2Patch, aplica);
+    emitter.patchRel32(arrAplicaPatch, aplica);
+
+    // cmp eax, [firstVisible]
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0x05);
+
+    firstVisiblePatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // je fuera (sin cambio no se repinta)
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    aFuera.push_back(
+        emitter.emitRel32Placeholder());
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call DRAW_WINDOW
+    emitter.emitByte(0xE8);
+
+    const std::size_t drawPatch =
+        emitter.emitRel32Placeholder();
+
+    // ------------------------------------------------
+    // SALIDA: volver al bucle de eventos.
+    // ------------------------------------------------
+
+    const std::size_t fuera =
+        emitter.size();
+
+    for (const std::size_t patch : aFuera)
+    {
+        emitter.patchRel32(patch, fuera);
+    }
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t salidaPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.patchRel32(salidaPatch, eventLoop);
+
+    return drawPatch;
 }
 
 
@@ -2197,6 +3110,41 @@ const std::vector<std::size_t>&
 KolibriRuntime::repaintCursorPatches() const
 {
     return repaintCursorPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::refreshCallPatches() const
+{
+    return refreshCallPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::thumbTopPatches() const
+{
+    return thumbTopPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::thumbHeightPatches() const
+{
+    return thumbHeightPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::dragStatePatches() const
+{
+    return dragStatePatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::dragGrabPatches() const
+{
+    return dragGrabPatchList;
 }
 
 

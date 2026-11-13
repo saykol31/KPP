@@ -524,6 +524,10 @@ X86Backend::generate(
     std::size_t firstVisibleDataOffset = 0;
     std::size_t repaintCursorDataOffset = 0;
     std::size_t lineBufferDataOffset = 0;
+    std::size_t thumbTopDataOffset = 0;
+    std::size_t thumbHeightDataOffset = 0;
+    std::size_t dragStateDataOffset = 0;
+    std::size_t dragGrabDataOffset = 0;
 
     // --------------------------------------------------------
     // Título automático
@@ -4936,6 +4940,45 @@ data.resize(
     0);
 
 
+// ========================================================
+// BARRA DE LA KONSOLE (DATA) — rebanada 4
+//
+// thumbTop / thumbHeight: la geometría del pulgar
+// que dibuja la barra y lee el ratón. dragState:
+// 1 mientras el pulgar está agarrado. dragGrab: el
+// desplazamiento del puntero dentro del pulgar al
+// agarrarlo. Todo nace en cero.
+// ========================================================
+
+thumbTopDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+thumbHeightDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+dragStateDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+dragGrabDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+
 
 // ========================================================
 // STRING POOL
@@ -5729,6 +5772,62 @@ for (const auto& patch :
         }
 
         const std::uint32_t
+            thumbTopAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    thumbTopDataOffset);
+
+        for (const std::size_t patch :
+             runtime.thumbTopPatches())
+        {
+            emitter.patch32(
+                patch,
+                thumbTopAddress);
+        }
+
+        const std::uint32_t
+            thumbHeightAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    thumbHeightDataOffset);
+
+        for (const std::size_t patch :
+             runtime.thumbHeightPatches())
+        {
+            emitter.patch32(
+                patch,
+                thumbHeightAddress);
+        }
+
+        const std::uint32_t
+            dragStateAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    dragStateDataOffset);
+
+        for (const std::size_t patch :
+             runtime.dragStatePatches())
+        {
+            emitter.patch32(
+                patch,
+                dragStateAddress);
+        }
+
+        const std::uint32_t
+            dragGrabAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    dragGrabDataOffset);
+
+        for (const std::size_t patch :
+             runtime.dragGrabPatches())
+        {
+            emitter.patch32(
+                patch,
+                dragGrabAddress);
+        }
+
+        const std::uint32_t
             repaintCursorAddress =
                 dataBase +
                 static_cast<std::uint32_t>(
@@ -5754,6 +5853,23 @@ for (const auto& patch :
             emitter.patch32(
                 patch,
                 lineBufferAddress);
+        }
+    }
+
+
+    // ========================================================
+    // PATCH KONSOLE — las llamadas de los PRINT a
+    // REFRESH_OUTPUT (rebanada 3): saltos relativos
+    // a la rutina emitida con el runtime gráfico.
+    // ========================================================
+
+    {
+        for (const std::size_t patch :
+             runtime.refreshCallPatches())
+        {
+            emitter.patchRel32(
+                patch,
+                runtimeResult.refreshOutputAddress);
         }
     }
 
