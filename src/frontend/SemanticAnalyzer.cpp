@@ -347,7 +347,8 @@ void SemanticAnalyzer::analyzeFunction(
     // Verificar tipo de retorno
     // --------------------------------------------------------
 
-    if (function.returnType != "int")
+    if (function.returnType != "int" &&
+        function.returnType != "void")
     {
         semanticErrors.push_back({
             "la función '" +
@@ -874,15 +875,44 @@ void SemanticAnalyzer::analyzeStatement(
         dynamic_cast<const ReturnStatement*>(
             &statement))
     {
+        // ----------------------------------------------------
+        // Tipo de retorno de la función actual.
+        // ----------------------------------------------------
+
+        std::string currentReturnType = "int";
+
+        const auto currentFunctionIt =
+            functionDeclarations.find(currentFunction);
+
+        if (currentFunctionIt != functionDeclarations.end() &&
+            currentFunctionIt->second != nullptr)
+        {
+            currentReturnType =
+                currentFunctionIt->second->returnType;
+        }
+
         if (!returnStatement->expression)
         {
+            // return; — solo válido en una función void.
+            if (currentReturnType != "void")
+            {
+                semanticErrors.push_back({
+                    "return sin expresión en función '" +
+                    currentFunction +
+                    "'"
+                });
+            }
+
+            return;
+        }
+
+        if (currentReturnType == "void")
+        {
             semanticErrors.push_back({
-                "return sin expresión en función '" +
+                "return con valor en la función void '" +
                 currentFunction +
                 "'"
             });
-
-            return;
         }
 
         analyzeExpression(
@@ -941,6 +971,37 @@ void SemanticAnalyzer::analyzeStatement(
 
         analyzeExpression(
             *printIntegerStatement->expression);
+
+        return;
+    }
+
+    // ========================================================
+    // LLAMADA COMO SENTENCIA
+    //
+    // La llamada se analiza SIN contexto de valor: si la
+    // función devuelve algo, el resultado se descarta, y
+    // llamar a una void es exactamente para esto.
+    // ========================================================
+
+    if (auto* callStatement =
+        dynamic_cast<const CallStatement*>(
+            &statement))
+    {
+        if (!callStatement->call)
+        {
+            semanticErrors.push_back({
+                "llamada como sentencia sin llamada "
+                "en función '" +
+                currentFunction +
+                "'"
+            });
+
+            return;
+        }
+
+        analyzeExpression(
+            *callStatement->call,
+            false);
 
         return;
     }
@@ -1057,7 +1118,8 @@ std::string SemanticAnalyzer::inferExpressionType(
 }
 
 void SemanticAnalyzer::analyzeExpression(
-    const Expression& expression)
+    const Expression& expression,
+    bool valueContext)
 {
     // ========================================================
     // INTEGER
@@ -1485,6 +1547,27 @@ void SemanticAnalyzer::analyzeExpression(
 
         const FunctionDeclaration& function =
             *functionIt->second;
+
+        // ----------------------------------------------------
+        // Una función void no produce valor.
+        //
+        // En contexto de valor (valueContext) usar su llamada
+        // es un error: no hay nada que asignar, sumar ni
+        // devolver. Como sentencia suelta la llamada llega
+        // con valueContext = false y es la forma válida.
+        // ----------------------------------------------------
+
+        if (valueContext &&
+            function.returnType == "void")
+        {
+            semanticErrors.push_back({
+                "la función '" +
+                call->callee +
+                "' es void y no produce un valor"
+            });
+
+            return;
+        }
 
         // ----------------------------------------------------
         // Verificar cantidad de argumentos.

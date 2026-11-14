@@ -60,8 +60,13 @@ private:
     // Expresión
     // --------------------------------------------------------
 
+    // valueContext = false solo para la llamada como
+    // sentencia: ahí el resultado se descarta y una llamada
+    // a una función void es válida. En cualquier otro sitio
+    // la expresión se usa como valor.
     void analyzeExpression(
-        const Expression& expression);
+        const Expression& expression,
+        bool valueContext = true);
 
     // Inferir el tipo de una expresión. Cadena vacía si no se puede
     // determinar (por ejemplo, porque ya existe un error semántico).

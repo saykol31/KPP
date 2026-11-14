@@ -94,7 +94,16 @@ enum class TokenType
     Comma,
     Semicolon,
     ColonColon,
-    Dot
+    Dot,
+
+    // ========================================================
+    // KEYWORDS DE LAS AMPLIACIONES
+    //
+    // Toda palabra clave nueva se añade AL FINAL del enum,
+    // nunca en medio. KwVoid = 39 (Ampliación 1, 2026-11-14).
+    // ========================================================
+
+    KwVoid
 };
 
 struct Token

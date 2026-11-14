@@ -1077,8 +1077,23 @@ void IRGenerator::generateStatement(
 
         if (!returnStatement->expression)
         {
-            throw std::runtime_error(
-                "K++ IR: return sin expresión");
+            // ------------------------------------------------
+            // return; de una función void.
+            //
+            // RETURN sin operando y con valor 0: el backend
+            // emite MOV EAX, 0 y el epílogo normal. El
+            // llamador de una void ignora EAX.
+            // ------------------------------------------------
+
+            function.instructions.push_back({
+                IROpcode::Return,
+                "",
+                "",
+                "",
+                0
+            });
+
+            return;
         }
 
         // ----------------------------------------------------
@@ -1135,6 +1150,30 @@ void IRGenerator::generateStatement(
             "",
             0
         });
+
+        return;
+    }
+
+    // ========================================================
+    // LLAMADA COMO SENTENCIA
+    //
+    // Se genera la llamada y su temporal de resultado se
+    // descarta: nadie lo lee.
+    // ========================================================
+
+    if (auto* callStatement =
+        dynamic_cast<const CallStatement*>(
+            &statement))
+    {
+        if (!callStatement->call)
+        {
+            throw std::runtime_error(
+                "K++ IR: llamada como sentencia sin llamada");
+        }
+
+        generateExpression(
+            *callStatement->call,
+            function);
 
         return;
     }

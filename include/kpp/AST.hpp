@@ -214,6 +214,29 @@ struct AssignmentStatement : Statement
 };
 
 // ============================================================
+// LLAMADA COMO SENTENCIA
+//
+// Envuelve exclusivamente una llamada a función:
+//
+//     pon_hijo1(n, izq);
+//
+// Nodo estrecho por decisión de diseño (2026-11-14): su
+// gramática refleja exactamente su responsabilidad —
+// ninguna otra expresión puede ser sentencia.
+// ============================================================
+
+struct CallStatement : Statement
+{
+    std::unique_ptr<CallExpression> call;
+
+    explicit CallStatement(
+        std::unique_ptr<CallExpression> call)
+        : call(std::move(call))
+    {
+    }
+};
+
+// ============================================================
 // BLOQUE
 // ============================================================
 

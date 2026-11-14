@@ -65,6 +65,9 @@ const char* tokenTypeName(TokenType type)
         case TokenType::KwWhile:
             return "while";
 
+        case TokenType::KwVoid:
+            return "void";
+
         // ========================================================
         // ASSIGNMENT
         // ========================================================
@@ -378,6 +381,20 @@ Token Lexer::identifier()
     {
         return {
             TokenType::KwWhile,
+            text,
+            startLine,
+            startColumn
+        };
+    }
+
+    // --------------------------------------------------------
+    // KEYWORD: void
+    // --------------------------------------------------------
+
+    if (text == "void")
+    {
+        return {
+            TokenType::KwVoid,
             text,
             startLine,
             startColumn

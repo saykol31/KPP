@@ -176,9 +176,24 @@ Parser::parse()
             continue;
         }
 
+        // ----------------------------------------------------
+        // FUNCTION DECLARATION (void)
+        //
+        // Una void nunca es variable global: no pasa por el
+        // desvío de checkAhead de la rama int.
+        // ----------------------------------------------------
+
+        if (check(TokenType::KwVoid))
+        {
+            program->functions.push_back(
+                parseFunction());
+
+            continue;
+        }
+
         throw std::runtime_error(
             "K++: se esperaba una declaración global "
-            "(struct, enum o función int)");
+            "(struct, enum o función)");
     }
 
     return program;
@@ -246,12 +261,23 @@ std::unique_ptr<FunctionDeclaration>
 Parser::parseFunction()
 {
     // --------------------------------------------------------
-    // int
+    // tipo de retorno: int o void
     // --------------------------------------------------------
 
-    expect(
-        TokenType::KwInt,
-        "se esperaba 'int'");
+    std::string returnType;
+
+    if (match(TokenType::KwVoid))
+    {
+        returnType = "void";
+    }
+    else
+    {
+        expect(
+            TokenType::KwInt,
+            "se esperaba 'int' o 'void'");
+
+        returnType = "int";
+    }
 
 
     // --------------------------------------------------------
@@ -364,7 +390,7 @@ Parser::parseFunction()
     auto function =
         std::make_unique<FunctionDeclaration>();
 
-    function->returnType = "int";
+    function->returnType = returnType;
     function->name = name;
     function->parameters = std::move(parameters);
     function->body = std::move(body);
@@ -747,6 +773,48 @@ Parser::parseStatement()
     }
 
     // ========================================================
+    // LLAMADA COMO SENTENCIA
+    //
+    // pon_hijo1(n, izq);
+    //
+    // Nodo estrecho: solo una llamada puede ser sentencia.
+    // Se reconoce por identificador seguido de '(' y el
+    // resultado de parseExpression debe ser exactamente un
+    // CallExpression — una expresión mayor (llamada + algo)
+    // no es una llamada suelta y se rechaza.
+    // ========================================================
+
+    if (check(TokenType::Identifier) &&
+        checkAhead(1, TokenType::LParen))
+    {
+        auto expression =
+            parseExpression();
+
+        auto* callExpression =
+            dynamic_cast<CallExpression*>(
+                expression.get());
+
+        if (callExpression == nullptr)
+        {
+            throw std::runtime_error(
+                "K++: solo una llamada a función "
+                "puede ser sentencia");
+        }
+
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después de la llamada");
+
+        std::unique_ptr<CallExpression> call(
+            callExpression);
+
+        expression.release();
+
+        return std::make_unique<CallStatement>(
+            std::move(call));
+    }
+
+    // ========================================================
     // ASSIGNMENT
     //
     // x = x - 1;
@@ -909,6 +977,19 @@ Parser::parseStatement()
 
     if (match(TokenType::KwReturn))
     {
+        // ----------------------------------------------------
+        // return; — sin expresión.
+        //
+        // Solo es válido dentro de una función void; esa
+        // regla la pone el analizador semántico.
+        // ----------------------------------------------------
+
+        if (match(TokenType::Semicolon))
+        {
+            return std::make_unique<ReturnStatement>(
+                nullptr);
+        }
+
         auto expression =
             parseExpression();
 
