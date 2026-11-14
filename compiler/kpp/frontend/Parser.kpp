@@ -184,7 +184,10 @@ enum TokenType
     Comma,
     Semicolon,
     ColonColon,
-    Dot
+    Dot,
+
+    // AMPLIACIONES (al final, nunca en medio)
+    KwVoid
 };
 
 // Tabla de clases de nodo: copia IDENTICA del enum de
@@ -215,7 +218,10 @@ enum NodeKind
     VariableExpression,
     ArrayAccessExpression,
     CallExpression,
-    BinaryExpression
+    BinaryExpression,
+
+    // AMPLIACIONES (al final, nunca en medio)
+    CallStatement
 };
 
 // ============================================================
@@ -1488,6 +1494,29 @@ int parse_sentencia()
         }
     }
 
+    // Llamada como sentencia: nombre(args);
+    // (Ampliacion 1, NodeKind::CallStatement, el
+    // 18). Se reconoce por Identifier seguido de
+    // '(' — el mismo mira(1, ...) de la declaracion
+    // de tipo personalizado. La rama va ANTES de la
+    // asignacion y DESPUES de print_int (que tambien
+    // es Identifier + '(' y ya se reconocio arriba
+    // por su texto). parse_primario construye el
+    // CallExpression; este nodo lo envuelve y la
+    // llamada queda en hijo1.
+    if (t == TokenType::Identifier)
+    {
+        if (mira(1, TokenType::LParen) == 1)
+        {
+            int llamada = parse_primario();
+            int ok = espera(TokenType::Semicolon);
+            int n = emite(NodeKind::CallStatement, ini);
+            int a = pon_hijo1(n, llamada);
+            nsent = nsent + 1;
+            return n;
+        }
+    }
+
     // Asignacion: nombre = expr;  /  nombre[i] = expr;
     // El nombre queda en nval (indice de su token); el
     // indice, si lo hay, en hijo1; el valor en naux
@@ -1617,7 +1646,19 @@ int pon_param(int tok)
 int parse_funcion()
 {
     int ini = pos;
-    int ok = espera(TokenType::KwInt);
+    // El tipo de retorno puede ser int o void
+    // (Ampliacion 1): el token del tipo ya queda
+    // en ini, y el semantico lo lee de nini como
+    // hasta ahora.
+    int ok = 0;
+    if (es(TokenType::KwVoid) == 1)
+    {
+        ok = espera(TokenType::KwVoid);
+    }
+    else
+    {
+        ok = espera(TokenType::KwInt);
+    }
     int nombre = pos;
     int ok2 = espera(TokenType::Identifier);
     int ok3 = espera(TokenType::LParen);
@@ -2124,6 +2165,14 @@ int parse_programa()
         }
         if (hecho == 0)
         {
+            if (es(TokenType::KwVoid) == 1)
+            {
+                d = parse_funcion();
+                hecho = 1;
+            }
+        }
+        if (hecho == 0)
+        {
             errores = errores + 1;
             int c = consume();
         }
@@ -2308,6 +2357,19 @@ int escanea()
                             if (fuente[inicio + 3] == 101)
                             {
                                 tipo = 11;
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 118)
+                {
+                    if (fuente[inicio + 1] == 111)
+                    {
+                        if (fuente[inicio + 2] == 105)
+                        {
+                            if (fuente[inicio + 3] == 100)
+                            {
+                                tipo = 39;
                             }
                         }
                     }
@@ -3250,6 +3312,31 @@ int carga_fuente10()
 
 // Deja el estado compartido como recien nacido, para
 // correr las demas tablas en el mismo programa.
+int carga_fuente13()
+{
+    int fuente[1024];
+    fuente[0] = 118;  fuente[1] = 111;  fuente[2] = 105;  fuente[3] = 100;  fuente[4] = 32;  fuente[5] = 115;  fuente[6] = 97;  fuente[7] = 108;
+    fuente[8] = 117;  fuente[9] = 100;  fuente[10] = 97;  fuente[11] = 40;  fuente[12] = 41;  fuente[13] = 10;  fuente[14] = 123;  fuente[15] = 10;
+    fuente[16] = 32;  fuente[17] = 32;  fuente[18] = 32;  fuente[19] = 32;  fuente[20] = 112;  fuente[21] = 114;  fuente[22] = 105;  fuente[23] = 110;
+    fuente[24] = 116;  fuente[25] = 40;  fuente[26] = 34;  fuente[27] = 72;  fuente[28] = 79;  fuente[29] = 76;  fuente[30] = 65;  fuente[31] = 34;
+    fuente[32] = 41;  fuente[33] = 59;  fuente[34] = 10;  fuente[35] = 125;  fuente[36] = 10;  fuente[37] = 10;  fuente[38] = 105;  fuente[39] = 110;
+    fuente[40] = 116;  fuente[41] = 32;  fuente[42] = 115;  fuente[43] = 117;  fuente[44] = 109;  fuente[45] = 97;  fuente[46] = 40;  fuente[47] = 105;
+    fuente[48] = 110;  fuente[49] = 116;  fuente[50] = 32;  fuente[51] = 97;  fuente[52] = 44;  fuente[53] = 32;  fuente[54] = 105;  fuente[55] = 110;
+    fuente[56] = 116;  fuente[57] = 32;  fuente[58] = 98;  fuente[59] = 41;  fuente[60] = 10;  fuente[61] = 123;  fuente[62] = 10;  fuente[63] = 32;
+    fuente[64] = 32;  fuente[65] = 32;  fuente[66] = 32;  fuente[67] = 114;  fuente[68] = 101;  fuente[69] = 116;  fuente[70] = 117;  fuente[71] = 114;
+    fuente[72] = 110;  fuente[73] = 32;  fuente[74] = 97;  fuente[75] = 32;  fuente[76] = 43;  fuente[77] = 32;  fuente[78] = 98;  fuente[79] = 59;
+    fuente[80] = 10;  fuente[81] = 125;  fuente[82] = 10;  fuente[83] = 10;  fuente[84] = 105;  fuente[85] = 110;  fuente[86] = 116;  fuente[87] = 32;
+    fuente[88] = 109;  fuente[89] = 97;  fuente[90] = 105;  fuente[91] = 110;  fuente[92] = 40;  fuente[93] = 41;  fuente[94] = 10;  fuente[95] = 123;
+    fuente[96] = 10;  fuente[97] = 32;  fuente[98] = 32;  fuente[99] = 32;  fuente[100] = 32;  fuente[101] = 115;  fuente[102] = 97;  fuente[103] = 108;
+    fuente[104] = 117;  fuente[105] = 100;  fuente[106] = 97;  fuente[107] = 40;  fuente[108] = 41;  fuente[109] = 59;  fuente[110] = 10;  fuente[111] = 32;
+    fuente[112] = 32;  fuente[113] = 32;  fuente[114] = 32;  fuente[115] = 115;  fuente[116] = 117;  fuente[117] = 109;  fuente[118] = 97;  fuente[119] = 40;
+    fuente[120] = 50;  fuente[121] = 44;  fuente[122] = 32;  fuente[123] = 51;  fuente[124] = 41;  fuente[125] = 59;  fuente[126] = 10;  fuente[127] = 32;
+    fuente[128] = 32;  fuente[129] = 32;  fuente[130] = 32;  fuente[131] = 114;  fuente[132] = 101;  fuente[133] = 116;  fuente[134] = 117;  fuente[135] = 114;
+    fuente[136] = 110;  fuente[137] = 32;  fuente[138] = 48;  fuente[139] = 59;  fuente[140] = 10;  fuente[141] = 125;  fuente[142] = 10;
+    total = 143;
+    return 0;
+}
+
 int reinicia()
 {
     pos = 0;
@@ -3449,6 +3536,22 @@ int main()
     print_int(errores);
     print_int(pos);
     print_int(nnodos);
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(alcanzables());
+
+    int r11 = reinicia();
+    int cf13 = carga_fuente13();
+    int es13 = escanea();
+    int p13 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(cuenta(NodeKind::CallStatement));
+    print_int(cuenta(NodeKind::CallExpression));
+    print_int(cuenta(NodeKind::ReturnStatement));
     print_int(fin_programa());
     print_int(bloques_abiertos());
     print_int(alcanzables());

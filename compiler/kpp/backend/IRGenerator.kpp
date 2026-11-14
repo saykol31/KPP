@@ -236,7 +236,10 @@ enum NodeKind
     VariableExpression,
     ArrayAccessExpression,
     CallExpression,
-    BinaryExpression
+    BinaryExpression,
+
+    // AMPLIACIONES (al final, nunca en medio)
+    CallStatement
 };
 
 // ============================================================
@@ -252,6 +255,9 @@ int contvar;
 int nvar;
 int nivel;
 int netiq;
+// El eco de la Ampliacion 1: 1 si la funcion que
+// se esta generando es void.
+int fun_es_void;
 
 // ============================================================
 // LA PISCINA DE TEXTO.
@@ -610,6 +616,39 @@ int capacidad_de(int tok)
         return t;
     }
     return 0;
+}
+
+// La funcion es void si el texto de su token de
+// tipo es "void" (Ampliacion 1): la misma forma
+// de es_file_read — largo primero, caracteres
+// despues (118, 111, 105, 100).
+int es_void(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    if (tok_largo[tok] != 4)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    if (fuente[base + 0] != 118)
+    {
+        return 0;
+    }
+    if (fuente[base + 1] != 111)
+    {
+        return 0;
+    }
+    if (fuente[base + 2] != 105)
+    {
+        return 0;
+    }
+    if (fuente[base + 3] != 100)
+    {
+        return 0;
+    }
+    return 1;
 }
 
 int es_file_read(int tok)
@@ -1091,8 +1130,16 @@ int genera_sentencia(int s)
         int e = nhijo1[s];
         if (e < 0)
         {
-            // Sin expresion: el analizador ya lo
-            // acuso (codigo 13); aqui no se emite.
+            // Sin expresion: en una funcion void es
+            // el return; de la Ampliacion 1 y SI se
+            // emite, como Return de valor 0 (el mismo
+            // que emite el Stage 0). En una int el
+            // analizador ya lo acuso (codigo 13) y
+            // aqui no se emite.
+            if (fun_es_void == 1)
+            {
+                int e0 = emite_ir(IROpcode::Return, 0, 0, 0, 0, 0);
+            }
             return 0;
         }
         int ke = nkind[e];
@@ -1106,6 +1153,14 @@ int genera_sentencia(int s)
         int e20 = emite_ir(IROpcode::Return, 0, t, 0, 0, 0);
         return 0;
     }
+    if (k == NodeKind::CallStatement)
+    {
+        // La llamada como sentencia (Ampliacion 1):
+        // la llamada se genera y su temporal queda
+        // sin leer — descartado, como en el Stage 0.
+        int tc = genera_expresion(nhijo1[s]);
+        return 0;
+    }
     return 0;
 }
 
@@ -1115,6 +1170,7 @@ int genera_sentencia(int s)
 
 int genera_funcion(int f)
 {
+    int nini[256];
     int nhijo1[256];
     int nsig[256];
     int nval[256];
@@ -1124,6 +1180,7 @@ int genera_funcion(int f)
     ntemp = 0;
     contvar = 0;
     netiq = 0;
+    fun_es_void = es_void(nini[f]);
     int ea = entra_ambito();
     int nt = nval[f];
     int nombre = ref_token(nt);
@@ -5410,6 +5467,318 @@ int inicia_ir9()
 // MAIN — la sonda de las IR-1, IR-2 e IR-3.
 // ============================================================
 
+// ============================================================
+// SONDA 10 — EL ECO DE VOID.
+//
+// void saluda() { print("HOLA"); return; }
+// int main() { saluda(); return 0; }
+//
+// La corriente gana dos emisiones nuevas: el CALL de
+// la llamada-sentencia de main y el RETURN de valor 0
+// del return; pelado de saluda (antes de este eco un
+// Return sin expresion no emita nada). Orden: BEGIN
+// saluda, STRING_CONST, PRINT, RETURN, END, BEGIN
+// main, CALL, RETURN, END.
+// ============================================================
+
+int inicia_ir10()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 118;
+    fuente[1] = 111;
+    fuente[2] = 105;
+    fuente[3] = 100;
+    fuente[4] = 32;
+    fuente[5] = 115;
+    fuente[6] = 97;
+    fuente[7] = 108;
+    fuente[8] = 117;
+    fuente[9] = 100;
+    fuente[10] = 97;
+    fuente[11] = 40;
+    fuente[12] = 41;
+    fuente[13] = 32;
+    fuente[14] = 123;
+    fuente[15] = 32;
+    fuente[16] = 112;
+    fuente[17] = 114;
+    fuente[18] = 105;
+    fuente[19] = 110;
+    fuente[20] = 116;
+    fuente[21] = 40;
+    fuente[22] = 34;
+    fuente[23] = 72;
+    fuente[24] = 79;
+    fuente[25] = 76;
+    fuente[26] = 65;
+    fuente[27] = 34;
+    fuente[28] = 41;
+    fuente[29] = 59;
+    fuente[30] = 32;
+    fuente[31] = 114;
+    fuente[32] = 101;
+    fuente[33] = 116;
+    fuente[34] = 117;
+    fuente[35] = 114;
+    fuente[36] = 110;
+    fuente[37] = 59;
+    fuente[38] = 32;
+    fuente[39] = 125;
+    fuente[40] = 32;
+    fuente[41] = 105;
+    fuente[42] = 110;
+    fuente[43] = 116;
+    fuente[44] = 32;
+    fuente[45] = 109;
+    fuente[46] = 97;
+    fuente[47] = 105;
+    fuente[48] = 110;
+    fuente[49] = 40;
+    fuente[50] = 41;
+    fuente[51] = 32;
+    fuente[52] = 123;
+    fuente[53] = 32;
+    fuente[54] = 115;
+    fuente[55] = 97;
+    fuente[56] = 108;
+    fuente[57] = 117;
+    fuente[58] = 100;
+    fuente[59] = 97;
+    fuente[60] = 40;
+    fuente[61] = 41;
+    fuente[62] = 59;
+    fuente[63] = 32;
+    fuente[64] = 114;
+    fuente[65] = 101;
+    fuente[66] = 116;
+    fuente[67] = 117;
+    fuente[68] = 114;
+    fuente[69] = 110;
+    fuente[70] = 32;
+    fuente[71] = 48;
+    fuente[72] = 59;
+    fuente[73] = 32;
+    fuente[74] = 125;
+    tok_tipo[0] = 39;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 4;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 5;
+    tok_largo[1] = 6;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 29;
+    tok_inicio[2] = 11;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 30;
+    tok_inicio[3] = 12;
+    tok_largo[3] = 1;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 33;
+    tok_inicio[4] = 14;
+    tok_largo[4] = 1;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 9;
+    tok_inicio[5] = 16;
+    tok_largo[5] = 5;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 29;
+    tok_inicio[6] = 21;
+    tok_largo[6] = 1;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 3;
+    tok_inicio[7] = 23;
+    tok_largo[7] = 4;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 30;
+    tok_inicio[8] = 28;
+    tok_largo[8] = 1;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 36;
+    tok_inicio[9] = 29;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 8;
+    tok_inicio[10] = 31;
+    tok_largo[10] = 6;
+    tok_valor[10] = 0;
+    tok_tipo[11] = 36;
+    tok_inicio[11] = 37;
+    tok_largo[11] = 1;
+    tok_valor[11] = 0;
+    tok_tipo[12] = 34;
+    tok_inicio[12] = 39;
+    tok_largo[12] = 1;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 4;
+    tok_inicio[13] = 41;
+    tok_largo[13] = 3;
+    tok_valor[13] = 0;
+    tok_tipo[14] = 1;
+    tok_inicio[14] = 45;
+    tok_largo[14] = 4;
+    tok_valor[14] = 0;
+    tok_tipo[15] = 29;
+    tok_inicio[15] = 49;
+    tok_largo[15] = 1;
+    tok_valor[15] = 0;
+    tok_tipo[16] = 30;
+    tok_inicio[16] = 50;
+    tok_largo[16] = 1;
+    tok_valor[16] = 0;
+    tok_tipo[17] = 33;
+    tok_inicio[17] = 52;
+    tok_largo[17] = 1;
+    tok_valor[17] = 0;
+    tok_tipo[18] = 1;
+    tok_inicio[18] = 54;
+    tok_largo[18] = 6;
+    tok_valor[18] = 0;
+    tok_tipo[19] = 29;
+    tok_inicio[19] = 60;
+    tok_largo[19] = 1;
+    tok_valor[19] = 0;
+    tok_tipo[20] = 30;
+    tok_inicio[20] = 61;
+    tok_largo[20] = 1;
+    tok_valor[20] = 0;
+    tok_tipo[21] = 36;
+    tok_inicio[21] = 62;
+    tok_largo[21] = 1;
+    tok_valor[21] = 0;
+    tok_tipo[22] = 8;
+    tok_inicio[22] = 64;
+    tok_largo[22] = 6;
+    tok_valor[22] = 0;
+    tok_tipo[23] = 2;
+    tok_inicio[23] = 71;
+    tok_largo[23] = 1;
+    tok_valor[23] = 0;
+    tok_tipo[24] = 36;
+    tok_inicio[24] = 72;
+    tok_largo[24] = 1;
+    tok_valor[24] = 0;
+    tok_tipo[25] = 34;
+    tok_inicio[25] = 74;
+    tok_largo[25] = 2;
+    tok_valor[25] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 26;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 1;
+    nini[1] = 0;
+    nfin[1] = 0;
+    nhijo1[1] = 2;
+    nsig[1] = 6;
+    nval[1] = 1;
+    naux[1] = 0;
+    nsize[1] = 0;
+    nkind[2] = 4;
+    nini[2] = 0;
+    nfin[2] = 0;
+    nhijo1[2] = 4;
+    nsig[2] = -1;
+    nval[2] = 0;
+    naux[2] = -1;
+    nsize[2] = 0;
+    nkind[3] = 13;
+    nini[3] = 7;
+    nfin[3] = 7;
+    nhijo1[3] = -1;
+    nsig[3] = -1;
+    nval[3] = 7;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 10;
+    nini[4] = 5;
+    nfin[4] = 5;
+    nhijo1[4] = 3;
+    nsig[4] = 5;
+    nval[4] = 0;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 9;
+    nini[5] = 10;
+    nfin[5] = 10;
+    nhijo1[5] = -1;
+    nsig[5] = -1;
+    nval[5] = 0;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 1;
+    nini[6] = 13;
+    nfin[6] = 13;
+    nhijo1[6] = 7;
+    nsig[6] = -1;
+    nval[6] = 14;
+    naux[6] = 0;
+    nsize[6] = 0;
+    nkind[7] = 4;
+    nini[7] = 0;
+    nfin[7] = 0;
+    nhijo1[7] = 9;
+    nsig[7] = -1;
+    nval[7] = 0;
+    naux[7] = -1;
+    nsize[7] = 0;
+    nkind[8] = 16;
+    nini[8] = 18;
+    nfin[8] = 18;
+    nhijo1[8] = -1;
+    nsig[8] = -1;
+    nval[8] = 18;
+    naux[8] = -1;
+    nsize[8] = 0;
+    nkind[9] = 18;
+    nini[9] = 18;
+    nfin[9] = 18;
+    nhijo1[9] = 8;
+    nsig[9] = 11;
+    nval[9] = 0;
+    naux[9] = -1;
+    nsize[9] = 0;
+    nkind[10] = 12;
+    nini[10] = 23;
+    nfin[10] = 23;
+    nhijo1[10] = -1;
+    nsig[10] = -1;
+    nval[10] = 0;
+    naux[10] = -1;
+    nsize[10] = 0;
+    nkind[11] = 9;
+    nini[11] = 22;
+    nfin[11] = 22;
+    nhijo1[11] = 10;
+    nsig[11] = -1;
+    nval[11] = 0;
+    naux[11] = -1;
+    nsize[11] = 0;
+    tok_count = 26;
+    nnodos = 12;
+    return 0;
+}
+
 int main()
 {
     int a1 = inicia_ir1();
@@ -5447,6 +5816,10 @@ int main()
     int a9 = inicia_ir9();
     int g9 = genera();
     int i9 = imprime_ir();
+
+    int a10 = inicia_ir10();
+    int g10 = genera();
+    int i10 = imprime_ir();
 
     return 0;
 }

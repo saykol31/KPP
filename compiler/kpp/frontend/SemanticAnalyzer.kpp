@@ -43,7 +43,10 @@ enum NodeKind
     VariableExpression,
     ArrayAccessExpression,
     CallExpression,
-    BinaryExpression
+    BinaryExpression,
+
+    // AMPLIACIONES (al final, nunca en medio)
+    CallStatement
 };
 
 // Tabla de tipos de token: la lista del Lexer
@@ -95,7 +98,10 @@ enum TokenType
     Comma,
     Semicolon,
     ColonColon,
-    Dot
+    Dot,
+
+    // AMPLIACIONES (al final, nunca en medio)
+    KwVoid
 };
 
 // ============================================================
@@ -182,6 +188,9 @@ enum TokenType
 //     49 la cantidad de file_write supera la capacidad
 //     50 una tabla del analizador se lleno (tope 256)
 //     51 el intervalo de una tabla lateral es invalido
+//     52 (reservado: break fuera de while, Ampliacion 2)
+//     53 return con valor en una funcion void
+//     54 el valor de una funcion void usado como valor
 //
 // REPRESENTACION DE TIPOS EN LA SA-3.
 //
@@ -233,6 +242,11 @@ int nsglobal;
 int nsfunc;
 int hay_main;
 int serr_count;
+// El eco de la Ampliacion 1: el token del tipo de
+// retorno de la funcion bajo analisis, y la bandera
+// de llamada en posicion de sentencia.
+int tipo_ret_actual;
+int llamada_en_sentencia;
 
 int anota_error(int codigo)
 {
@@ -527,6 +541,7 @@ int registra_funciones()
 int analiza()
 {
     serr_count = 0;
+    llamada_en_sentencia = 0;
     nsstruct = 0;
     nsglobal = 0;
     nsfunc = 0;
@@ -711,6 +726,43 @@ int es_int(int tok)
         return 0;
     }
     if (c2 != 116)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+// La companera de es_int para el tipo void
+// (Ampliacion 1): el texto del token es "void",
+// largo 4 y caracteres 118, 111, 105, 100.
+int es_void(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 4)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    if (c0 != 118)
+    {
+        return 0;
+    }
+    if (c1 != 111)
+    {
+        return 0;
+    }
+    if (c2 != 105)
+    {
+        return 0;
+    }
+    if (c3 != 100)
     {
         return 0;
     }
@@ -956,8 +1008,18 @@ int analiza_sentencia(int s)
     {
         if (nhijo1[s] == 0 - 1)
         {
-            int e = anota_error(13);
+            // return; — valido solo en una funcion
+            // void (Ampliacion 1); en una int sigue
+            // acusando el 13 de siempre.
+            if (es_void(tipo_ret_actual) == 0)
+            {
+                int e = anota_error(13);
+            }
             return 0;
+        }
+        if (es_void(tipo_ret_actual) == 1)
+        {
+            int e2 = anota_error(53);
         }
         int a = analiza_expresion(nhijo1[s]);
         return 0;
@@ -982,6 +1044,22 @@ int analiza_sentencia(int s)
         int a = analiza_expresion(nhijo1[s]);
         return 0;
     }
+    if (nkind[s] == NodeKind::CallStatement)
+    {
+        // La llamada como sentencia (Ampliacion 1):
+        // la llamada de hijo1 se analiza con la
+        // bandera de sentencia levantada. Su valor,
+        // si lo hay, se descarta; y si la funcion es
+        // void, esta es su unica posicion legal.
+        if (nhijo1[s] == 0 - 1)
+        {
+            return 0;
+        }
+        llamada_en_sentencia = 1;
+        int a = analiza_expresion(nhijo1[s]);
+        llamada_en_sentencia = 0;
+        return 0;
+    }
     return 0;
 }
 
@@ -997,9 +1075,13 @@ int analiza_funcion(int f)
     nivel = 0;
     int e0 = entra_ambito();
     int tipo_ret = nini[f];
+    tipo_ret_actual = tipo_ret;
     if (es_int(tipo_ret) == 0)
     {
-        int e = anota_error(6);
+        if (es_void(tipo_ret) == 0)
+        {
+            int e = anota_error(6);
+        }
     }
     int pini = naux[f];
     int pcant = nsize[f];
@@ -1036,7 +1118,14 @@ int analiza_funcion(int f)
         }
         else
         {
-            int r = registra_simbolo(t, tipo_ret, 0);
+            // El parametro se registra con el token de
+            // SU tipo: el int que precede a su nombre en
+            // la tabla (partok solo guarda nombres, y el
+            // diseno ya lo decia: "el token int de la
+            // cabecera"). Con el tipo de retorno de la
+            // funcion, un parametro de una void quedaria
+            // registrado como si fuera void.
+            int r = registra_simbolo(t, t - 1, 0);
         }
         j = j + 1;
     }
@@ -1731,6 +1820,12 @@ int analiza_expresion(int n)
     if (nkind[n] == NodeKind::CallExpression)
     {
         int cal = nval[n];
+        // La bandera de sentencia se consume al
+        // entrar: vale para ESTA llamada y no para
+        // las que cuelguen de sus argumentos, que
+        // ya son contexto de valor.
+        int en_sent = llamada_en_sentencia;
+        llamada_en_sentencia = 0;
         int a1 = nhijo1[n];
         int nargs = 0;
         int x = a1;
@@ -1850,6 +1945,15 @@ int analiza_expresion(int n)
             return 0;
         }
         int fd = nodo_de_funcion(cal);
+        if (en_sent == 0)
+        {
+            int nini[256];
+            if (es_void(nini[fd]) == 1)
+            {
+                int e3 = anota_error(54);
+                return 0;
+            }
+        }
         if (nargs != nsize[fd])
         {
             int e2 = anota_error(34);
@@ -8333,6 +8437,432 @@ int inicia_nodos18()
     return 0;
 }
 
+// ============================================================
+// SONDA 19 — EL ECO DE VOID, EL CASO VALIDO.
+//
+// void saluda() { print("HOLA"); }
+// int main() { saluda(); return 0; }
+//
+// Fila esperada: 0, 0, 2, 0 (sin errores: la llamada
+// a la void vive en su CallStatement y el return; de
+// la void no acusa nada).
+// ============================================================
+
+int inicia_nodos19()
+{
+    int fuente[1024];
+    fuente[0] = 118;
+    fuente[1] = 111;
+    fuente[2] = 105;
+    fuente[3] = 100;
+    fuente[4] = 32;
+    fuente[5] = 115;
+    fuente[6] = 97;
+    fuente[7] = 108;
+    fuente[8] = 117;
+    fuente[9] = 100;
+    fuente[10] = 97;
+    fuente[11] = 40;
+    fuente[12] = 41;
+    fuente[13] = 32;
+    fuente[14] = 123;
+    fuente[15] = 32;
+    fuente[16] = 112;
+    fuente[17] = 114;
+    fuente[18] = 105;
+    fuente[19] = 110;
+    fuente[20] = 116;
+    fuente[21] = 40;
+    fuente[22] = 34;
+    fuente[23] = 72;
+    fuente[24] = 79;
+    fuente[25] = 76;
+    fuente[26] = 65;
+    fuente[27] = 34;
+    fuente[28] = 41;
+    fuente[29] = 59;
+    fuente[30] = 32;
+    fuente[31] = 125;
+    fuente[32] = 32;
+    fuente[33] = 105;
+    fuente[34] = 110;
+    fuente[35] = 116;
+    fuente[36] = 32;
+    fuente[37] = 109;
+    fuente[38] = 97;
+    fuente[39] = 105;
+    fuente[40] = 110;
+    fuente[41] = 40;
+    fuente[42] = 41;
+    fuente[43] = 32;
+    fuente[44] = 123;
+    fuente[45] = 32;
+    fuente[46] = 115;
+    fuente[47] = 97;
+    fuente[48] = 108;
+    fuente[49] = 117;
+    fuente[50] = 100;
+    fuente[51] = 97;
+    fuente[52] = 40;
+    fuente[53] = 41;
+    fuente[54] = 59;
+    fuente[55] = 32;
+    fuente[56] = 114;
+    fuente[57] = 101;
+    fuente[58] = 116;
+    fuente[59] = 117;
+    fuente[60] = 114;
+    fuente[61] = 110;
+    fuente[62] = 32;
+    fuente[63] = 48;
+    fuente[64] = 59;
+    fuente[65] = 32;
+    fuente[66] = 125;
+    tok_count = 24;
+    int tok_tipo[256];
+    tok_tipo[0] = 39;
+    tok_tipo[1] = 1;
+    tok_tipo[2] = 29;
+    tok_tipo[3] = 30;
+    tok_tipo[4] = 33;
+    tok_tipo[5] = 9;
+    tok_tipo[6] = 29;
+    tok_tipo[7] = 3;
+    tok_tipo[8] = 30;
+    tok_tipo[9] = 36;
+    tok_tipo[10] = 34;
+    tok_tipo[11] = 4;
+    tok_tipo[12] = 1;
+    tok_tipo[13] = 29;
+    tok_tipo[14] = 30;
+    tok_tipo[15] = 33;
+    tok_tipo[16] = 1;
+    tok_tipo[17] = 29;
+    tok_tipo[18] = 30;
+    tok_tipo[19] = 36;
+    tok_tipo[20] = 8;
+    tok_tipo[21] = 2;
+    tok_tipo[22] = 36;
+    tok_tipo[23] = 34;
+    int tok_inicio[256];
+    tok_inicio[0] = 0;
+    tok_inicio[1] = 5;
+    tok_inicio[2] = 11;
+    tok_inicio[3] = 12;
+    tok_inicio[4] = 14;
+    tok_inicio[5] = 16;
+    tok_inicio[6] = 21;
+    tok_inicio[7] = 23;
+    tok_inicio[8] = 28;
+    tok_inicio[9] = 29;
+    tok_inicio[10] = 31;
+    tok_inicio[11] = 33;
+    tok_inicio[12] = 37;
+    tok_inicio[13] = 41;
+    tok_inicio[14] = 42;
+    tok_inicio[15] = 44;
+    tok_inicio[16] = 46;
+    tok_inicio[17] = 52;
+    tok_inicio[18] = 53;
+    tok_inicio[19] = 54;
+    tok_inicio[20] = 56;
+    tok_inicio[21] = 63;
+    tok_inicio[22] = 64;
+    tok_inicio[23] = 66;
+    int tok_largo[256];
+    tok_largo[0] = 4;
+    tok_largo[1] = 6;
+    tok_largo[2] = 1;
+    tok_largo[3] = 1;
+    tok_largo[4] = 1;
+    tok_largo[5] = 5;
+    tok_largo[6] = 1;
+    tok_largo[7] = 4;
+    tok_largo[8] = 1;
+    tok_largo[9] = 1;
+    tok_largo[10] = 1;
+    tok_largo[11] = 3;
+    tok_largo[12] = 4;
+    tok_largo[13] = 1;
+    tok_largo[14] = 1;
+    tok_largo[15] = 1;
+    tok_largo[16] = 6;
+    tok_largo[17] = 1;
+    tok_largo[18] = 1;
+    tok_largo[19] = 1;
+    tok_largo[20] = 6;
+    tok_largo[21] = 1;
+    tok_largo[22] = 1;
+    tok_largo[23] = 2;
+    int tok_valor[256];
+    tok_valor[0] = 0;
+    tok_valor[1] = 0;
+    tok_valor[2] = 0;
+    tok_valor[3] = 0;
+    tok_valor[4] = 0;
+    tok_valor[5] = 0;
+    tok_valor[6] = 0;
+    tok_valor[7] = 0;
+    tok_valor[8] = 0;
+    tok_valor[9] = 0;
+    tok_valor[10] = 0;
+    tok_valor[11] = 0;
+    tok_valor[12] = 0;
+    tok_valor[13] = 0;
+    tok_valor[14] = 0;
+    tok_valor[15] = 0;
+    tok_valor[16] = 0;
+    tok_valor[17] = 0;
+    tok_valor[18] = 0;
+    tok_valor[19] = 0;
+    tok_valor[20] = 0;
+    tok_valor[21] = 0;
+    tok_valor[22] = 0;
+    tok_valor[23] = 0;
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    nnodos = 11;
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    nkind[0] = 0; nini[0] = 0; nfin[0] = 24; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = 1; nini[1] = 0; nfin[1] = 0; nhijo1[1] = 2; nsig[1] = 5; nval[1] = 1; naux[1] = 0; nsize[1] = 0;
+    nkind[2] = 4; nini[2] = 0; nfin[2] = 0; nhijo1[2] = 4; nsig[2] = -1; nval[2] = 0; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = 13; nini[3] = 7; nfin[3] = 7; nhijo1[3] = -1; nsig[3] = -1; nval[3] = 7; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = 10; nini[4] = 5; nfin[4] = 5; nhijo1[4] = 3; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = 1; nini[5] = 11; nfin[5] = 11; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 12; naux[5] = 0; nsize[5] = 0;
+    nkind[6] = 4; nini[6] = 0; nfin[6] = 0; nhijo1[6] = 8; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = 16; nini[7] = 16; nfin[7] = 16; nhijo1[7] = -1; nsig[7] = -1; nval[7] = 16; naux[7] = -1; nsize[7] = 0;
+    nkind[8] = 18; nini[8] = 16; nfin[8] = 16; nhijo1[8] = 7; nsig[8] = 10; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = 12; nini[9] = 21; nfin[9] = 21; nhijo1[9] = -1; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = 9; nini[10] = 20; nfin[10] = 20; nhijo1[10] = 9; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
+    return 0;
+}
+
+// ============================================================
+// SONDA 20 — EL ECO DE VOID, LOS DOS RECHAZOS.
+//
+// void saluda() { return 5; }
+// int main() { int x = saluda(); return 0; }
+//
+// Fila esperada: 0, 0, 2, 3, 53, 54, 16 — el 53 por
+// el return con valor en la void, el 54 por usar su
+// valor en el inicializador, y el 16 porque ese
+// inicializador ademas no es del tipo declarado
+// (el chequeo de tipos de la declaracion, que ya
+// existia, tambien lo acusa).
+// ============================================================
+
+int inicia_nodos20()
+{
+    int fuente[1024];
+    fuente[0] = 118;
+    fuente[1] = 111;
+    fuente[2] = 105;
+    fuente[3] = 100;
+    fuente[4] = 32;
+    fuente[5] = 115;
+    fuente[6] = 97;
+    fuente[7] = 108;
+    fuente[8] = 117;
+    fuente[9] = 100;
+    fuente[10] = 97;
+    fuente[11] = 40;
+    fuente[12] = 41;
+    fuente[13] = 32;
+    fuente[14] = 123;
+    fuente[15] = 32;
+    fuente[16] = 114;
+    fuente[17] = 101;
+    fuente[18] = 116;
+    fuente[19] = 117;
+    fuente[20] = 114;
+    fuente[21] = 110;
+    fuente[22] = 32;
+    fuente[23] = 53;
+    fuente[24] = 59;
+    fuente[25] = 32;
+    fuente[26] = 125;
+    fuente[27] = 32;
+    fuente[28] = 105;
+    fuente[29] = 110;
+    fuente[30] = 116;
+    fuente[31] = 32;
+    fuente[32] = 109;
+    fuente[33] = 97;
+    fuente[34] = 105;
+    fuente[35] = 110;
+    fuente[36] = 40;
+    fuente[37] = 41;
+    fuente[38] = 32;
+    fuente[39] = 123;
+    fuente[40] = 32;
+    fuente[41] = 105;
+    fuente[42] = 110;
+    fuente[43] = 116;
+    fuente[44] = 32;
+    fuente[45] = 120;
+    fuente[46] = 32;
+    fuente[47] = 61;
+    fuente[48] = 32;
+    fuente[49] = 115;
+    fuente[50] = 97;
+    fuente[51] = 108;
+    fuente[52] = 117;
+    fuente[53] = 100;
+    fuente[54] = 97;
+    fuente[55] = 40;
+    fuente[56] = 41;
+    fuente[57] = 59;
+    fuente[58] = 32;
+    fuente[59] = 114;
+    fuente[60] = 101;
+    fuente[61] = 116;
+    fuente[62] = 117;
+    fuente[63] = 114;
+    fuente[64] = 110;
+    fuente[65] = 32;
+    fuente[66] = 48;
+    fuente[67] = 59;
+    fuente[68] = 32;
+    fuente[69] = 125;
+    tok_count = 25;
+    int tok_tipo[256];
+    tok_tipo[0] = 39;
+    tok_tipo[1] = 1;
+    tok_tipo[2] = 29;
+    tok_tipo[3] = 30;
+    tok_tipo[4] = 33;
+    tok_tipo[5] = 8;
+    tok_tipo[6] = 2;
+    tok_tipo[7] = 36;
+    tok_tipo[8] = 34;
+    tok_tipo[9] = 4;
+    tok_tipo[10] = 1;
+    tok_tipo[11] = 29;
+    tok_tipo[12] = 30;
+    tok_tipo[13] = 33;
+    tok_tipo[14] = 4;
+    tok_tipo[15] = 1;
+    tok_tipo[16] = 13;
+    tok_tipo[17] = 1;
+    tok_tipo[18] = 29;
+    tok_tipo[19] = 30;
+    tok_tipo[20] = 36;
+    tok_tipo[21] = 8;
+    tok_tipo[22] = 2;
+    tok_tipo[23] = 36;
+    tok_tipo[24] = 34;
+    int tok_inicio[256];
+    tok_inicio[0] = 0;
+    tok_inicio[1] = 5;
+    tok_inicio[2] = 11;
+    tok_inicio[3] = 12;
+    tok_inicio[4] = 14;
+    tok_inicio[5] = 16;
+    tok_inicio[6] = 23;
+    tok_inicio[7] = 24;
+    tok_inicio[8] = 26;
+    tok_inicio[9] = 28;
+    tok_inicio[10] = 32;
+    tok_inicio[11] = 36;
+    tok_inicio[12] = 37;
+    tok_inicio[13] = 39;
+    tok_inicio[14] = 41;
+    tok_inicio[15] = 45;
+    tok_inicio[16] = 47;
+    tok_inicio[17] = 49;
+    tok_inicio[18] = 55;
+    tok_inicio[19] = 56;
+    tok_inicio[20] = 57;
+    tok_inicio[21] = 59;
+    tok_inicio[22] = 66;
+    tok_inicio[23] = 67;
+    tok_inicio[24] = 69;
+    int tok_largo[256];
+    tok_largo[0] = 4;
+    tok_largo[1] = 6;
+    tok_largo[2] = 1;
+    tok_largo[3] = 1;
+    tok_largo[4] = 1;
+    tok_largo[5] = 6;
+    tok_largo[6] = 1;
+    tok_largo[7] = 1;
+    tok_largo[8] = 1;
+    tok_largo[9] = 3;
+    tok_largo[10] = 4;
+    tok_largo[11] = 1;
+    tok_largo[12] = 1;
+    tok_largo[13] = 1;
+    tok_largo[14] = 3;
+    tok_largo[15] = 1;
+    tok_largo[16] = 1;
+    tok_largo[17] = 6;
+    tok_largo[18] = 1;
+    tok_largo[19] = 1;
+    tok_largo[20] = 1;
+    tok_largo[21] = 6;
+    tok_largo[22] = 1;
+    tok_largo[23] = 1;
+    tok_largo[24] = 2;
+    int tok_valor[256];
+    tok_valor[0] = 0;
+    tok_valor[1] = 0;
+    tok_valor[2] = 0;
+    tok_valor[3] = 0;
+    tok_valor[4] = 0;
+    tok_valor[5] = 0;
+    tok_valor[6] = 5;
+    tok_valor[7] = 0;
+    tok_valor[8] = 0;
+    tok_valor[9] = 0;
+    tok_valor[10] = 0;
+    tok_valor[11] = 0;
+    tok_valor[12] = 0;
+    tok_valor[13] = 0;
+    tok_valor[14] = 0;
+    tok_valor[15] = 0;
+    tok_valor[16] = 0;
+    tok_valor[17] = 0;
+    tok_valor[18] = 0;
+    tok_valor[19] = 0;
+    tok_valor[20] = 0;
+    tok_valor[21] = 0;
+    tok_valor[22] = 0;
+    tok_valor[23] = 0;
+    tok_valor[24] = 0;
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    nnodos = 11;
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    nkind[0] = 0; nini[0] = 0; nfin[0] = 25; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = 1; nini[1] = 0; nfin[1] = 0; nhijo1[1] = 2; nsig[1] = 5; nval[1] = 1; naux[1] = 0; nsize[1] = 0;
+    nkind[2] = 4; nini[2] = 0; nfin[2] = 0; nhijo1[2] = 4; nsig[2] = -1; nval[2] = 0; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = 12; nini[3] = 6; nfin[3] = 6; nhijo1[3] = -1; nsig[3] = -1; nval[3] = 5; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = 9; nini[4] = 5; nfin[4] = 5; nhijo1[4] = 3; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = 1; nini[5] = 9; nfin[5] = 9; nhijo1[5] = 6; nsig[5] = -1; nval[5] = 10; naux[5] = 0; nsize[5] = 0;
+    nkind[6] = 4; nini[6] = 0; nfin[6] = 0; nhijo1[6] = 8; nsig[6] = -1; nval[6] = 0; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = 16; nini[7] = 17; nfin[7] = 17; nhijo1[7] = -1; nsig[7] = -1; nval[7] = 17; naux[7] = -1; nsize[7] = 0;
+    nkind[8] = 5; nini[8] = 14; nfin[8] = 14; nhijo1[8] = 7; nsig[8] = 10; nval[8] = 15; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = 12; nini[9] = 22; nfin[9] = 22; nhijo1[9] = -1; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = 9; nini[10] = 21; nfin[10] = 21; nhijo1[10] = 9; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
+    return 0;
+}
+
 int main()
 {
     int r1 = inicia_nodos1();
@@ -8389,5 +8919,11 @@ int main()
     int r18 = inicia_nodos18();
     int a18 = analiza();
     int p18 = imprime_fila();
+    int r19 = inicia_nodos19();
+    int a19 = analiza();
+    int p19 = imprime_fila();
+    int r20 = inicia_nodos20();
+    int a20 = analiza();
+    int p20 = imprime_fila();
     return 0;
 }
