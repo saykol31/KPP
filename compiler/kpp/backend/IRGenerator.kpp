@@ -1,19 +1,11 @@
-// IRGenerator.kpp — Stage 1, backend, arranque.
-// Tabla de operaciones del IR: el enum IROpcode de include/kpp/IR.hpp
-// (Stage 0) traducido 1:1 a un enum de K++, en su orden exacto.
-// Los valores salen del ORDEN (0..56); el orden es el contrato entre el
-// IRGenerator y el X86Backend, en Stage 0 y en Stage 1. Regla de siempre:
-// una operacion nueva va AL FINAL, nunca en el medio.
-// Estado real en Stage 0, verificado en el codigo: el IRGenerator emite
-// los 57 codigos; el X86Backend atiende 31 por nombre — el bloque de
-// matematica (Pow..Integral, 16..38), PrintFloat, FunctionEnd y
-// JumpIfNotZero no aparecen en X86Backend.cpp.
-// La instruccion IR de Stage 0 (struct IRInstruction) tiene 6 campos:
-// opcode, name, operand, result, value y auxiliary. En Stage 1 viviran
-// en arreglos paralelos (ir_op[], ir_value[] y referencias de texto al
-// estilo del Lexer: inicio y largo sobre un fondo comun, sin copiar
-// cadenas). Cuando esta pieza empiece a traducir, llevara ademas una
-// copia identica del enum NodeKind: es su tabla de entrada.
+// IRGenerator.kpp — Stage 1, backend.
+// El generador de IR: traduce el AST del contrato a la
+// corriente de instrucciones que el X86Backend consume.
+// El enum IROpcode que sigue es su contrato de salida:
+// los 57 codigos de include/kpp/IR.hpp en su orden
+// exacto (una operacion nueva va AL FINAL, nunca en el
+// medio). La traduccion vive mas abajo, tras el enum,
+// en la seccion IRGENERATOR (rebanada IR-1).
 
 enum IROpcode
 {
@@ -107,7 +99,1605 @@ enum IROpcode
     JumpIfNotZero
 };
 
-int main()
+
+// ============================================================
+// IRGENERATOR — Stage 1, backend. Rebanada IR-1:
+// programa, funciones, declaraciones y literales.
+// ============================================================
+//
+// Traduccion de src/backend/IRGenerator.cpp (Stage 0)
+// a K++, por rebanadas. Su entrada es el AST del
+// contrato (los ocho arreglos y las tablas
+// laterales), el mismo que el Parser construye y el
+// SemanticAnalyzer recorre; su salida es la
+// corriente de instrucciones IR que el X86Backend
+// consumira.
+//
+// LA INSTRUCCION EN STAGE 1: seis arreglos paralelos
+// (iop, inombre, ioperando, iresultado, iaux,
+// ivalor) de 2048 instrucciones. Los cuatro campos
+// de texto de Stage 0 (name, operand, result,
+// auxiliary) son referencias a UNA piscina de texto
+// propia del generador (pool[], caracteres): una
+// referencia es un solo entero, ini * 128 + largo,
+// con el texto en pool[ini .. ini + largo). La
+// piscina es escribible y es del generador, porque
+// los textos del IR son sinteticos — x@0, p.campo,
+// %12, L4, la lista "a, b" de parametros — y no
+// viven en fuente[]. Los textos que si son de la
+// fuente (nombres, literales de cadena) se copian
+// de fuente[] a la piscina al emitir.
+//
+// LOS AMBITOS: como en Stage 0, el generador lleva
+// sus propios ambitos de variables (no usa los del
+// analizador): cada declaracion local recibe su
+// nombre IR unico nombre@N, con N del contador de
+// la funcion, y las capacidades de arreglo viajan
+// con el registro. Una variable de struct se APLANA:
+// un Declare por campo (nombre@N.campo), y el campo
+// se registra con su token al lado del de la base.
+// Los parametros y las globales no se registran:
+// al resolver, el nombre original es el que vale
+// (la regla de Stage 0). Temporales %N y contador
+// de variables se reinician por funcion.
+//
+// COBERTURA DE LA IR-1:
+//   - genera(): las globales como Declare en orden
+//     y cada funcion con genera_funcion().
+//   - genera_funcion(): FunctionBegin con la lista
+//     de parametros, el cuerpo sin abrir ambito
+//     (el ambito raiz es el de la funcion) y
+//     FunctionEnd.
+//   - genera_sentencia(): VariableDeclaration (con
+//     el aplanado de structs y el inicializador) y
+//     ReturnStatement (con su via rapida de literal
+//     entero: RETURN con el valor, sin temporal).
+//   - genera_expresion(): IntegerLiteral (Const),
+//     StringLiteral (StringConst) y
+//     VariableExpression sin campo (Load).
+// El resto de sentencias y expresiones llega en
+// las rebanadas IR-2 e IR-3; aqui genera_sentencia
+// y genera_expresion devuelven sin emitir para lo
+// que no cubren.
+//
+// LA SONDA (main): tres programas cargados con
+// tablas inicia_irN() generadas de sus fuentes
+// reales (el mismo arco de las inicia_nodos del
+// SemanticAnalyzer). Por sonda se imprime la
+// corriente en forma numerica: por instruccion, el
+// nombre de la operacion y nueve enteros (las
+// cuatro referencias desempaquetadas en inicio y
+// largo, y el valor), y al final el largo de la
+// piscina y sus caracteres en codigos.
+// ============================================================
+
+enum NodeKind
 {
+    // DECLARACIONES
+    Program,
+    FunctionDeclaration,
+    StructDeclaration,
+    EnumDeclaration,
+
+    // SENTENCIAS
+    Block,
+    VariableDeclaration,
+    AssignmentStatement,
+    IfStatement,
+    WhileStatement,
+    ReturnStatement,
+    PrintStatement,
+    PrintIntegerStatement,
+
+    // EXPRESIONES
+    IntegerLiteral,
+    StringLiteral,
+    VariableExpression,
+    ArrayAccessExpression,
+    CallExpression,
+    BinaryExpression
+};
+
+// ============================================================
+// ESTADO DEL GENERADOR.
+// ============================================================
+
+int tok_count;
+int nnodos;
+int nir;
+int pool_len;
+int ntemp;
+int contvar;
+int nvar;
+int nivel;
+
+// ============================================================
+// LA PISCINA DE TEXTO.
+// ============================================================
+
+int agrega_car(int c)
+{
+    int pool[16384];
+    if (pool_len < 16384)
+    {
+        pool[pool_len] = c;
+        pool_len = pool_len + 1;
+    }
     return 0;
 }
+
+int agrega_token(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int ini = tok_inicio[tok];
+    int n = tok_largo[tok];
+    int i = 0;
+    while (i < n)
+    {
+        int c = fuente[ini + i];
+        int a = agrega_car(c);
+        i = i + 1;
+    }
+    return 0;
+}
+
+int agrega_tramo(int ini, int largo)
+{
+    int pool[16384];
+    int i = 0;
+    while (i < largo)
+    {
+        int c = pool[ini + i];
+        int a = agrega_car(c);
+        i = i + 1;
+    }
+    return 0;
+}
+
+int agrega_numero(int n)
+{
+    if (n >= 10)
+    {
+        int a = agrega_numero(n / 10);
+    }
+    int d = n - (n / 10) * 10;
+    int b = agrega_car(48 + d);
+    return 0;
+}
+
+int ref_token(int tok)
+{
+    int ini = pool_len;
+    int a = agrega_token(tok);
+    return ini * 128 + (pool_len - ini);
+}
+
+int ref_temp()
+{
+    int ini = pool_len;
+    int a = agrega_car(37);
+    int b = agrega_numero(ntemp);
+    ntemp = ntemp + 1;
+    return ini * 128 + (pool_len - ini);
+}
+
+// ============================================================
+// MISMO TEXTO — la forma probada (sonda_mismo_texto):
+// cada carga a una local antes de comparar.
+// ============================================================
+
+int mismo_texto(int a, int b)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int la = tok_largo[a];
+    int lb = tok_largo[b];
+    if (la != lb)
+    {
+        return 0;
+    }
+    int ia = tok_inicio[a];
+    int ib = tok_inicio[b];
+    int i = 0;
+    while (i < la)
+    {
+        int ca = fuente[ia + i];
+        int cb = fuente[ib + i];
+        if (ca != cb)
+        {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// ============================================================
+// EMITIR UNA INSTRUCCION.
+// ============================================================
+
+int emite_ir(int op, int nombre, int operando, int resultado, int aux, int valor)
+{
+    int iop[2048];
+    int inombre[2048];
+    int ioperando[2048];
+    int iresultado[2048];
+    int iaux[2048];
+    int ivalor[2048];
+    if (nir < 2048)
+    {
+        iop[nir] = op;
+        inombre[nir] = nombre;
+        ioperando[nir] = operando;
+        iresultado[nir] = resultado;
+        iaux[nir] = aux;
+        ivalor[nir] = valor;
+        nir = nir + 1;
+    }
+    return 0;
+}
+
+// ============================================================
+// AMBITOS DE VARIABLES DEL GENERADOR.
+// ============================================================
+//
+// Una fila por nombre visible: el token de la base,
+// el token del campo (-1 si es la variable misma),
+// la referencia a su nombre IR en la piscina, su
+// capacidad de arreglo y el sello de nivel.
+
+int entra_ambito()
+{
+    nivel = nivel + 1;
+    return 0;
+}
+
+int sale_ambito()
+{
+    int vscope_nivel[256];
+    int sigue = 1;
+    while (sigue == 1)
+    {
+        if (nvar == 0)
+        {
+            sigue = 0;
+        }
+        else
+        {
+            int u = vscope_nivel[nvar - 1];
+            if (u != nivel)
+            {
+                sigue = 0;
+            }
+            else
+            {
+                nvar = nvar - 1;
+            }
+        }
+    }
+    nivel = nivel - 1;
+    return 0;
+}
+
+int registra_var(int tok, int campo, int ref, int tam)
+{
+    int vscope_tok[256];
+    int vscope_campo[256];
+    int vscope_ref[256];
+    int vscope_tam[256];
+    int vscope_nivel[256];
+    if (nvar < 256)
+    {
+        vscope_tok[nvar] = tok;
+        vscope_campo[nvar] = campo;
+        vscope_ref[nvar] = ref;
+        vscope_tam[nvar] = tam;
+        vscope_nivel[nvar] = nivel;
+        nvar = nvar + 1;
+    }
+    return 0;
+}
+
+int busca_var(int tok, int campo)
+{
+    int vscope_tok[256];
+    int vscope_campo[256];
+    int i = nvar - 1;
+    while (i >= 0)
+    {
+        int t = vscope_tok[i];
+        if (mismo_texto(t, tok) == 1)
+        {
+            int c = vscope_campo[i];
+            if (c == campo)
+            {
+                return i;
+            }
+            if (c >= 0)
+            {
+                if (campo >= 0)
+                {
+                    if (mismo_texto(c, campo) == 1)
+                    {
+                        return i;
+                    }
+                }
+            }
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
+int resuelve(int tok)
+{
+    int vscope_ref[256];
+    int f = busca_var(tok, -1);
+    if (f >= 0)
+    {
+        int r = vscope_ref[f];
+        return r;
+    }
+    return ref_token(tok);
+}
+
+// ============================================================
+// LA DECLARACION DE STRUCT DE UN TIPO, o -1.
+// ============================================================
+
+int struct_de(int tipo)
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int d = nhijo1[0];
+    while (d >= 0)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::StructDeclaration)
+        {
+            int nt = nval[d];
+            if (mismo_texto(nt, tipo) == 1)
+            {
+                return d;
+            }
+        }
+        d = nsig[d];
+    }
+    return -1;
+}
+
+// ============================================================
+// GENERAR EXPRESION (cobertura IR-1).
+// ============================================================
+//
+// Devuelve la referencia al temporal que guarda el
+// valor de la expresion.
+
+int genera_expresion(int e)
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nval[256];
+    int k = nkind[e];
+    if (k == NodeKind::IntegerLiteral)
+    {
+        int t = ref_temp();
+        int v = nval[e];
+        int em = emite_ir(IROpcode::Const, 0, 0, t, 0, v);
+        return t;
+    }
+    if (k == NodeKind::StringLiteral)
+    {
+        int t = ref_temp();
+        int nt = nval[e];
+        int nombre = ref_token(nt);
+        int em = emite_ir(IROpcode::StringConst, nombre, 0, t, 0, 0);
+        return t;
+    }
+    if (k == NodeKind::VariableExpression)
+    {
+        int h = nhijo1[e];
+        if (h >= 0)
+        {
+            // Con campo: llega con las expresiones.
+            return 0;
+        }
+        int t = ref_temp();
+        int nt = nval[e];
+        int nombre = resuelve(nt);
+        int em = emite_ir(IROpcode::Load, nombre, 0, t, 0, 0);
+        return t;
+    }
+    return 0;
+}
+
+// ============================================================
+// GENERAR SENTENCIA (cobertura IR-1).
+// ============================================================
+
+int genera_sentencia(int s)
+{
+    int nkind[256];
+    int nini[256];
+    int nhijo1[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int campotok[256];
+    int k = nkind[s];
+    if (k == NodeKind::VariableDeclaration)
+    {
+        int nt = nval[s];
+        int ini_m = pool_len;
+        int a1 = agrega_token(nt);
+        int a2 = agrega_car(64);
+        int a3 = agrega_numero(contvar);
+        int mangled = ini_m * 128 + (pool_len - ini_m);
+        int largo_m = pool_len - ini_m;
+        contvar = contvar + 1;
+        int tam = nsize[s];
+        int r1 = registra_var(nt, -1, mangled, tam);
+        int e1 = emite_ir(IROpcode::Declare, mangled, 0, 0, 0, tam);
+        int tipo = nini[s];
+        int est = struct_de(tipo);
+        if (est >= 0)
+        {
+            int ci = naux[est];
+            int cc = nsize[est];
+            int j = 0;
+            while (j < cc)
+            {
+                int ct = campotok[ci + j];
+                int ini_f = pool_len;
+                int b1 = agrega_tramo(ini_m, largo_m);
+                int b2 = agrega_car(46);
+                int b3 = agrega_token(ct);
+                int fmang = ini_f * 128 + (pool_len - ini_f);
+                int r2 = registra_var(nt, ct, fmang, 0);
+                int e2 = emite_ir(IROpcode::Declare, fmang, 0, 0, 0, 0);
+                j = j + 1;
+            }
+        }
+        int ini = nhijo1[s];
+        if (ini >= 0)
+        {
+            int ki = nkind[ini];
+            if (ki == NodeKind::IntegerLiteral)
+            {
+                int t = ref_temp();
+                int v = nval[ini];
+                int e3 = emite_ir(IROpcode::Const, 0, 0, t, 0, v);
+                int e4 = emite_ir(IROpcode::Store, mangled, t, 0, 0, 0);
+                return 0;
+            }
+            int t2 = genera_expresion(ini);
+            int e5 = emite_ir(IROpcode::Store, mangled, t2, 0, 0, 0);
+            return 0;
+        }
+        return 0;
+    }
+    if (k == NodeKind::ReturnStatement)
+    {
+        int e = nhijo1[s];
+        if (e < 0)
+        {
+            // Sin expresion: el analizador ya lo
+            // acuso (codigo 13); aqui no se emite.
+            return 0;
+        }
+        int ke = nkind[e];
+        if (ke == NodeKind::IntegerLiteral)
+        {
+            int v = nval[e];
+            int e1 = emite_ir(IROpcode::Return, 0, 0, 0, 0, v);
+            return 0;
+        }
+        int t = genera_expresion(e);
+        int e2 = emite_ir(IROpcode::Return, 0, t, 0, 0, 0);
+        return 0;
+    }
+    return 0;
+}
+
+// ============================================================
+// GENERAR FUNCION.
+// ============================================================
+
+int genera_funcion(int f)
+{
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    ntemp = 0;
+    contvar = 0;
+    int ea = entra_ambito();
+    int nt = nval[f];
+    int nombre = ref_token(nt);
+    int params = 0;
+    int inicio = naux[f];
+    int cant = nsize[f];
+    if (cant > 0)
+    {
+        int ini_p = pool_len;
+        int j = 0;
+        while (j < cant)
+        {
+            if (j > 0)
+            {
+                int c1 = agrega_car(44);
+                int c2 = agrega_car(32);
+            }
+            int pt = partok[inicio + j];
+            int a = agrega_token(pt);
+            j = j + 1;
+        }
+        params = ini_p * 128 + (pool_len - ini_p);
+    }
+    int e1 = emite_ir(IROpcode::FunctionBegin, nombre, params, 0, 0, 0);
+    int cuerpo = nhijo1[f];
+    if (cuerpo >= 0)
+    {
+        int s = nhijo1[cuerpo];
+        while (s >= 0)
+        {
+            int g = genera_sentencia(s);
+            s = nsig[s];
+        }
+    }
+    int e2 = emite_ir(IROpcode::FunctionEnd, 0, 0, 0, 0, 0);
+    int sa = sale_ambito();
+    return 0;
+}
+
+// ============================================================
+// GENERAR EL PROGRAMA.
+// ============================================================
+
+int genera()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int nsize[256];
+    nir = 0;
+    pool_len = 0;
+    nvar = 0;
+    nivel = 0;
+    int d = nhijo1[0];
+    while (d >= 0)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::VariableDeclaration)
+        {
+            int nt = nval[d];
+            int nombre = ref_token(nt);
+            int tam = nsize[d];
+            int e = emite_ir(IROpcode::Declare, nombre, 0, 0, 0, tam);
+        }
+        d = nsig[d];
+    }
+    d = nhijo1[0];
+    while (d >= 0)
+    {
+        int k2 = nkind[d];
+        if (k2 == NodeKind::FunctionDeclaration)
+        {
+            int g = genera_funcion(d);
+        }
+        d = nsig[d];
+    }
+    return 0;
+}
+
+// ============================================================
+// IMPRIMIR LA CORRIENTE (la sonda).
+// ============================================================
+
+int imprime_op(int op)
+{
+    if (op == IROpcode::FunctionBegin)
+    {
+        print("FUNCTION_BEGIN");
+        return 0;
+    }
+    if (op == IROpcode::FunctionEnd)
+    {
+        print("FUNCTION_END");
+        return 0;
+    }
+    if (op == IROpcode::Const)
+    {
+        print("CONST");
+        return 0;
+    }
+    if (op == IROpcode::StringConst)
+    {
+        print("STRING_CONST");
+        return 0;
+    }
+    if (op == IROpcode::Declare)
+    {
+        print("DECLARE");
+        return 0;
+    }
+    if (op == IROpcode::Store)
+    {
+        print("STORE");
+        return 0;
+    }
+    if (op == IROpcode::Load)
+    {
+        print("LOAD");
+        return 0;
+    }
+    print_int(op);
+    return 0;
+}
+
+int imprime_ref(int ref)
+{
+    int ini = ref / 128;
+    print_int(ini);
+    int largo = ref - ini * 128;
+    print_int(largo);
+    return 0;
+}
+
+int imprime_ir()
+{
+    int iop[2048];
+    int inombre[2048];
+    int ioperando[2048];
+    int iresultado[2048];
+    int iaux[2048];
+    int ivalor[2048];
+    int pool[16384];
+    int i = 0;
+    while (i < nir)
+    {
+        int op = iop[i];
+        int a = imprime_op(op);
+        int n = inombre[i];
+        int b = imprime_ref(n);
+        int o = ioperando[i];
+        int c = imprime_ref(o);
+        int r = iresultado[i];
+        int d = imprime_ref(r);
+        int x = iaux[i];
+        int e = imprime_ref(x);
+        int v = ivalor[i];
+        print_int(v);
+        i = i + 1;
+    }
+    print_int(pool_len);
+    i = 0;
+    while (i < pool_len)
+    {
+        int ch = pool[i];
+        print_int(ch);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ============================================================
+// LAS TABLAS DE LA SONDA — generadas de las fuentes
+// reales de las tres sondas (escaneo y parseo de la
+// cadena verificada), al estilo de las inicia_nodos
+// del SemanticAnalyzer.
+// ============================================================
+
+int inicia_ir1()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 103;
+    fuente[5] = 59;
+    fuente[6] = 10;
+    fuente[7] = 105;
+    fuente[8] = 110;
+    fuente[9] = 116;
+    fuente[10] = 32;
+    fuente[11] = 109;
+    fuente[12] = 97;
+    fuente[13] = 105;
+    fuente[14] = 110;
+    fuente[15] = 40;
+    fuente[16] = 41;
+    fuente[17] = 10;
+    fuente[18] = 123;
+    fuente[19] = 10;
+    fuente[20] = 32;
+    fuente[21] = 32;
+    fuente[22] = 32;
+    fuente[23] = 32;
+    fuente[24] = 105;
+    fuente[25] = 110;
+    fuente[26] = 116;
+    fuente[27] = 32;
+    fuente[28] = 120;
+    fuente[29] = 32;
+    fuente[30] = 61;
+    fuente[31] = 32;
+    fuente[32] = 52;
+    fuente[33] = 50;
+    fuente[34] = 59;
+    fuente[35] = 10;
+    fuente[36] = 32;
+    fuente[37] = 32;
+    fuente[38] = 32;
+    fuente[39] = 32;
+    fuente[40] = 114;
+    fuente[41] = 101;
+    fuente[42] = 116;
+    fuente[43] = 117;
+    fuente[44] = 114;
+    fuente[45] = 110;
+    fuente[46] = 32;
+    fuente[47] = 120;
+    fuente[48] = 59;
+    fuente[49] = 10;
+    fuente[50] = 125;
+    fuente[51] = 10;
+    tok_tipo[0] = 4;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 3;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 4;
+    tok_largo[1] = 1;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 36;
+    tok_inicio[2] = 5;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 4;
+    tok_inicio[3] = 7;
+    tok_largo[3] = 3;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 1;
+    tok_inicio[4] = 11;
+    tok_largo[4] = 4;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 29;
+    tok_inicio[5] = 15;
+    tok_largo[5] = 1;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 30;
+    tok_inicio[6] = 16;
+    tok_largo[6] = 1;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 33;
+    tok_inicio[7] = 18;
+    tok_largo[7] = 1;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 4;
+    tok_inicio[8] = 24;
+    tok_largo[8] = 3;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 1;
+    tok_inicio[9] = 28;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 13;
+    tok_inicio[10] = 30;
+    tok_largo[10] = 1;
+    tok_valor[10] = 0;
+    tok_tipo[11] = 2;
+    tok_inicio[11] = 32;
+    tok_largo[11] = 2;
+    tok_valor[11] = 42;
+    tok_tipo[12] = 36;
+    tok_inicio[12] = 34;
+    tok_largo[12] = 1;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 8;
+    tok_inicio[13] = 40;
+    tok_largo[13] = 6;
+    tok_valor[13] = 0;
+    tok_tipo[14] = 1;
+    tok_inicio[14] = 47;
+    tok_largo[14] = 1;
+    tok_valor[14] = 0;
+    tok_tipo[15] = 36;
+    tok_inicio[15] = 48;
+    tok_largo[15] = 1;
+    tok_valor[15] = 0;
+    tok_tipo[16] = 34;
+    tok_inicio[16] = 50;
+    tok_largo[16] = 1;
+    tok_valor[16] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 17;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 5;
+    nini[1] = 0;
+    nfin[1] = 3;
+    nhijo1[1] = -1;
+    nsig[1] = 2;
+    nval[1] = 1;
+    naux[1] = -1;
+    nsize[1] = 0;
+    nkind[2] = 1;
+    nini[2] = 3;
+    nfin[2] = 17;
+    nhijo1[2] = 3;
+    nsig[2] = -1;
+    nval[2] = 4;
+    naux[2] = 0;
+    nsize[2] = 0;
+    nkind[3] = 4;
+    nini[3] = 7;
+    nfin[3] = 17;
+    nhijo1[3] = 5;
+    nsig[3] = -1;
+    nval[3] = 0;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 12;
+    nini[4] = 11;
+    nfin[4] = 12;
+    nhijo1[4] = -1;
+    nsig[4] = -1;
+    nval[4] = 42;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 5;
+    nini[5] = 8;
+    nfin[5] = 13;
+    nhijo1[5] = 4;
+    nsig[5] = 7;
+    nval[5] = 9;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 14;
+    nini[6] = 14;
+    nfin[6] = 15;
+    nhijo1[6] = -1;
+    nsig[6] = -1;
+    nval[6] = 14;
+    naux[6] = -1;
+    nsize[6] = 0;
+    nkind[7] = 9;
+    nini[7] = 13;
+    nfin[7] = 16;
+    nhijo1[7] = 6;
+    nsig[7] = -1;
+    nval[7] = 0;
+    naux[7] = -1;
+    nsize[7] = 0;
+    tok_count = 17;
+    nnodos = 8;
+    return 0;
+}
+
+int inicia_ir2()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 115;
+    fuente[1] = 116;
+    fuente[2] = 114;
+    fuente[3] = 117;
+    fuente[4] = 99;
+    fuente[5] = 116;
+    fuente[6] = 32;
+    fuente[7] = 80;
+    fuente[8] = 117;
+    fuente[9] = 110;
+    fuente[10] = 116;
+    fuente[11] = 111;
+    fuente[12] = 10;
+    fuente[13] = 123;
+    fuente[14] = 10;
+    fuente[15] = 32;
+    fuente[16] = 32;
+    fuente[17] = 32;
+    fuente[18] = 32;
+    fuente[19] = 105;
+    fuente[20] = 110;
+    fuente[21] = 116;
+    fuente[22] = 32;
+    fuente[23] = 120;
+    fuente[24] = 59;
+    fuente[25] = 10;
+    fuente[26] = 32;
+    fuente[27] = 32;
+    fuente[28] = 32;
+    fuente[29] = 32;
+    fuente[30] = 105;
+    fuente[31] = 110;
+    fuente[32] = 116;
+    fuente[33] = 32;
+    fuente[34] = 121;
+    fuente[35] = 59;
+    fuente[36] = 10;
+    fuente[37] = 125;
+    fuente[38] = 59;
+    fuente[39] = 10;
+    fuente[40] = 105;
+    fuente[41] = 110;
+    fuente[42] = 116;
+    fuente[43] = 32;
+    fuente[44] = 115;
+    fuente[45] = 117;
+    fuente[46] = 109;
+    fuente[47] = 97;
+    fuente[48] = 40;
+    fuente[49] = 105;
+    fuente[50] = 110;
+    fuente[51] = 116;
+    fuente[52] = 32;
+    fuente[53] = 97;
+    fuente[54] = 44;
+    fuente[55] = 32;
+    fuente[56] = 105;
+    fuente[57] = 110;
+    fuente[58] = 116;
+    fuente[59] = 32;
+    fuente[60] = 98;
+    fuente[61] = 41;
+    fuente[62] = 10;
+    fuente[63] = 123;
+    fuente[64] = 10;
+    fuente[65] = 32;
+    fuente[66] = 32;
+    fuente[67] = 32;
+    fuente[68] = 32;
+    fuente[69] = 114;
+    fuente[70] = 101;
+    fuente[71] = 116;
+    fuente[72] = 117;
+    fuente[73] = 114;
+    fuente[74] = 110;
+    fuente[75] = 32;
+    fuente[76] = 97;
+    fuente[77] = 59;
+    fuente[78] = 10;
+    fuente[79] = 125;
+    fuente[80] = 10;
+    fuente[81] = 105;
+    fuente[82] = 110;
+    fuente[83] = 116;
+    fuente[84] = 32;
+    fuente[85] = 109;
+    fuente[86] = 97;
+    fuente[87] = 105;
+    fuente[88] = 110;
+    fuente[89] = 40;
+    fuente[90] = 41;
+    fuente[91] = 10;
+    fuente[92] = 123;
+    fuente[93] = 10;
+    fuente[94] = 32;
+    fuente[95] = 32;
+    fuente[96] = 32;
+    fuente[97] = 32;
+    fuente[98] = 105;
+    fuente[99] = 110;
+    fuente[100] = 116;
+    fuente[101] = 32;
+    fuente[102] = 100;
+    fuente[103] = 97;
+    fuente[104] = 116;
+    fuente[105] = 111;
+    fuente[106] = 115;
+    fuente[107] = 91;
+    fuente[108] = 49;
+    fuente[109] = 48;
+    fuente[110] = 93;
+    fuente[111] = 59;
+    fuente[112] = 10;
+    fuente[113] = 32;
+    fuente[114] = 32;
+    fuente[115] = 32;
+    fuente[116] = 32;
+    fuente[117] = 80;
+    fuente[118] = 117;
+    fuente[119] = 110;
+    fuente[120] = 116;
+    fuente[121] = 111;
+    fuente[122] = 32;
+    fuente[123] = 112;
+    fuente[124] = 59;
+    fuente[125] = 10;
+    fuente[126] = 32;
+    fuente[127] = 32;
+    fuente[128] = 32;
+    fuente[129] = 32;
+    fuente[130] = 114;
+    fuente[131] = 101;
+    fuente[132] = 116;
+    fuente[133] = 117;
+    fuente[134] = 114;
+    fuente[135] = 110;
+    fuente[136] = 32;
+    fuente[137] = 48;
+    fuente[138] = 59;
+    fuente[139] = 10;
+    fuente[140] = 125;
+    fuente[141] = 10;
+    tok_tipo[0] = 6;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 6;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 7;
+    tok_largo[1] = 5;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 33;
+    tok_inicio[2] = 13;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 4;
+    tok_inicio[3] = 19;
+    tok_largo[3] = 3;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 1;
+    tok_inicio[4] = 23;
+    tok_largo[4] = 1;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 36;
+    tok_inicio[5] = 24;
+    tok_largo[5] = 1;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 4;
+    tok_inicio[6] = 30;
+    tok_largo[6] = 3;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 1;
+    tok_inicio[7] = 34;
+    tok_largo[7] = 1;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 36;
+    tok_inicio[8] = 35;
+    tok_largo[8] = 1;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 34;
+    tok_inicio[9] = 37;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 36;
+    tok_inicio[10] = 38;
+    tok_largo[10] = 1;
+    tok_valor[10] = 0;
+    tok_tipo[11] = 4;
+    tok_inicio[11] = 40;
+    tok_largo[11] = 3;
+    tok_valor[11] = 0;
+    tok_tipo[12] = 1;
+    tok_inicio[12] = 44;
+    tok_largo[12] = 4;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 29;
+    tok_inicio[13] = 48;
+    tok_largo[13] = 1;
+    tok_valor[13] = 0;
+    tok_tipo[14] = 4;
+    tok_inicio[14] = 49;
+    tok_largo[14] = 3;
+    tok_valor[14] = 0;
+    tok_tipo[15] = 1;
+    tok_inicio[15] = 53;
+    tok_largo[15] = 1;
+    tok_valor[15] = 0;
+    tok_tipo[16] = 35;
+    tok_inicio[16] = 54;
+    tok_largo[16] = 1;
+    tok_valor[16] = 0;
+    tok_tipo[17] = 4;
+    tok_inicio[17] = 56;
+    tok_largo[17] = 3;
+    tok_valor[17] = 0;
+    tok_tipo[18] = 1;
+    tok_inicio[18] = 60;
+    tok_largo[18] = 1;
+    tok_valor[18] = 0;
+    tok_tipo[19] = 30;
+    tok_inicio[19] = 61;
+    tok_largo[19] = 1;
+    tok_valor[19] = 0;
+    tok_tipo[20] = 33;
+    tok_inicio[20] = 63;
+    tok_largo[20] = 1;
+    tok_valor[20] = 0;
+    tok_tipo[21] = 8;
+    tok_inicio[21] = 69;
+    tok_largo[21] = 6;
+    tok_valor[21] = 0;
+    tok_tipo[22] = 1;
+    tok_inicio[22] = 76;
+    tok_largo[22] = 1;
+    tok_valor[22] = 0;
+    tok_tipo[23] = 36;
+    tok_inicio[23] = 77;
+    tok_largo[23] = 1;
+    tok_valor[23] = 0;
+    tok_tipo[24] = 34;
+    tok_inicio[24] = 79;
+    tok_largo[24] = 1;
+    tok_valor[24] = 0;
+    tok_tipo[25] = 4;
+    tok_inicio[25] = 81;
+    tok_largo[25] = 3;
+    tok_valor[25] = 0;
+    tok_tipo[26] = 1;
+    tok_inicio[26] = 85;
+    tok_largo[26] = 4;
+    tok_valor[26] = 0;
+    tok_tipo[27] = 29;
+    tok_inicio[27] = 89;
+    tok_largo[27] = 1;
+    tok_valor[27] = 0;
+    tok_tipo[28] = 30;
+    tok_inicio[28] = 90;
+    tok_largo[28] = 1;
+    tok_valor[28] = 0;
+    tok_tipo[29] = 33;
+    tok_inicio[29] = 92;
+    tok_largo[29] = 1;
+    tok_valor[29] = 0;
+    tok_tipo[30] = 4;
+    tok_inicio[30] = 98;
+    tok_largo[30] = 3;
+    tok_valor[30] = 0;
+    tok_tipo[31] = 1;
+    tok_inicio[31] = 102;
+    tok_largo[31] = 5;
+    tok_valor[31] = 0;
+    tok_tipo[32] = 31;
+    tok_inicio[32] = 107;
+    tok_largo[32] = 1;
+    tok_valor[32] = 0;
+    tok_tipo[33] = 2;
+    tok_inicio[33] = 108;
+    tok_largo[33] = 2;
+    tok_valor[33] = 10;
+    tok_tipo[34] = 32;
+    tok_inicio[34] = 110;
+    tok_largo[34] = 1;
+    tok_valor[34] = 0;
+    tok_tipo[35] = 36;
+    tok_inicio[35] = 111;
+    tok_largo[35] = 1;
+    tok_valor[35] = 0;
+    tok_tipo[36] = 1;
+    tok_inicio[36] = 117;
+    tok_largo[36] = 5;
+    tok_valor[36] = 0;
+    tok_tipo[37] = 1;
+    tok_inicio[37] = 123;
+    tok_largo[37] = 1;
+    tok_valor[37] = 0;
+    tok_tipo[38] = 36;
+    tok_inicio[38] = 124;
+    tok_largo[38] = 1;
+    tok_valor[38] = 0;
+    tok_tipo[39] = 8;
+    tok_inicio[39] = 130;
+    tok_largo[39] = 6;
+    tok_valor[39] = 0;
+    tok_tipo[40] = 2;
+    tok_inicio[40] = 137;
+    tok_largo[40] = 1;
+    tok_valor[40] = 0;
+    tok_tipo[41] = 36;
+    tok_inicio[41] = 138;
+    tok_largo[41] = 1;
+    tok_valor[41] = 0;
+    tok_tipo[42] = 34;
+    tok_inicio[42] = 140;
+    tok_largo[42] = 1;
+    tok_valor[42] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 43;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 2;
+    nini[1] = 0;
+    nfin[1] = 11;
+    nhijo1[1] = -1;
+    nsig[1] = 2;
+    nval[1] = 1;
+    naux[1] = 0;
+    nsize[1] = 2;
+    nkind[2] = 1;
+    nini[2] = 11;
+    nfin[2] = 25;
+    nhijo1[2] = 3;
+    nsig[2] = 6;
+    nval[2] = 12;
+    naux[2] = 0;
+    nsize[2] = 2;
+    nkind[3] = 4;
+    nini[3] = 20;
+    nfin[3] = 25;
+    nhijo1[3] = 5;
+    nsig[3] = -1;
+    nval[3] = 0;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 14;
+    nini[4] = 22;
+    nfin[4] = 23;
+    nhijo1[4] = -1;
+    nsig[4] = -1;
+    nval[4] = 22;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 9;
+    nini[5] = 21;
+    nfin[5] = 24;
+    nhijo1[5] = 4;
+    nsig[5] = -1;
+    nval[5] = 0;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 1;
+    nini[6] = 25;
+    nfin[6] = 43;
+    nhijo1[6] = 7;
+    nsig[6] = -1;
+    nval[6] = 26;
+    naux[6] = 2;
+    nsize[6] = 0;
+    nkind[7] = 4;
+    nini[7] = 29;
+    nfin[7] = 43;
+    nhijo1[7] = 8;
+    nsig[7] = -1;
+    nval[7] = 0;
+    naux[7] = -1;
+    nsize[7] = 0;
+    nkind[8] = 5;
+    nini[8] = 30;
+    nfin[8] = 36;
+    nhijo1[8] = -1;
+    nsig[8] = 9;
+    nval[8] = 31;
+    naux[8] = -1;
+    nsize[8] = 10;
+    nkind[9] = 5;
+    nini[9] = 36;
+    nfin[9] = 39;
+    nhijo1[9] = -1;
+    nsig[9] = 11;
+    nval[9] = 37;
+    naux[9] = -1;
+    nsize[9] = 0;
+    nkind[10] = 12;
+    nini[10] = 40;
+    nfin[10] = 41;
+    nhijo1[10] = -1;
+    nsig[10] = -1;
+    nval[10] = 0;
+    naux[10] = -1;
+    nsize[10] = 0;
+    nkind[11] = 9;
+    nini[11] = 39;
+    nfin[11] = 42;
+    nhijo1[11] = 10;
+    nsig[11] = -1;
+    nval[11] = 0;
+    naux[11] = -1;
+    nsize[11] = 0;
+    partok[0] = 15;
+    partok[1] = 18;
+    campotipo[0] = 4;
+    campotok[0] = 4;
+    campotipo[1] = 4;
+    campotok[1] = 7;
+    tok_count = 43;
+    nnodos = 12;
+    return 0;
+}
+
+int inicia_ir3()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 109;
+    fuente[5] = 97;
+    fuente[6] = 105;
+    fuente[7] = 110;
+    fuente[8] = 40;
+    fuente[9] = 41;
+    fuente[10] = 10;
+    fuente[11] = 123;
+    fuente[12] = 10;
+    fuente[13] = 32;
+    fuente[14] = 32;
+    fuente[15] = 32;
+    fuente[16] = 32;
+    fuente[17] = 115;
+    fuente[18] = 116;
+    fuente[19] = 114;
+    fuente[20] = 105;
+    fuente[21] = 110;
+    fuente[22] = 103;
+    fuente[23] = 32;
+    fuente[24] = 115;
+    fuente[25] = 32;
+    fuente[26] = 61;
+    fuente[27] = 32;
+    fuente[28] = 34;
+    fuente[29] = 72;
+    fuente[30] = 79;
+    fuente[31] = 76;
+    fuente[32] = 65;
+    fuente[33] = 34;
+    fuente[34] = 59;
+    fuente[35] = 10;
+    fuente[36] = 32;
+    fuente[37] = 32;
+    fuente[38] = 32;
+    fuente[39] = 32;
+    fuente[40] = 105;
+    fuente[41] = 110;
+    fuente[42] = 116;
+    fuente[43] = 32;
+    fuente[44] = 121;
+    fuente[45] = 32;
+    fuente[46] = 61;
+    fuente[47] = 32;
+    fuente[48] = 55;
+    fuente[49] = 59;
+    fuente[50] = 10;
+    fuente[51] = 32;
+    fuente[52] = 32;
+    fuente[53] = 32;
+    fuente[54] = 32;
+    fuente[55] = 114;
+    fuente[56] = 101;
+    fuente[57] = 116;
+    fuente[58] = 117;
+    fuente[59] = 114;
+    fuente[60] = 110;
+    fuente[61] = 32;
+    fuente[62] = 121;
+    fuente[63] = 59;
+    fuente[64] = 10;
+    fuente[65] = 125;
+    fuente[66] = 10;
+    tok_tipo[0] = 4;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 3;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 4;
+    tok_largo[1] = 4;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 29;
+    tok_inicio[2] = 8;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 30;
+    tok_inicio[3] = 9;
+    tok_largo[3] = 1;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 33;
+    tok_inicio[4] = 11;
+    tok_largo[4] = 1;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 5;
+    tok_inicio[5] = 17;
+    tok_largo[5] = 6;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 1;
+    tok_inicio[6] = 24;
+    tok_largo[6] = 1;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 13;
+    tok_inicio[7] = 26;
+    tok_largo[7] = 1;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 3;
+    tok_inicio[8] = 28;
+    tok_largo[8] = 6;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 36;
+    tok_inicio[9] = 34;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 4;
+    tok_inicio[10] = 40;
+    tok_largo[10] = 3;
+    tok_valor[10] = 0;
+    tok_tipo[11] = 1;
+    tok_inicio[11] = 44;
+    tok_largo[11] = 1;
+    tok_valor[11] = 0;
+    tok_tipo[12] = 13;
+    tok_inicio[12] = 46;
+    tok_largo[12] = 1;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 2;
+    tok_inicio[13] = 48;
+    tok_largo[13] = 1;
+    tok_valor[13] = 7;
+    tok_tipo[14] = 36;
+    tok_inicio[14] = 49;
+    tok_largo[14] = 1;
+    tok_valor[14] = 0;
+    tok_tipo[15] = 8;
+    tok_inicio[15] = 55;
+    tok_largo[15] = 6;
+    tok_valor[15] = 0;
+    tok_tipo[16] = 1;
+    tok_inicio[16] = 62;
+    tok_largo[16] = 1;
+    tok_valor[16] = 0;
+    tok_tipo[17] = 36;
+    tok_inicio[17] = 63;
+    tok_largo[17] = 1;
+    tok_valor[17] = 0;
+    tok_tipo[18] = 34;
+    tok_inicio[18] = 65;
+    tok_largo[18] = 1;
+    tok_valor[18] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 19;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 1;
+    nini[1] = 0;
+    nfin[1] = 19;
+    nhijo1[1] = 2;
+    nsig[1] = -1;
+    nval[1] = 1;
+    naux[1] = 0;
+    nsize[1] = 0;
+    nkind[2] = 4;
+    nini[2] = 4;
+    nfin[2] = 19;
+    nhijo1[2] = 4;
+    nsig[2] = -1;
+    nval[2] = 0;
+    naux[2] = -1;
+    nsize[2] = 0;
+    nkind[3] = 13;
+    nini[3] = 8;
+    nfin[3] = 9;
+    nhijo1[3] = -1;
+    nsig[3] = -1;
+    nval[3] = 8;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 5;
+    nini[4] = 5;
+    nfin[4] = 10;
+    nhijo1[4] = 3;
+    nsig[4] = 6;
+    nval[4] = 6;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 12;
+    nini[5] = 13;
+    nfin[5] = 14;
+    nhijo1[5] = -1;
+    nsig[5] = -1;
+    nval[5] = 7;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 5;
+    nini[6] = 10;
+    nfin[6] = 15;
+    nhijo1[6] = 5;
+    nsig[6] = 8;
+    nval[6] = 11;
+    naux[6] = -1;
+    nsize[6] = 0;
+    nkind[7] = 14;
+    nini[7] = 16;
+    nfin[7] = 17;
+    nhijo1[7] = -1;
+    nsig[7] = -1;
+    nval[7] = 16;
+    naux[7] = -1;
+    nsize[7] = 0;
+    nkind[8] = 9;
+    nini[8] = 15;
+    nfin[8] = 18;
+    nhijo1[8] = 7;
+    nsig[8] = -1;
+    nval[8] = 0;
+    naux[8] = -1;
+    nsize[8] = 0;
+    tok_count = 19;
+    nnodos = 9;
+    return 0;
+}
+
+// ============================================================
+// MAIN — la sonda de la IR-1.
+// ============================================================
+
+int main()
+{
+    int a1 = inicia_ir1();
+    int g1 = genera();
+    int i1 = imprime_ir();
+
+    int a2 = inicia_ir2();
+    int g2 = genera();
+    int i2 = imprime_ir();
+
+    int a3 = inicia_ir3();
+    int g3 = genera();
+    int i3 = imprime_ir();
+
+    return 0;
+}
+
