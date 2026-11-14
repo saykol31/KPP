@@ -2434,6 +2434,7 @@ int escanea()
         else if (c == 34)
         {
             pos = pos + 1;
+            inicio = pos;
             sigue = 1;
             while (sigue == 1)
             {
@@ -2446,7 +2447,6 @@ int escanea()
                     c = fuente[pos];
                     if (c == 34)
                     {
-                        pos = pos + 1;
                         sigue = 0;
                     }
                     else
@@ -2456,6 +2456,10 @@ int escanea()
                 }
             }
             largo = pos - inicio;
+            if (pos < total)
+            {
+                pos = pos + 1;
+            }
             tipo = 3;
             hay_token = 1;
         }

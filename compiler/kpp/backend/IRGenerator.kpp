@@ -2196,8 +2196,8 @@ int inicia_ir3()
     tok_largo[7] = 1;
     tok_valor[7] = 0;
     tok_tipo[8] = 3;
-    tok_inicio[8] = 28;
-    tok_largo[8] = 6;
+    tok_inicio[8] = 29;
+    tok_largo[8] = 4;
     tok_valor[8] = 0;
     tok_tipo[9] = 36;
     tok_inicio[9] = 34;
@@ -2579,8 +2579,8 @@ int inicia_ir4()
     tok_largo[27] = 1;
     tok_valor[27] = 0;
     tok_tipo[28] = 3;
-    tok_inicio[28] = 102;
-    tok_largo[28] = 5;
+    tok_inicio[28] = 103;
+    tok_largo[28] = 3;
     tok_valor[28] = 0;
     tok_tipo[29] = 30;
     tok_inicio[29] = 107;
@@ -5198,8 +5198,8 @@ int inicia_ir9()
     tok_largo[15] = 1;
     tok_valor[15] = 0;
     tok_tipo[16] = 3;
-    tok_inicio[16] = 54;
-    tok_largo[16] = 11;
+    tok_inicio[16] = 55;
+    tok_largo[16] = 9;
     tok_valor[16] = 0;
     tok_tipo[17] = 35;
     tok_inicio[17] = 65;
@@ -5238,8 +5238,8 @@ int inicia_ir9()
     tok_largo[25] = 1;
     tok_valor[25] = 0;
     tok_tipo[26] = 3;
-    tok_inicio[26] = 98;
-    tok_largo[26] = 12;
+    tok_inicio[26] = 99;
+    tok_largo[26] = 10;
     tok_valor[26] = 0;
     tok_tipo[27] = 35;
     tok_inicio[27] = 110;

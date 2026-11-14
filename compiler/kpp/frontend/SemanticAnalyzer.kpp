@@ -3947,7 +3947,7 @@ int inicia_nodos10()
     tok_inicio[64] = 154;
     tok_inicio[65] = 156;
     tok_inicio[66] = 165;
-    tok_inicio[67] = 166;
+    tok_inicio[67] = 167;
     tok_inicio[68] = 173;
     tok_inicio[69] = 175;
     tok_inicio[70] = 180;
@@ -3957,7 +3957,7 @@ int inicia_nodos10()
     tok_inicio[74] = 189;
     tok_inicio[75] = 191;
     tok_inicio[76] = 201;
-    tok_inicio[77] = 202;
+    tok_inicio[77] = 203;
     tok_inicio[78] = 209;
     tok_inicio[79] = 211;
     tok_inicio[80] = 216;
@@ -3967,7 +3967,7 @@ int inicia_nodos10()
     tok_inicio[84] = 222;
     tok_inicio[85] = 229;
     tok_inicio[86] = 231;
-    tok_inicio[87] = 233;
+    tok_inicio[87] = 234;
     tok_inicio[88] = 239;
     tok_inicio[89] = 241;
     tok_inicio[90] = 246;
@@ -4051,7 +4051,7 @@ int inicia_nodos10()
     tok_largo[64] = 1;
     tok_largo[65] = 9;
     tok_largo[66] = 1;
-    tok_largo[67] = 7;
+    tok_largo[67] = 5;
     tok_largo[68] = 1;
     tok_largo[69] = 5;
     tok_largo[70] = 1;
@@ -4061,7 +4061,7 @@ int inicia_nodos10()
     tok_largo[74] = 1;
     tok_largo[75] = 10;
     tok_largo[76] = 1;
-    tok_largo[77] = 7;
+    tok_largo[77] = 5;
     tok_largo[78] = 1;
     tok_largo[79] = 5;
     tok_largo[80] = 1;
@@ -4071,7 +4071,7 @@ int inicia_nodos10()
     tok_largo[84] = 6;
     tok_largo[85] = 1;
     tok_largo[86] = 1;
-    tok_largo[87] = 6;
+    tok_largo[87] = 4;
     tok_largo[88] = 1;
     tok_largo[89] = 5;
     tok_largo[90] = 1;
@@ -4783,7 +4783,7 @@ int inicia_nodos12()
     tok_inicio[35] = 82;
     tok_inicio[36] = 84;
     tok_inicio[37] = 89;
-    tok_inicio[38] = 90;
+    tok_inicio[38] = 91;
     tok_inicio[39] = 93;
     tok_inicio[40] = 94;
     tok_inicio[41] = 96;
@@ -4836,7 +4836,7 @@ int inicia_nodos12()
     tok_largo[35] = 1;
     tok_largo[36] = 5;
     tok_largo[37] = 1;
-    tok_largo[38] = 3;
+    tok_largo[38] = 1;
     tok_largo[39] = 1;
     tok_largo[40] = 1;
     tok_largo[41] = 1;
@@ -5191,7 +5191,7 @@ int inicia_nodos13()
     tok_inicio[43] = 104;
     tok_inicio[44] = 105;
     tok_inicio[45] = 106;
-    tok_inicio[46] = 108;
+    tok_inicio[46] = 109;
     tok_inicio[47] = 111;
     tok_inicio[48] = 112;
     tok_inicio[49] = 114;
@@ -5199,7 +5199,7 @@ int inicia_nodos13()
     tok_inicio[51] = 120;
     tok_inicio[52] = 122;
     tok_inicio[53] = 124;
-    tok_inicio[54] = 126;
+    tok_inicio[54] = 127;
     tok_inicio[55] = 129;
     tok_inicio[56] = 131;
     tok_inicio[57] = 138;
@@ -5252,7 +5252,7 @@ int inicia_nodos13()
     tok_largo[43] = 1;
     tok_largo[44] = 1;
     tok_largo[45] = 1;
-    tok_largo[46] = 3;
+    tok_largo[46] = 1;
     tok_largo[47] = 1;
     tok_largo[48] = 1;
     tok_largo[49] = 3;
@@ -5260,7 +5260,7 @@ int inicia_nodos13()
     tok_largo[51] = 1;
     tok_largo[52] = 1;
     tok_largo[53] = 1;
-    tok_largo[54] = 3;
+    tok_largo[54] = 1;
     tok_largo[55] = 1;
     tok_largo[56] = 6;
     tok_largo[57] = 1;
@@ -5686,7 +5686,7 @@ int inicia_nodos14()
     tok_inicio[18] = 45;
     tok_inicio[19] = 47;
     tok_inicio[20] = 56;
-    tok_inicio[21] = 57;
+    tok_inicio[21] = 58;
     tok_inicio[22] = 64;
     tok_inicio[23] = 65;
     tok_inicio[24] = 67;
@@ -5704,7 +5704,7 @@ int inicia_nodos14()
     tok_inicio[36] = 102;
     tok_inicio[37] = 104;
     tok_inicio[38] = 113;
-    tok_inicio[39] = 114;
+    tok_inicio[39] = 115;
     tok_inicio[40] = 121;
     tok_inicio[41] = 123;
     tok_inicio[42] = 124;
@@ -5714,7 +5714,7 @@ int inicia_nodos14()
     tok_inicio[46] = 133;
     tok_inicio[47] = 135;
     tok_inicio[48] = 145;
-    tok_inicio[49] = 146;
+    tok_inicio[49] = 147;
     tok_inicio[50] = 153;
     tok_inicio[51] = 155;
     tok_inicio[52] = 160;
@@ -5726,7 +5726,7 @@ int inicia_nodos14()
     tok_inicio[58] = 173;
     tok_inicio[59] = 175;
     tok_inicio[60] = 185;
-    tok_inicio[61] = 186;
+    tok_inicio[61] = 187;
     tok_inicio[62] = 193;
     tok_inicio[63] = 195;
     tok_inicio[64] = 200;
@@ -5760,7 +5760,7 @@ int inicia_nodos14()
     tok_largo[18] = 1;
     tok_largo[19] = 9;
     tok_largo[20] = 1;
-    tok_largo[21] = 7;
+    tok_largo[21] = 5;
     tok_largo[22] = 1;
     tok_largo[23] = 1;
     tok_largo[24] = 3;
@@ -5778,7 +5778,7 @@ int inicia_nodos14()
     tok_largo[36] = 1;
     tok_largo[37] = 9;
     tok_largo[38] = 1;
-    tok_largo[39] = 7;
+    tok_largo[39] = 5;
     tok_largo[40] = 1;
     tok_largo[41] = 1;
     tok_largo[42] = 1;
@@ -5788,7 +5788,7 @@ int inicia_nodos14()
     tok_largo[46] = 1;
     tok_largo[47] = 10;
     tok_largo[48] = 1;
-    tok_largo[49] = 7;
+    tok_largo[49] = 5;
     tok_largo[50] = 1;
     tok_largo[51] = 5;
     tok_largo[52] = 1;
@@ -5800,7 +5800,7 @@ int inicia_nodos14()
     tok_largo[58] = 1;
     tok_largo[59] = 10;
     tok_largo[60] = 1;
-    tok_largo[61] = 7;
+    tok_largo[61] = 5;
     tok_largo[62] = 1;
     tok_largo[63] = 5;
     tok_largo[64] = 1;
