@@ -421,18 +421,6 @@ public:
     emitExit(
         X86Emitter& emitter);
 
-    /*
-     * Posiciones del código generado que referencian
-     * la variable del cursor gráfico en DATA.
-     *
-     * El backend las parchea con la dirección
-     * absoluta de la variable cuando conoce dataBase.
-     *
-     * KPP_CURSOR_DATA
-     */
-    const std::vector<std::size_t>&
-    cursorPatches() const;
-
     // Posiciones que referencian la base del buffer de
     // líneas, su contador y el cursor de repintado.
     // El backend las parchea igual que las del cursor.
@@ -541,11 +529,6 @@ private:
     emitMouseHandler(
         X86Emitter& emitter,
         std::size_t eventLoop);
-
-    // Cursor gráfico: X/Y empaquetado en una variable
-    // de DATA. Antes vivía en EBP; EBP es ahora el
-    // puntero de marco de las funciones (Rebanada 1).
-    std::vector<std::size_t> cursorPatchList;
 
     std::vector<std::size_t> lineBufferPatchList;
     std::vector<std::size_t> lineCountPatchList;

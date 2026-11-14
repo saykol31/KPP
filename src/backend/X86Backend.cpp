@@ -513,9 +513,6 @@ X86Backend::generate(
 
     std::size_t integerBufferOffset = 0;
 
-    // KPP_CURSOR_DATA
-    std::size_t cursorDataOffset = 0;
-
     // Buffer de líneas de la Konsole (DATA): cabeza
     // circular, contador, primera visible, cursor de
     // repintado y las 512 ranuras de 64 bytes.
@@ -4881,19 +4878,6 @@ if (!integerBufferPatches.empty())
 
 
 // ========================================================
-// CURSOR GRÁFICO (DATA) — KPP_CURSOR_DATA
-// ========================================================
-
-cursorDataOffset =
-    data.size();
-
-// X/Y empaquetado: 4 bytes.
-data.resize(
-    data.size() + 4,
-    0);
-
-
-// ========================================================
 // BUFFER DE LÍNEAS DEL WRITER (DATA)
 //
 // lineCount: cuántas líneas van anotadas (4 bytes).
@@ -5698,27 +5682,6 @@ for (const auto& patch :
             emitter.patch32(
                 patch,
                 integerBufferAddress);
-        }
-    }
-
-
-    // ========================================================
-    // PATCH CURSOR GRÁFICO — KPP_CURSOR_DATA
-    // ========================================================
-
-    {
-        const std::uint32_t
-            cursorAddress =
-                dataBase +
-                static_cast<std::uint32_t>(
-                    cursorDataOffset);
-
-        for (const std::size_t patch :
-             runtime.cursorPatches())
-        {
-            emitter.patch32(
-                patch,
-                cursorAddress);
         }
     }
 

@@ -16,24 +16,6 @@ KolibriRuntime::emitGraphicsRuntime(
     KolibriRuntimeResult result;
 
     // ========================================================
-    // PRINT CURSOR — celda retirada (Konsole)
-    // ========================================================
-    //
-    // El cursor gráfico de las columnas vive aún en
-    // DATA y se inicializa como siempre, pero desde
-    // la rebanada 3 de la Konsole ningún PRINT lo
-    // usa: la salida es vertical y se dibuja desde
-    // el buffer circular. Su retiro de DATA es
-    // limpieza de la rebanada 5.
-    //
-
-    emitter.emitMovEaxImm32(
-        (35u << 16) + 40u);
-
-    cursorPatchList.push_back(
-        emitter.emitMovMemEax32Placeholder());
-
-    // ========================================================
     // KONSOLE — MÁSCARA DE EVENTOS (rebanada 1)
     //
     // Función 40 de KolibriOS: el programa pide los
@@ -138,9 +120,9 @@ KolibriRuntime::emitGraphicsRuntime(
     // ========================================================
     // EVENT 6 = MOUSE
     //
-    // Konsole rebanada 1: el evento se reconoce y se
-    // consume (vuelve al bucle). El desplazamiento
-    // del historial se procesa en la rebanada 4.
+    // El manejador de la rebanada 4 procesa los
+    // botones, las coordenadas y el desplazamiento
+    // vertical del historial.
     // ========================================================
 
     emitter.emitCmpEaxImm32(6);
@@ -453,7 +435,7 @@ KolibriRuntime::emitGraphicsRuntime(
 
     emitter.patchRel32(
         mouseDrawPatch,
-        drawWindow);
+        result.refreshOutputAddress);
 
     emitter.patchRel32(
         drawLinesCallPatch,
@@ -2579,12 +2561,12 @@ KolibriRuntime::emitScrollbar(
 //   - Clic en el pulgar: agarre; mientras el botón
 //     siga, la posición del puntero manda con
 //     desplazamiento proporcional.
-// Si firstVisible cambia se llama a DRAW_WINDOW
-// (contenido y barra se repintan sin re-ejecutar
-// el programa); si no cambia, no se repinta nada.
-// Devuelve el parche de la llamada a DRAW_WINDOW;
-// los saltos al bucle se parchean dentro porque
-// eventLoop ya se conoce al emitir.
+// Si firstVisible cambia se llama a REFRESH_OUTPUT
+// (contenido y barra se repintan sin recrear la
+// ventana ni re-ejecutar el programa); si no cambia,
+// no se repinta nada. Devuelve el parche de la llamada
+// a REFRESH_OUTPUT; los saltos al bucle se parchean
+// dentro porque eventLoop ya se conoce al emitir.
 // ============================================================
 
 std::size_t
@@ -3159,15 +3141,5 @@ KolibriRuntime::emitExit(
     emitter.emitInt(0x40);
 }
 
-
-// ============================================================
-// CURSOR GRÁFICO — KPP_CURSOR_DATA
-// ============================================================
-
-const std::vector<std::size_t>&
-KolibriRuntime::cursorPatches() const
-{
-    return cursorPatchList;
-}
 
 }
