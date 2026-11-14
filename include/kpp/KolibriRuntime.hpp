@@ -461,6 +461,24 @@ public:
     const std::vector<std::size_t>&
     dragGrabPatches() const;
 
+    // Konsole (rebanada EDIT): el estado del menu y
+    // de la seleccion, el portapapeles de la consola
+    // y el bloque de textos del menu.
+    const std::vector<std::size_t>&
+    menuAbiertoPatches() const;
+
+    const std::vector<std::size_t>&
+    seleccionPatches() const;
+
+    const std::vector<std::size_t>&
+    clipLenPatches() const;
+
+    const std::vector<std::size_t>&
+    clipBufferPatches() const;
+
+    const std::vector<std::size_t>&
+    menuTextoPatches() const;
+
 private:
 
     // Konsole (rebanada 2): anota la línea en el
@@ -525,6 +543,48 @@ private:
     // que devuelve); si no, vuelve al bucle sin
     // repintar. eventLoop ya se conoce al emitirlo
     // y sus saltos de salida se parchean dentro.
+    // Konsole (rebanada EDIT): dibuja el boton EDIT
+    // (funcion 8, id 2) en la barra de titulo y, si
+    // el menu esta abierto, el panel con sus cinco
+    // renglones como botones 3 a 7: CORTAR, COPIAR,
+    // SELECCIONAR TODO, PEGAR y ELIMINAR — el menu
+    // EDIT de TinyPad. La llaman DRAW_WINDOW y
+    // REFRESH_OUTPUT: el refresco limpia el area de
+    // texto y lo que el menu pinta encima debe
+    // repintarse.
+    void
+    emitDibujaEdit(
+        X86Emitter& emitter);
+
+    // Konsole (rebanada EDIT): copia las lineas del
+    // historial al portapapeles — de cada registro,
+    // el texto hasta su primer NUL o su longitud de
+    // dibujo, con las lineas unidas por CR LF como
+    // en el portapapeles del sistema — y lo pone
+    // tambien en ese portapapeles con la funcion
+    // 54.2, con su encabezado de 12 bytes (tamano
+    // total, tipo 0 = texto, codificacion 1 =
+    // CP866), como put_to_clipboard de TinyPad.
+    void
+    emitCopiar(
+        X86Emitter& emitter);
+
+    // Konsole (rebanada EDIT): pega el portapapeles
+    // en KONSOLE.TXT, en la raiz, con la funcion 70
+    // (subfuncion 2: crear y escribir). Con el
+    // portapapeles vacio (clipLen = 0) no escribe.
+    void
+    emitPegar(
+        X86Emitter& emitter);
+
+    // Konsole (rebanada EDIT): vacia el historial
+    // — lineCount, lineHead y firstVisible a cero
+    // y la seleccion se apaga. Es el cuerpo de
+    // ELIMINAR y la segunda mitad de CORTAR.
+    void
+    emitVaciar(
+        X86Emitter& emitter);
+
     std::size_t
     emitMouseHandler(
         X86Emitter& emitter,
@@ -540,6 +600,12 @@ private:
     std::vector<std::size_t> thumbHeightPatchList;
     std::vector<std::size_t> dragStatePatchList;
     std::vector<std::size_t> dragGrabPatchList;
+    std::vector<std::size_t> menuAbiertoPatchList;
+    std::vector<std::size_t> seleccionPatchList;
+    std::vector<std::size_t> clipLenPatchList;
+    std::vector<std::size_t> clipBufferPatchList;
+    std::vector<std::size_t> menuTextoPatchList;
+    std::vector<std::size_t> editCallPatchList;
 };
 
 }

@@ -525,6 +525,11 @@ X86Backend::generate(
     std::size_t thumbHeightDataOffset = 0;
     std::size_t dragStateDataOffset = 0;
     std::size_t dragGrabDataOffset = 0;
+    std::size_t menuAbiertoDataOffset = 0;
+    std::size_t seleccionDataOffset = 0;
+    std::size_t clipLenDataOffset = 0;
+    std::size_t clipBufferDataOffset = 0;
+    std::size_t menuTextoDataOffset = 0;
 
     // --------------------------------------------------------
     // Título automático
@@ -4965,6 +4970,68 @@ data.resize(
 
 
 // ========================================================
+// MENÚ EDIT DE LA KONSOLE (DATA)
+//
+// menuAbierto: 1 mientras el menú EDIT está
+// desplegado. seleccion: 1 tras SELECCIONAR
+// TODO. clipLen: los bytes válidos del texto
+// del portapapeles. clipBuffer: el portapapeles
+// — 12 bytes de encabezado (el del portapapeles
+// del sistema) y el texto: hasta 512 líneas de
+// 40 caracteres con su CR LF, 42 por línea.
+// menuTexto: un solo bloque con los rótulos y
+// la ruta: "EDIT" en 0, "CORTAR" en 5, "COPIAR"
+// en 12, "SELECCIONAR TODO" en 19, "PEGAR" en
+// 36, "ELIMINAR" en 42 y "KONSOLE.TXT" en 51.
+// ========================================================
+
+menuAbiertoDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+seleccionDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+clipLenDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 4,
+    0);
+
+clipBufferDataOffset =
+    data.size();
+
+data.resize(
+    data.size() + 12 + 512 * 42,
+    0);
+
+menuTextoDataOffset =
+    data.size();
+
+{
+    static const char menuTexto[] =
+        "EDIT\0CORTAR\0COPIAR\0SELECCIONAR TODO\0PEGAR\0ELIMINAR\0KONSOLE.TXT";
+
+    for (std::size_t i = 0;
+         i < sizeof(menuTexto);
+         ++i)
+    {
+        data.push_back(
+            static_cast<std::uint8_t>(
+                menuTexto[i]));
+    }
+}
+
+
+// ========================================================
 // STRING POOL
 // ========================================================
 
@@ -5816,6 +5883,87 @@ for (const auto& patch :
             emitter.patch32(
                 patch,
                 lineBufferAddress);
+        }
+    }
+
+
+    // ========================================================
+    // PATCH MENÚ EDIT DE LA KONSOLE — las celdas
+    // del menú y de la selección, el portapapeles
+    // y la base del bloque de textos (cada uso
+    // del bloque suma su desplazamiento en
+    // código).
+    // ========================================================
+
+    {
+        const std::uint32_t
+            menuAbiertoAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    menuAbiertoDataOffset);
+
+        for (const std::size_t patch :
+             runtime.menuAbiertoPatches())
+        {
+            emitter.patch32(
+                patch,
+                menuAbiertoAddress);
+        }
+
+        const std::uint32_t
+            seleccionAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    seleccionDataOffset);
+
+        for (const std::size_t patch :
+             runtime.seleccionPatches())
+        {
+            emitter.patch32(
+                patch,
+                seleccionAddress);
+        }
+
+        const std::uint32_t
+            clipLenAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    clipLenDataOffset);
+
+        for (const std::size_t patch :
+             runtime.clipLenPatches())
+        {
+            emitter.patch32(
+                patch,
+                clipLenAddress);
+        }
+
+        const std::uint32_t
+            clipBufferAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    clipBufferDataOffset);
+
+        for (const std::size_t patch :
+             runtime.clipBufferPatches())
+        {
+            emitter.patch32(
+                patch,
+                clipBufferAddress);
+        }
+
+        const std::uint32_t
+            menuTextoAddress =
+                dataBase +
+                static_cast<std::uint32_t>(
+                    menuTextoDataOffset);
+
+        for (const std::size_t patch :
+             runtime.menuTextoPatches())
+        {
+            emitter.patch32(
+                patch,
+                menuTextoAddress);
         }
     }
 

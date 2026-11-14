@@ -207,7 +207,60 @@ KolibriRuntime::emitGraphicsRuntime(
     // int 0x40
     emitter.emitInt(0x40);
 
-    // KolibriOS devuelve el botón en AH
+    // KolibriOS devuelve el botón en AH.
+
+    // ¿Botón 2 (EDIT)? -> la isla del menú.
+    emitter.emitCmpAhImm8(2);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonEditPatch =
+        emitter.emitRel32Placeholder();
+
+    // ¿Botones 3 a 7 (los renglones del menú)?
+    emitter.emitCmpAhImm8(3);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonCutPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitCmpAhImm8(4);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonCopyPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitCmpAhImm8(5);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonSelPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitCmpAhImm8(6);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonPastePatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitCmpAhImm8(7);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonDelPatch =
+        emitter.emitRel32Placeholder();
+
+    // Botón 1 = cerrar; otro cualquiera vuelve al
+    // bucle de eventos.
     emitter.emitCmpAhImm8(1);
 
     // Si no es botón 1 -> event loop
@@ -311,6 +364,21 @@ KolibriRuntime::emitGraphicsRuntime(
 
 
     // --------------------------------------------------------
+    // EL BOTÓN EDIT Y EL MENÚ (Konsole EDIT)
+    //
+    // Se definen en cada redibujo, como manda la
+    // función 8: la función 0 borra los botones
+    // anteriores al recrear la ventana.
+    // --------------------------------------------------------
+
+    // call DIBUJA_EDIT
+    emitter.emitByte(0xE8);
+
+    const std::size_t drawEditCallPatch =
+        emitter.emitRel32Placeholder();
+
+
+    // --------------------------------------------------------
     // TÍTULO — reafirmarlo con la función 71.1: en
     // los redibujos la función 0 pinta el marco pero
     // no el texto del título, y el header quedaba
@@ -390,6 +458,321 @@ KolibriRuntime::emitGraphicsRuntime(
 
 
     // ========================================================
+    // DIBUJA_EDIT — el botón EDIT y el menú (Konsole
+    // EDIT): la rutina que dibuja el botón en la
+    // barra de título y el panel si está abierto.
+    // ========================================================
+
+    const std::size_t dibujaEditAddress =
+        emitter.size();
+
+    emitDibujaEdit(emitter);
+
+
+    // ========================================================
+    // COPIAR / PEGAR / VACIAR (Konsole EDIT)
+    // ========================================================
+
+    const std::size_t copiarAddress =
+        emitter.size();
+
+    emitCopiar(emitter);
+
+    const std::size_t pegarAddress =
+        emitter.size();
+
+    emitPegar(emitter);
+
+    const std::size_t vaciarAddress =
+        emitter.size();
+
+    emitVaciar(emitter);
+
+
+    // ========================================================
+    // ISLAS DE LOS BOTONES DEL MENÚ (Konsole EDIT)
+    //
+    // El despachador de botones salta aquí. Cada
+    // isla valida a la entrada — el menú abierto
+    // para los cinco renglones, y la selección
+    // activa para CORTAR, COPIAR y ELIMINAR, como
+    // TinyPad deshabilita sus opciones sin
+    // selección — y si actúa, cierra el menú,
+    // redibuja la ventana y vuelve al bucle. Si la
+    // guarda falla, la isla no actúa y vuelve al
+    // bucle con el menú como estaba.
+    // ========================================================
+
+    // --- EDIT: abre o cierra el menú. ---
+    const std::size_t editIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // xor eax, 1
+    emitter.emitByte(0x35);
+
+    const std::size_t editXorPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(editXorPatch, 1);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call drawWindow
+    emitter.emitByte(0xE8);
+
+    const std::size_t editRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t editLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --- CORTAR: copiar y vaciar. ---
+    const std::size_t cutIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t cutGuardPatch =
+        emitter.emitJeRel32Placeholder();
+
+    seleccionPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t cutSelPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // call COPIAR
+    emitter.emitByte(0xE8);
+
+    const std::size_t cutCopyPatch =
+        emitter.emitRel32Placeholder();
+
+    // call VACIAR
+    emitter.emitByte(0xE8);
+
+    const std::size_t cutVaciarPatch =
+        emitter.emitRel32Placeholder();
+
+    // menuAbierto = 0
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call drawWindow
+    emitter.emitByte(0xE8);
+
+    const std::size_t cutRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t cutSalir =
+        emitter.size();
+
+    emitter.patchRel32(cutGuardPatch, cutSalir);
+    emitter.patchRel32(cutSelPatch, cutSalir);
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t cutLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --- COPIAR ---
+    const std::size_t copyIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t copyGuardPatch =
+        emitter.emitJeRel32Placeholder();
+
+    seleccionPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t copySelPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // call COPIAR
+    emitter.emitByte(0xE8);
+
+    const std::size_t copiarCallPatch =
+        emitter.emitRel32Placeholder();
+
+    // menuAbierto = 0
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call drawWindow
+    emitter.emitByte(0xE8);
+
+    const std::size_t copyRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t copySalir =
+        emitter.size();
+
+    emitter.patchRel32(copyGuardPatch, copySalir);
+    emitter.patchRel32(copySelPatch, copySalir);
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t copyLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --- SELECCIONAR TODO ---
+    const std::size_t selIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t selGuardPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // seleccion = 1
+    emitter.emitMovEaxImm32(1);
+
+    seleccionPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // menuAbierto = 0
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call drawWindow
+    emitter.emitByte(0xE8);
+
+    const std::size_t selRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t selSalir =
+        emitter.size();
+
+    emitter.patchRel32(selGuardPatch, selSalir);
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t selLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --- PEGAR ---
+    const std::size_t pasteIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t pasteGuardPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // call PEGAR
+    emitter.emitByte(0xE8);
+
+    const std::size_t pegarCallPatch =
+        emitter.emitRel32Placeholder();
+
+    // menuAbierto = 0
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call drawWindow
+    emitter.emitByte(0xE8);
+
+    const std::size_t pasteRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t pasteSalir =
+        emitter.size();
+
+    emitter.patchRel32(pasteGuardPatch, pasteSalir);
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t pasteLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --- ELIMINAR: vaciar sin copiar. ---
+    const std::size_t delIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t delGuardPatch =
+        emitter.emitJeRel32Placeholder();
+
+    seleccionPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t delSelPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // call VACIAR
+    emitter.emitByte(0xE8);
+
+    const std::size_t delVaciarPatch =
+        emitter.emitRel32Placeholder();
+
+    // menuAbierto = 0
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call drawWindow
+    emitter.emitByte(0xE8);
+
+    const std::size_t delRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t delSalir =
+        emitter.size();
+
+    emitter.patchRel32(delGuardPatch, delSalir);
+    emitter.patchRel32(delSelPatch, delSalir);
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t delLoopPatch =
+        emitter.emitRel32Placeholder();
+
+
+    // ========================================================
     // PATCH INTERNAL RUNTIME JUMPS
     // ========================================================
 
@@ -448,6 +831,111 @@ KolibriRuntime::emitGraphicsRuntime(
     emitter.patchRel32(
         scrollbarCallPatch,
         scrollbarAddress);
+
+
+    emitter.patchRel32(
+        buttonEditPatch,
+        editIsla);
+
+    emitter.patchRel32(
+        buttonCutPatch,
+        cutIsla);
+
+    emitter.patchRel32(
+        buttonCopyPatch,
+        copyIsla);
+
+    emitter.patchRel32(
+        buttonSelPatch,
+        selIsla);
+
+    emitter.patchRel32(
+        buttonPastePatch,
+        pasteIsla);
+
+    emitter.patchRel32(
+        buttonDelPatch,
+        delIsla);
+
+    emitter.patchRel32(
+        editRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        editLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        cutCopyPatch,
+        copiarAddress);
+
+    emitter.patchRel32(
+        cutVaciarPatch,
+        vaciarAddress);
+
+    emitter.patchRel32(
+        cutRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        cutLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        copiarCallPatch,
+        copiarAddress);
+
+    emitter.patchRel32(
+        copyRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        copyLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        selRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        selLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        pegarCallPatch,
+        pegarAddress);
+
+    emitter.patchRel32(
+        pasteRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        pasteLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        delVaciarPatch,
+        vaciarAddress);
+
+    emitter.patchRel32(
+        delRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        delLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        drawEditCallPatch,
+        dibujaEditAddress);
+
+    for (const std::size_t patch :
+         editCallPatchList)
+    {
+        emitter.patchRel32(
+            patch,
+            dibujaEditAddress);
+    }
 
 
     return result;
@@ -2141,6 +2629,15 @@ KolibriRuntime::emitRefreshOutput(
     const std::size_t lineasPatch =
         emitter.emitRel32Placeholder();
 
+    // call DIBUJA_EDIT (Konsole EDIT): el refresco
+    // acaba de limpiar el área de texto; el menú,
+    // si está abierto, se repinta encima antes de
+    // cerrar el redibujo.
+    emitter.emitByte(0xE8);
+
+    editCallPatchList.push_back(
+        emitter.emitRel32Placeholder());
+
     // end redraw (función 12.2)
     emitter.emitMovEaxImm32(12);
 
@@ -2205,6 +2702,73 @@ KolibriRuntime::emitDrawLines(
     // mov edi, eax  (EDI = filas por dibujar)
     emitter.emitByte(0x89);
     emitter.emitByte(0xC7);
+
+
+    // KONSOLE EDIT — el tinte de la selección: con
+    // la selección activa, el área de las filas
+    // visibles se tiñe (función 13, X = 30, ancho
+    // 440, Y = 40, alto = filas * 10) antes de
+    // dibujar los textos. EAX aún guarda las filas.
+    seleccionPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    // je sinSeleccion
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t sinSeleccionPatch =
+        emitter.emitRel32Placeholder();
+
+    // EDX = filas (copia para el * 10).
+    // mov edx, eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC2);
+
+    // shl eax, 3
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0xE0);
+    emitter.emitByte(0x03);
+
+    // add eax, edx (dos veces: *8 + *1 + *1 = *10)
+    emitter.emitByte(0x01);
+    emitter.emitByte(0xD0);
+
+    emitter.emitByte(0x01);
+    emitter.emitByte(0xD0);
+
+    // mov ecx, eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC1);
+
+    // add ecx, 40 << 16
+    emitter.emitByte(0x81);
+    emitter.emitByte(0xC1);
+
+    const std::size_t tinteYPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(tinteYPatch, (40u << 16));
+
+    emitter.emitMovEaxImm32(13);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (30u << 16) + 440u);
+
+    emitter.emitMovRegImm32(
+        0xBA,
+        0x00184060u);
+
+    emitter.emitInt(0x40);
+
+    const std::size_t sinSeleccion =
+        emitter.size();
+
+    emitter.patchRel32(
+        sinSeleccionPatch,
+        sinSeleccion);
 
     // ranura inicial = (lineHead - lineCount
     // + firstVisible) & 511.
@@ -3060,6 +3624,656 @@ KolibriRuntime::emitMouseHandler(
 
 
 // ============================================================
+// KONSOLE — EL BOTÓN EDIT Y EL MENÚ
+//
+// DIBUJA_EDIT es una rutina con RET. Define el
+// botón EDIT (función 8, id 2) en la barra de
+// título — X = 400, Y = 5, 70 x 17, fuera del
+// rectángulo que el refresco limpia (que empieza
+// en Y = 38) — y le dibuja el rótulo con la
+// función 4. Si el menú está abierto dibuja
+// además el panel (función 13) y sus cinco
+// renglones como botones 3 a 7 con sus rótulos:
+// CORTAR, COPIAR, SELECCIONAR TODO, PEGAR y
+// ELIMINAR — el menú EDIT de TinyPad. Los textos
+// viven en el bloque menuTexto de DATA; cada
+// carga parchea la base y suma su desplazamiento
+// (0, 5, 12, 19, 36, 42 y 51).
+// ============================================================
+
+void
+KolibriRuntime::emitDibujaEdit(
+    X86Emitter& emitter)
+{
+    // El botón EDIT (función 8).
+    emitter.emitMovEaxImm32(8);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (400u << 16) + 70u);
+
+    emitter.emitMovRegImm32(
+        0xB9,
+        (5u << 16) + 17u);
+
+    // EDX = id del botón: 2.
+    emitter.emitMovRegImm32(
+        0xBA,
+        2);
+
+    // ESI = color del botón.
+    emitter.emitMovRegImm32(
+        0xBE,
+        0x00305070u);
+
+    emitter.emitInt(0x40);
+
+    // El rótulo "EDIT" (función 4).
+    emitter.emitMovEaxImm32(4);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (423u << 16) + 9u);
+
+    emitter.emitMovRegImm32(
+        0xB9,
+        0x80FFFFFFu);
+
+    // mov edx, menuTexto + 0
+    emitter.emitByte(0xBA);
+
+    menuTextoPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // mov esi, 4 (la longitud)
+    emitter.emitByte(0xBE);
+
+    const std::size_t editLenPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(editLenPatch, 4);
+
+    emitter.emitInt(0x40);
+
+    // ¿Menú cerrado? -> fin.
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t cerradoPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // El panel del menú (función 13): X = 352,
+    // Y = 24, 138 x 74 — cubre los cinco renglones.
+    emitter.emitMovEaxImm32(13);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (352u << 16) + 138u);
+
+    emitter.emitMovRegImm32(
+        0xB9,
+        (24u << 16) + 74u);
+
+    emitter.emitMovRegImm32(
+        0xBA,
+        0x00181818u);
+
+    emitter.emitInt(0x40);
+
+    // Los cinco renglones: botón (función 8) y
+    // rótulo (función 4) por renglón.
+    struct Renglon
+    {
+        std::uint32_t y;
+        std::uint32_t id;
+        std::uint32_t textoOff;
+        std::uint32_t textoLen;
+    };
+
+    const Renglon renglones[5] = {
+        {24, 3, 5, 6},
+        {38, 4, 12, 6},
+        {52, 5, 19, 16},
+        {66, 6, 36, 5},
+        {80, 7, 42, 8},
+    };
+
+    for (const Renglon& renglon : renglones)
+    {
+        emitter.emitMovEaxImm32(8);
+
+        emitter.emitMovRegImm32(
+            0xBB,
+            (352u << 16) + 138u);
+
+        emitter.emitMovRegImm32(
+            0xB9,
+            (renglon.y << 16) + 14u);
+
+        emitter.emitMovRegImm32(
+            0xBA,
+            renglon.id);
+
+        emitter.emitMovRegImm32(
+            0xBE,
+            0x00282828u);
+
+        emitter.emitInt(0x40);
+
+        emitter.emitMovEaxImm32(4);
+
+        emitter.emitMovRegImm32(
+            0xBB,
+            (358u << 16) + (renglon.y + 3));
+
+        emitter.emitMovRegImm32(
+            0xB9,
+            0x80FFFFFFu);
+
+        // mov edx, menuTexto + textoOff
+        emitter.emitByte(0xBA);
+
+        menuTextoPatchList.push_back(
+            emitter.emitImm32Placeholder());
+
+        if (renglon.textoOff != 0)
+        {
+            // add edx, textoOff
+            emitter.emitByte(0x83);
+            emitter.emitByte(0xC2);
+            emitter.emitByte(
+                static_cast<std::uint8_t>(
+                    renglon.textoOff));
+        }
+
+        // mov esi, textoLen
+        emitter.emitByte(0xBE);
+
+        const std::size_t lenPatch =
+            emitter.emitImm32Placeholder();
+
+        emitter.patch32(
+            lenPatch,
+            renglon.textoLen);
+
+        emitter.emitInt(0x40);
+    }
+
+    const std::size_t cerrado =
+        emitter.size();
+
+    emitter.patchRel32(cerradoPatch, cerrado);
+
+    emitter.emitRet();
+}
+
+
+// ============================================================
+// KONSOLE — COPIAR: DEL HISTORIAL A LOS
+// PORTAPAPELES
+//
+// Rutina con RET. Recorre las líneas lógicas
+// 0..lineCount-1 — la ranura física de la línea i
+// es (lineHead - lineCount + i) & 511 — y copia
+// el texto de cada registro al portapapeles de
+// la consola, que empieza 12 bytes dentro del
+// buffer: esos 12 son el encabezado del
+// portapapeles del sistema. De cada registro se
+// copia hasta el primer NUL o hasta agotar la
+// longitud de dibujo (en los enteros el NUL
+// llega tras los dígitos; en los textos, tras el
+// literal), y las líneas se unen con CR LF, sin
+// CR LF tras la última y con un NUL final que no
+// cuenta — el formato exacto de put_to_clipboard
+// de TinyPad (tp-clipboard.asm). Al final anota
+// el total del texto en clipLen y, si hay texto,
+// rellena el encabezado (tamaño = 12 + texto,
+// tipo = 0 texto, codificación = 1 CP866) y pone
+// el bloque en el portapapeles del sistema con
+// la función 54.2: ECX = el tamaño que guarda el
+// propio bloque, EDX = el bloque. Preserva EBX,
+// ESI y EDI.
+// ============================================================
+
+void
+KolibriRuntime::emitCopiar(
+    X86Emitter& emitter)
+{
+    // push ebx / esi / edi
+    emitter.emitPushEbx();
+
+    emitter.emitByte(0x56);
+    emitter.emitByte(0x57);
+
+    // EDI = el texto del portapapeles: la base
+    // más los 12 del encabezado.
+    // mov edi, imm32
+    emitter.emitByte(0xBF);
+
+    clipBufferPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // add edi, 12
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x0C);
+
+    // xor ebx, ebx (EBX = índice lógico)
+    emitter.emitByte(0x31);
+    emitter.emitByte(0xDB);
+
+    const std::size_t bucle =
+        emitter.size();
+
+    // ¿índice == lineCount? -> fin.
+    // cmp ebx, [lineCount]
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0x1D);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    const std::size_t finPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // ranura = (lineHead - lineCount + índice)
+    //          & 511, en ESI.
+    lineHeadPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // sub eax, [lineCount]
+    emitter.emitByte(0x2B);
+    emitter.emitByte(0x05);
+
+    lineCountPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // add eax, ebx
+    emitter.emitByte(0x01);
+    emitter.emitByte(0xD8);
+
+    emitter.emitAndEaxImm32(511);
+
+    // shl eax, 6
+    emitter.emitByte(0xC1);
+    emitter.emitByte(0xE0);
+    emitter.emitByte(0x06);
+
+    // add eax, imm32 (la base del buffer)
+    emitter.emitByte(0x05);
+
+    lineBufferPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // mov esi, eax (ESI = la ranura)
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xC6);
+
+    // mov ecx, [esi] (ECX = longitud de dibujo)
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x0E);
+
+    // add esi, 4 (ESI = el texto)
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC6);
+    emitter.emitByte(0x04);
+
+    const std::size_t copia =
+        emitter.size();
+
+    // ¿quedan caracteres? cmp ecx, 0
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xF9);
+    emitter.emitByte(0x00);
+
+    const std::size_t agotaPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // mov al, [esi]
+    emitter.emitByte(0x8A);
+    emitter.emitByte(0x06);
+
+    // cmp al, 0 (el NUL cierra la línea)
+    emitter.emitByte(0x3C);
+    emitter.emitByte(0x00);
+
+    const std::size_t nuloPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // mov [edi], al / inc esi / inc edi / dec ecx
+    emitter.emitByte(0x88);
+    emitter.emitByte(0x07);
+
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x47);
+    emitter.emitByte(0x49);
+
+    const std::size_t otraPatch =
+        emitter.emitJmpRel32Placeholder();
+
+    emitter.patchRel32(otraPatch, copia);
+
+    const std::size_t salto =
+        emitter.size();
+
+    emitter.patchRel32(agotaPatch, salto);
+    emitter.patchRel32(nuloPatch, salto);
+
+    // El separador entre líneas: si esta no es
+    // la última, van CR LF (0x0D, 0x0A).
+    lineCountPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // dec eax
+    emitter.emitByte(0x48);
+
+    // cmp ebx, eax
+    emitter.emitByte(0x3B);
+    emitter.emitByte(0xD8);
+
+    // jae sinSeparador
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x83);
+
+    const std::size_t sinSepPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov word [edi], 0x0A0D (CR LF en memoria)
+    emitter.emitByte(0x66);
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x07);
+    emitter.emitByte(0x0D);
+    emitter.emitByte(0x0A);
+
+    // add edi, 2
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x02);
+
+    const std::size_t sinSeparador =
+        emitter.size();
+
+    emitter.patchRel32(
+        sinSepPatch,
+        sinSeparador);
+
+    // inc ebx (la línea siguiente)
+    emitter.emitByte(0x43);
+
+    const std::size_t siguePatch =
+        emitter.emitJmpRel32Placeholder();
+
+    emitter.patchRel32(siguePatch, bucle);
+
+    const std::size_t fin =
+        emitter.size();
+
+    emitter.patchRel32(finPatch, fin);
+
+    // mov byte [edi], 0 (el NUL final, que no
+    // cuenta en el tamaño, como en TinyPad)
+    emitter.emitByte(0xC6);
+    emitter.emitByte(0x07);
+    emitter.emitByte(0x00);
+
+    // clipLen = EDI - la base - 12.
+    // mov eax, edi
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xF8);
+
+    // sub eax, imm32 (la base)
+    emitter.emitByte(0x2D);
+
+    clipBufferPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    // sub eax, 12
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xE8);
+    emitter.emitByte(0x0C);
+
+    clipLenPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // ¿clipLen = 0? -> no hay puesta al sistema.
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t puestoPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // El encabezado del bloque, como en
+    // put_to_clipboard: [base] = 12 + clipLen,
+    // [base + 4] = 0 (texto), [base + 8] = 1
+    // (CP866).
+    // mov esi, imm32 (la base)
+    emitter.emitByte(0xBE);
+
+    clipBufferPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    clipLenPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // add eax, 12
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC0);
+    emitter.emitByte(0x0C);
+
+    // mov [esi], eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x06);
+
+    // xor eax, eax / mov [esi + 4], eax
+    emitter.emitByte(0x31);
+    emitter.emitByte(0xC0);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x04);
+
+    // inc eax / mov [esi + 8], eax
+    emitter.emitByte(0x40);
+
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x46);
+    emitter.emitByte(0x08);
+
+    // La puesta (función 54.2): ECX = el tamaño
+    // que guarda el bloque, EDX = el bloque.
+    // mov ecx, [esi]
+    emitter.emitByte(0x8B);
+    emitter.emitByte(0x0E);
+
+    // mov edx, esi
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xF2);
+
+    emitter.emitMovEaxImm32(54);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        2);
+
+    emitter.emitInt(0x40);
+
+    const std::size_t puesto =
+        emitter.size();
+
+    emitter.patchRel32(puestoPatch, puesto);
+
+    // pop edi / esi / ebx
+    emitter.emitByte(0x5F);
+    emitter.emitByte(0x5E);
+
+    emitter.emitPopEbx();
+
+    emitter.emitRet();
+}
+
+
+// ============================================================
+// KONSOLE — PEGAR: DEL PORTAPAPELES A KONSOLE.TXT
+//
+// Rutina con RET. Con el portapapeles vacío
+// (clipLen = 0) vuelve sin escribir. Si no,
+// construye en la pila el bloque de parámetros
+// de la función 70 y escribe los clipLen bytes
+// del texto (la base más los 12 del encabezado)
+// en KONSOLE.TXT (subfunción 2: crear y
+// escribir), en la raíz — el mismo sitio del que
+// los programas leen sus archivos por nombre
+// pelado.
+// ============================================================
+
+void
+KolibriRuntime::emitPegar(
+    X86Emitter& emitter)
+{
+    // ¿clipLen = 0? -> fin, sin archivo.
+    clipLenPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(0);
+
+    const std::size_t vacioPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // sub esp, 28 (el bloque de parámetros)
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xEC);
+    emitter.emitByte(0x1C);
+
+    // mov dword [esp], 2 (la subfunción)
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x04);
+    emitter.emitByte(0x24);
+
+    const std::size_t subPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(subPatch, 2);
+
+    // mov dword [esp + 4], 0 (la posición)
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x04);
+
+    const std::size_t posPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(posPatch, 0);
+
+    // mov dword [esp + 8], 0 (reservado)
+    emitter.emitByte(0xC7);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x08);
+
+    const std::size_t resPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(resPatch, 0);
+
+    // Los bytes a escribir: [esp + 12] = clipLen.
+    clipLenPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    // mov [esp + 12], eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x0C);
+
+    // Los datos: [esp + 16] = el texto (la base
+    // del portapapeles más los 12 del encabezado).
+    // mov eax, imm32 (la base)
+    emitter.emitByte(0xB8);
+
+    clipBufferPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    emitter.emitAddEaxImm32(12);
+
+    // mov [esp + 16], eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x10);
+
+    // La ruta: [esp + 20] = menuTexto + 51.
+    // mov eax, imm32 (la base de los textos)
+    emitter.emitByte(0xB8);
+
+    menuTextoPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    emitter.emitAddEaxImm32(51);
+
+    // mov [esp + 20], eax
+    emitter.emitByte(0x89);
+    emitter.emitByte(0x44);
+    emitter.emitByte(0x24);
+    emitter.emitByte(0x14);
+
+    // mov ebx, esp / mov eax, 70 / int 0x40
+    emitter.emitByte(0x89);
+    emitter.emitByte(0xE3);
+
+    emitter.emitMovEaxImm32(70);
+
+    emitter.emitInt(0x40);
+
+    // add esp, 28
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC4);
+    emitter.emitByte(0x1C);
+
+    const std::size_t vacio =
+        emitter.size();
+
+    emitter.patchRel32(vacioPatch, vacio);
+
+    emitter.emitRet();
+}
+
+
+// ============================================================
+// KONSOLE — VACIAR: EL HISTORIAL A CERO
+//
+// Rutina con RET. Pone lineCount, lineHead y
+// firstVisible a cero y apaga la selección: la
+// consola queda como al nacer el programa. Es
+// el cuerpo de ELIMINAR y la segunda mitad de
+// CORTAR (que primero copia). Los registros del
+// buffer no se tocan: sin contador, no existen.
+// ============================================================
+
+void
+KolibriRuntime::emitVaciar(
+    X86Emitter& emitter)
+{
+    emitter.emitMovEaxImm32(0);
+
+    lineCountPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    lineHeadPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    firstVisiblePatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    seleccionPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitRet();
+}
+
+
+// ============================================================
 // ACCESORES DEL BUFFER DE LÍNEAS
 // ============================================================
 
@@ -3127,6 +4341,41 @@ const std::vector<std::size_t>&
 KolibriRuntime::dragGrabPatches() const
 {
     return dragGrabPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::menuAbiertoPatches() const
+{
+    return menuAbiertoPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::seleccionPatches() const
+{
+    return seleccionPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::clipLenPatches() const
+{
+    return clipLenPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::clipBufferPatches() const
+{
+    return clipBufferPatchList;
+}
+
+
+const std::vector<std::size_t>&
+KolibriRuntime::menuTextoPatches() const
+{
+    return menuTextoPatchList;
 }
 
 
