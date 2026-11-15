@@ -90,11 +90,40 @@ KPP_ROOT = Path(
     )
 )
 
-KPP_BIN = (
+# El binario del compilador se resuelve por existencia:
+# en Windows el build produce kpp.exe y en Linux/Debian,
+# kpp a secas. El Studio ejecuta el que se encuentre; si
+# no hay ninguno, KPP_BIN queda con el nombre propio de
+# la plataforma, para que el error de _check_kpp nombre
+# el archivo correcto en cada sistema.
+
+KPP_BIN_WIN = (
+    KPP_ROOT
+    / "bin"
+    / "kpp.exe"
+)
+
+KPP_BIN_UNIX = (
     KPP_ROOT
     / "bin"
     / "kpp"
 )
+
+if KPP_BIN_WIN.exists():
+
+    KPP_BIN = KPP_BIN_WIN
+
+elif KPP_BIN_UNIX.exists():
+
+    KPP_BIN = KPP_BIN_UNIX
+
+elif os.name == "nt":
+
+    KPP_BIN = KPP_BIN_WIN
+
+else:
+
+    KPP_BIN = KPP_BIN_UNIX
 
 PROJECTS_DIR = (
     KPP_ROOT
@@ -2494,7 +2523,7 @@ class KPPBootstrapStudio(tk.Tk):
             ]
 
             display_command = [
-                "./bin/kpp",
+                "./bin/" + KPP_BIN.name,
                 os.path.relpath(
                     self.current_file,
                     KPP_ROOT
