@@ -65,6 +65,58 @@ El ejecutable queda en `Output/`. Para correrlo en KolibriOS
 se copia a la imagen **sin la extensión `.bin`**: KolibriOS
 lo reconoce por su cabecera MENUET01, no por el nombre.
 
+## En Windows
+
+El Stage 0 es C++17 estándar, sin dependencias del sistema:
+también se construye en Windows nativo, sin WSL. Hacen falta
+git, CMake y un compilador C++ (el g++ de MinGW). Los tres
+se instalan con winget:
+
+```powershell
+winget install --id Git.Git -e
+winget install --id Kitware.CMake -e
+winget install --id BrechtSanders.WinLibs.POSIX.UCRT -e
+```
+
+Tras instalar, cierra y reabre la terminal: el PATH nuevo
+solo se lee al abrirla. Después, el clon y la construcción
+con CMake:
+
+```powershell
+git clone https://github.com/saykol31/KPP.git
+cd KPP
+cmake -S . -B build -G "MinGW Makefiles"
+cmake --build build --parallel 2
+```
+
+Produce `bin\kpp.exe`. Con él se compila un programa K++
+igual que en Linux:
+
+```powershell
+.\bin\kpp.exe projects\L01.02_hola.kpp
+```
+
+El ejecutable de KolibriOS queda en `Output\`, listo para
+copiarlo a la imagen sin la extensión `.bin`.
+
+Flujo probado en campo (2026-11-14): el `kpp.exe` construido
+en Windows emitió para `L01.02_hola.kpp` un binario con el
+mismo MD5 que el construido en Linux — el compilador es el
+mismo en los dos sistemas, byte a byte.
+
+Dos notas de campo (Windows 11):
+
+- **Smart App Control** puede bloquear `kpp.exe` al
+  ejecutarlo («An Application Control policy has blocked
+  this file»): es la política de Windows contra programas
+  sin firma. Desactivarla es decisión del usuario — está en
+  Seguridad de Windows → Control de aplicaciones y
+  navegador → Configuración de Smart App Control — y es de
+  un solo sentido: no se reactiva sin reinstalar Windows.
+- La consola puede mostrar torcidos los caracteres UTF-8
+  de la salida del compilador; `chcp 65001` lo endereza.
+  El binario generado no se ve afectado.
+
 ## Pruebas
 
 ```bash
