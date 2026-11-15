@@ -957,6 +957,9 @@ void IRGenerator::generateStatement(
         // Generar cuerpo
         // ----------------------------------------------------
 
+        loopEndLabels.push_back(
+            endLabel);
+
         enterVariableScope();
 
         for (const auto& nestedStatement :
@@ -968,6 +971,8 @@ void IRGenerator::generateStatement(
         }
 
         leaveVariableScope();
+
+        loopEndLabels.pop_back();
 
         // ----------------------------------------------------
         // Volver al inicio
@@ -988,6 +993,37 @@ void IRGenerator::generateStatement(
         function.instructions.push_back({
             IROpcode::Label,
             endLabel,
+            "",
+            "",
+            0
+        });
+
+        return;
+    }
+
+    // ========================================================
+    // BREAK (Ampliación 2)
+    //
+    // Salta a la etiqueta de fin del while más interno:
+    // la del fondo de la pila. Sin pila no hay ciclo —
+    // el analizador ya lo acusó; aquí se lanza, como en
+    // los demás casos de AST imposible de esta pieza.
+    // ========================================================
+
+    if (auto* breakStatement =
+        dynamic_cast<const BreakStatement*>(&statement))
+    {
+        (void)breakStatement;
+
+        if (loopEndLabels.empty())
+        {
+            throw std::runtime_error(
+                "K++ IR: break fuera de un ciclo");
+        }
+
+        function.instructions.push_back({
+            IROpcode::Jump,
+            loopEndLabels.back(),
             "",
             "",
             0

@@ -854,6 +854,8 @@ void SemanticAnalyzer::analyzeStatement(
 
         enterScope();
 
+        loopDepth = loopDepth + 1;
+
         for (const auto& nestedStatement :
              whileStatement->body->statements)
         {
@@ -861,7 +863,32 @@ void SemanticAnalyzer::analyzeStatement(
                 *nestedStatement);
         }
 
+        loopDepth = loopDepth - 1;
+
         leaveScope();
+
+        return;
+    }
+
+
+    // ========================================================
+    // BREAK (Ampliación 2)
+    // ========================================================
+
+    if (auto* breakStatement =
+        dynamic_cast<const BreakStatement*>(
+            &statement))
+    {
+        (void)breakStatement;
+
+        if (loopDepth == 0)
+        {
+            semanticErrors.push_back({
+                "break fuera de un ciclo while en función '" +
+                currentFunction +
+                "'"
+            });
+        }
 
         return;
     }

@@ -1003,6 +1003,26 @@ Parser::parseStatement()
 
 
     // ========================================================
+    // BREAK (Ampliación 2)
+    //
+    // break;
+    //
+    // Sale del while que lo contiene. Que haya un while
+    // es regla del analizador, no del parser: aquí la
+    // sentencia se reconoce y nada más.
+    // ========================================================
+
+    if (match(TokenType::KwBreak))
+    {
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después de break");
+
+        return std::make_unique<BreakStatement>();
+    }
+
+
+    // ========================================================
     // PRINT
     //
     // print("Hola");

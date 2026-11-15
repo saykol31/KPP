@@ -156,6 +156,17 @@ private:
     // ========================================================
 
     int labelCounter = 0;
+
+    // ========================================================
+    // PILA DE ETIQUETAS DE FIN DE CICLO (Ampliación 2)
+    //
+    // La etiqueta de fin de cada while que se está
+    // generando, la del más interno al fondo: es a la
+    // que salta un break.
+    // ========================================================
+
+    std::vector<std::string>
+        loopEndLabels;
 };
 
 }

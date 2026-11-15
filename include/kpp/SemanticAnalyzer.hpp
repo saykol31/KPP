@@ -183,6 +183,15 @@ private:
     // --------------------------------------------------------
 
     std::string currentFunction;
+
+    // --------------------------------------------------------
+    // Profundidad de ciclos while del análisis en curso
+    // (Ampliación 2): la rama de while la sube al entrar
+    // a su cuerpo y la baja al salir; un break con la
+    // profundidad en cero está fuera de todo ciclo.
+    // --------------------------------------------------------
+
+    int loopDepth = 0;
 };
 
 }

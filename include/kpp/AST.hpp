@@ -237,6 +237,22 @@ struct CallStatement : Statement
 };
 
 // ============================================================
+// BREAK (Ampliación 2)
+//
+// break;
+//
+// Sale del while que lo contiene (el más interno). El
+// nodo no lleva nada: ni expresión ni nombre — su
+// significado es su posición dentro del ciclo. Que
+// haya un ciclo es regla del analizador semántico;
+// a qué etiqueta salta es cosa del generador.
+// ============================================================
+
+struct BreakStatement : Statement
+{
+};
+
+// ============================================================
 // BLOQUE
 // ============================================================
 
