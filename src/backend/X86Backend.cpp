@@ -1,5 +1,6 @@
 
 
+// KPP_KONSOLE_FILE_MENU_V1
 #include "kpp/X86Backend.hpp"
 #include "kpp/KolibriRuntime.hpp"
 
@@ -5017,8 +5018,22 @@ menuTextoDataOffset =
     data.size();
 
 {
+    // KPP_KONSOLE_FILE_MENU_V1
+    // Los offsets se calculan sobre la cadena terminada:
+    //
+    // EDIT             0
+    // CORTAR           5
+    // COPIAR          12
+    // SELECCIONAR     19
+    // PEGAR           36
+    // ELIMINAR        42
+    // KONSOLE.TXT     51
+    // FILE            63
+    // OPEN            68
+    // SAVE            73
+    // CLOSE           78
     static const char menuTexto[] =
-        "EDIT\0CORTAR\0COPIAR\0SELECCIONAR TODO\0PEGAR\0ELIMINAR\0KONSOLE.TXT";
+        "EDIT\0CORTAR\0COPIAR\0SELECCIONAR TODO\0PEGAR\0ELIMINAR\0KONSOLE.TXT\0FILE\0OPEN\0SAVE\0CLOSE";
 
     for (std::size_t i = 0;
          i < sizeof(menuTexto);

@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+// KPP_KONSOLE_FILE_MENU_V1
+
 namespace kpp {
 
 // ============================================================
@@ -218,6 +220,44 @@ KolibriRuntime::emitGraphicsRuntime(
     const std::size_t buttonEditPatch =
         emitter.emitRel32Placeholder();
 
+
+    // KPP_KONSOLE_FILE_MENU_V1
+    // Botón 8 = FILE.
+    emitter.emitCmpAhImm8(8);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonFilePatch =
+        emitter.emitRel32Placeholder();
+
+    // FILE OPEN = botón 9.
+    emitter.emitCmpAhImm8(9);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonOpenPatch =
+        emitter.emitRel32Placeholder();
+
+    // FILE SAVE = botón 10.
+    emitter.emitCmpAhImm8(10);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonSavePatch =
+        emitter.emitRel32Placeholder();
+
+    // FILE CLOSE = botón 11.
+    emitter.emitCmpAhImm8(11);
+
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x84);
+
+    const std::size_t buttonFileClosePatch =
+        emitter.emitRel32Placeholder();
+
     // ¿Botones 3 a 7 (los renglones del menú)?
     emitter.emitCmpAhImm8(3);
 
@@ -378,6 +418,14 @@ KolibriRuntime::emitGraphicsRuntime(
         emitter.emitRel32Placeholder();
 
 
+    // KPP_KONSOLE_FILE_MENU_V1
+    // FILE se vuelve a dibujar en cada redraw.
+    emitter.emitByte(0xE8);
+
+    const std::size_t drawFileCallPatch =
+        emitter.emitRel32Placeholder();
+
+
     // --------------------------------------------------------
     // TÍTULO — reafirmarlo con la función 71.1: en
     // los redibujos la función 0 pinta el marco pero
@@ -470,6 +518,17 @@ KolibriRuntime::emitGraphicsRuntime(
 
 
     // ========================================================
+    // KPP_KONSOLE_FILE_MENU_V1
+    // DIBUJA_FILE
+    // ========================================================
+
+    const std::size_t dibujaFileAddress =
+        emitter.size();
+
+    emitDibujaFile(emitter);
+
+
+    // ========================================================
     // COPIAR / PEGAR / VACIAR (Konsole EDIT)
     // ========================================================
 
@@ -503,20 +562,26 @@ KolibriRuntime::emitGraphicsRuntime(
     // bucle con el menú como estaba.
     // ========================================================
 
-    // --- EDIT: abre o cierra el menú. ---
+    // --- EDIT: abre o cierra su menú. ---
+    // KPP_KONSOLE_FILE_MENU_V1: estado de menús
+    // 0 = cerrado, 1 = EDIT, 2 = FILE. Si EDIT
+    // está abierto se cierra (0); en cualquier
+    // otro caso se abre EDIT (1), cerrando FILE
+    // si estaba abierto. (El XOR 0<->1 original
+    // producía el estado 3 con FILE abierto.)
     const std::size_t editIsla =
         emitter.size();
 
     menuAbiertoPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    // xor eax, 1
-    emitter.emitByte(0x35);
+    emitter.emitCmpEaxImm32(1);
 
-    const std::size_t editXorPatch =
-        emitter.emitImm32Placeholder();
+    const std::size_t editAbiertoPatch =
+        emitter.emitJeRel32Placeholder();
 
-    emitter.patch32(editXorPatch, 1);
+    // Abrir EDIT: menuAbierto = 1.
+    emitter.emitMovEaxImm32(1);
 
     menuAbiertoPatchList.push_back(
         emitter.emitMovMemEax32Placeholder());
@@ -533,6 +598,31 @@ KolibriRuntime::emitGraphicsRuntime(
     const std::size_t editLoopPatch =
         emitter.emitRel32Placeholder();
 
+    // Cerrar EDIT: menuAbierto = 0.
+    const std::size_t editCerrar =
+        emitter.size();
+
+    emitter.patchRel32(
+        editAbiertoPatch,
+        editCerrar);
+
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    // call drawWindow
+    emitter.emitByte(0xE8);
+
+    const std::size_t editCloseDrawPatch =
+        emitter.emitRel32Placeholder();
+
+    // jmp eventLoop
+    emitter.emitByte(0xE9);
+
+    const std::size_t editCloseLoopPatch =
+        emitter.emitRel32Placeholder();
+
     // --- CORTAR: copiar y vaciar. ---
     const std::size_t cutIsla =
         emitter.size();
@@ -540,10 +630,10 @@ KolibriRuntime::emitGraphicsRuntime(
     menuAbiertoPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    emitter.emitCmpEaxImm32(0);
+    emitter.emitCmpEaxImm32(1);
 
     const std::size_t cutGuardPatch =
-        emitter.emitJeRel32Placeholder();
+        emitter.emitJneRel32Placeholder();
 
     seleccionPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
@@ -596,10 +686,10 @@ KolibriRuntime::emitGraphicsRuntime(
     menuAbiertoPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    emitter.emitCmpEaxImm32(0);
+    emitter.emitCmpEaxImm32(1);
 
     const std::size_t copyGuardPatch =
-        emitter.emitJeRel32Placeholder();
+        emitter.emitJneRel32Placeholder();
 
     seleccionPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
@@ -646,10 +736,10 @@ KolibriRuntime::emitGraphicsRuntime(
     menuAbiertoPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    emitter.emitCmpEaxImm32(0);
+    emitter.emitCmpEaxImm32(1);
 
     const std::size_t selGuardPatch =
-        emitter.emitJeRel32Placeholder();
+        emitter.emitJneRel32Placeholder();
 
     // seleccion = 1
     emitter.emitMovEaxImm32(1);
@@ -687,10 +777,10 @@ KolibriRuntime::emitGraphicsRuntime(
     menuAbiertoPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    emitter.emitCmpEaxImm32(0);
+    emitter.emitCmpEaxImm32(1);
 
     const std::size_t pasteGuardPatch =
-        emitter.emitJeRel32Placeholder();
+        emitter.emitJneRel32Placeholder();
 
     // call PEGAR
     emitter.emitByte(0xE8);
@@ -728,10 +818,10 @@ KolibriRuntime::emitGraphicsRuntime(
     menuAbiertoPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    emitter.emitCmpEaxImm32(0);
+    emitter.emitCmpEaxImm32(1);
 
     const std::size_t delGuardPatch =
-        emitter.emitJeRel32Placeholder();
+        emitter.emitJneRel32Placeholder();
 
     seleccionPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
@@ -771,6 +861,209 @@ KolibriRuntime::emitGraphicsRuntime(
     const std::size_t delLoopPatch =
         emitter.emitRel32Placeholder();
 
+
+
+    // ========================================================
+    // KPP_KONSOLE_FILE_MENU_V1
+    //
+    // FILE:
+    //   8  = abrir/cerrar menú
+    //   9  = OPEN
+    //   10 = SAVE
+    //   11 = CLOSE
+    //
+    // Estado:
+    //   0 = cerrado
+    //   1 = EDIT
+    //   2 = FILE
+    //
+    // OPEN/SAVE/CLOSE se reconocen como acciones del menú.
+    // La integración de los diálogos reales se realizará
+    // mediante OpenDialog/ProcLib.
+    // ========================================================
+
+    // --------------------------------------------------------
+    // FILE: abrir/cerrar menú
+    // --------------------------------------------------------
+
+    const std::size_t fileIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(2);
+
+    const std::size_t fileWasOpenPatch =
+        emitter.emitJeRel32Placeholder();
+
+    // menuAbierto = 2
+    emitter.emitMovEaxImm32(2);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitByte(0xE8);
+
+    const std::size_t fileOpenDrawPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t fileOpenLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // Si ya estaba abierto, cerrarlo.
+    const std::size_t fileWasOpen =
+        emitter.size();
+
+    emitter.patchRel32(
+        fileWasOpenPatch,
+        fileWasOpen);
+
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitByte(0xE8);
+
+    const std::size_t fileCloseDrawPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t fileCloseLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --------------------------------------------------------
+    // FILE OPEN
+    // --------------------------------------------------------
+
+    const std::size_t fileOpenIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(2);
+
+    const std::size_t openGuardPatch =
+        emitter.emitJneRel32Placeholder();
+
+    // Cerrar menú tras seleccionar OPEN.
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitByte(0xE8);
+
+    const std::size_t openRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t openLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t openExit =
+        emitter.size();
+
+    emitter.patchRel32(
+        openGuardPatch,
+        openExit);
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t openGuardLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --------------------------------------------------------
+    // FILE SAVE
+    // --------------------------------------------------------
+
+    const std::size_t fileSaveIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(2);
+
+    const std::size_t saveGuardPatch =
+        emitter.emitJneRel32Placeholder();
+
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitByte(0xE8);
+
+    const std::size_t saveRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t saveLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t saveExit =
+        emitter.size();
+
+    emitter.patchRel32(
+        saveGuardPatch,
+        saveExit);
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t saveGuardLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    // --------------------------------------------------------
+    // FILE CLOSE
+    //
+    // CLOSE aquí cierra el menú, no termina el proceso.
+    // --------------------------------------------------------
+
+    const std::size_t fileCloseIsla =
+        emitter.size();
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(2);
+
+    const std::size_t closeGuardPatch =
+        emitter.emitJneRel32Placeholder();
+
+    emitter.emitMovEaxImm32(0);
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovMemEax32Placeholder());
+
+    emitter.emitByte(0xE8);
+
+    const std::size_t closeRedrawPatch =
+        emitter.emitRel32Placeholder();
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t closeLoopPatch =
+        emitter.emitRel32Placeholder();
+
+    const std::size_t closeExit =
+        emitter.size();
+
+    emitter.patchRel32(
+        closeGuardPatch,
+        closeExit);
+
+    emitter.emitByte(0xE9);
+
+    const std::size_t closeGuardLoopPatch =
+        emitter.emitRel32Placeholder();
 
     // ========================================================
     // PATCH INTERNAL RUNTIME JUMPS
@@ -837,6 +1130,76 @@ KolibriRuntime::emitGraphicsRuntime(
         buttonEditPatch,
         editIsla);
 
+
+    // KPP_KONSOLE_FILE_MENU_V1
+    emitter.patchRel32(
+        buttonFilePatch,
+        fileIsla);
+
+    emitter.patchRel32(
+        buttonOpenPatch,
+        fileOpenIsla);
+
+    emitter.patchRel32(
+        buttonSavePatch,
+        fileSaveIsla);
+
+    emitter.patchRel32(
+        buttonFileClosePatch,
+        fileCloseIsla);
+
+    emitter.patchRel32(
+        fileOpenDrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        fileOpenLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        fileCloseDrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        fileCloseLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        openRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        openLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        openGuardLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        saveRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        saveLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        saveGuardLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        closeRedrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        closeLoopPatch,
+        eventLoop);
+
+    emitter.patchRel32(
+        closeGuardLoopPatch,
+        eventLoop);
+
     emitter.patchRel32(
         buttonCutPatch,
         cutIsla);
@@ -863,6 +1226,16 @@ KolibriRuntime::emitGraphicsRuntime(
 
     emitter.patchRel32(
         editLoopPatch,
+        eventLoop);
+
+
+    // KPP_KONSOLE_FILE_MENU_V1
+    emitter.patchRel32(
+        editCloseDrawPatch,
+        drawWindow);
+
+    emitter.patchRel32(
+        editCloseLoopPatch,
         eventLoop);
 
     emitter.patchRel32(
@@ -929,12 +1302,28 @@ KolibriRuntime::emitGraphicsRuntime(
         drawEditCallPatch,
         dibujaEditAddress);
 
+
+    // KPP_KONSOLE_FILE_MENU_V1
+    emitter.patchRel32(
+        drawFileCallPatch,
+        dibujaFileAddress);
+
     for (const std::size_t patch :
          editCallPatchList)
     {
         emitter.patchRel32(
             patch,
             dibujaEditAddress);
+    }
+
+
+    // KPP_KONSOLE_FILE_MENU_V1
+    for (const std::size_t patch :
+         fileCallPatchList)
+    {
+        emitter.patchRel32(
+            patch,
+            dibujaFileAddress);
     }
 
 
@@ -2638,6 +3027,16 @@ KolibriRuntime::emitRefreshOutput(
     editCallPatchList.push_back(
         emitter.emitRel32Placeholder());
 
+
+    // KPP_KONSOLE_FILE_MENU_V1
+    // El menú FILE también debe repintarse después
+    // de limpiar el área de salida: llamada con su
+    // byte 0xE8 y su placeholder, como la de EDIT.
+    emitter.emitByte(0xE8);
+
+    fileCallPatchList.push_back(
+        emitter.emitRel32Placeholder());
+
     // end redraw (función 12.2)
     emitter.emitMovEaxImm32(12);
 
@@ -3627,12 +4026,14 @@ KolibriRuntime::emitMouseHandler(
 // KONSOLE — EL BOTÓN EDIT Y EL MENÚ
 //
 // DIBUJA_EDIT es una rutina con RET. Define el
-// botón EDIT (función 8, id 2) en la barra de
-// título — X = 400, Y = 5, 70 x 17, fuera del
+// botón EDIT (función 8, id 2) en la barra
+// horizontal FILE | EDIT, debajo de la barra de
+// título — X = 85, Y = 20, 65 x 17, fuera del
 // rectángulo que el refresco limpia (que empieza
 // en Y = 38) — y le dibuja el rótulo con la
-// función 4. Si el menú está abierto dibuja
-// además el panel (función 13) y sus cinco
+// función 4. Si el menú EDIT está abierto
+// (menuAbierto = 1) dibuja además el panel
+// (función 13) bajo el botón y sus cinco
 // renglones como botones 3 a 7 con sus rótulos:
 // CORTAR, COPIAR, SELECCIONAR TODO, PEGAR y
 // ELIMINAR — el menú EDIT de TinyPad. Los textos
@@ -3645,16 +4046,17 @@ void
 KolibriRuntime::emitDibujaEdit(
     X86Emitter& emitter)
 {
-    // El botón EDIT (función 8).
+    // El botón EDIT (función 8), en la barra
+    // horizontal, a la derecha de FILE.
     emitter.emitMovEaxImm32(8);
 
     emitter.emitMovRegImm32(
         0xBB,
-        (400u << 16) + 70u);
+        (85u << 16) + 65u);
 
     emitter.emitMovRegImm32(
         0xB9,
-        (5u << 16) + 17u);
+        (20u << 16) + 17u);
 
     // EDX = id del botón: 2.
     emitter.emitMovRegImm32(
@@ -3673,7 +4075,7 @@ KolibriRuntime::emitDibujaEdit(
 
     emitter.emitMovRegImm32(
         0xBB,
-        (423u << 16) + 9u);
+        (105u << 16) + 24u);
 
     emitter.emitMovRegImm32(
         0xB9,
@@ -3695,26 +4097,28 @@ KolibriRuntime::emitDibujaEdit(
 
     emitter.emitInt(0x40);
 
-    // ¿Menú cerrado? -> fin.
+    // ¿Menú EDIT abierto (menuAbierto = 1)?
+    // Si no, fin: el panel es solo de EDIT.
     menuAbiertoPatchList.push_back(
         emitter.emitMovEaxMem32Placeholder());
 
-    emitter.emitCmpEaxImm32(0);
+    emitter.emitCmpEaxImm32(1);
 
     const std::size_t cerradoPatch =
-        emitter.emitJeRel32Placeholder();
+        emitter.emitJneRel32Placeholder();
 
-    // El panel del menú (función 13): X = 352,
-    // Y = 24, 138 x 74 — cubre los cinco renglones.
+    // El panel del menú (función 13): X = 85,
+    // Y = 37, 138 x 74 — bajo el botón EDIT,
+    // cubre los cinco renglones.
     emitter.emitMovEaxImm32(13);
 
     emitter.emitMovRegImm32(
         0xBB,
-        (352u << 16) + 138u);
+        (85u << 16) + 138u);
 
     emitter.emitMovRegImm32(
         0xB9,
-        (24u << 16) + 74u);
+        (37u << 16) + 74u);
 
     emitter.emitMovRegImm32(
         0xBA,
@@ -3733,11 +4137,11 @@ KolibriRuntime::emitDibujaEdit(
     };
 
     const Renglon renglones[5] = {
-        {24, 3, 5, 6},
-        {38, 4, 12, 6},
-        {52, 5, 19, 16},
-        {66, 6, 36, 5},
-        {80, 7, 42, 8},
+        {37, 3, 5, 6},
+        {51, 4, 12, 6},
+        {65, 5, 19, 16},
+        {79, 6, 36, 5},
+        {93, 7, 42, 8},
     };
 
     for (const Renglon& renglon : renglones)
@@ -3746,7 +4150,7 @@ KolibriRuntime::emitDibujaEdit(
 
         emitter.emitMovRegImm32(
             0xBB,
-            (352u << 16) + 138u);
+            (85u << 16) + 138u);
 
         emitter.emitMovRegImm32(
             0xB9,
@@ -3766,7 +4170,7 @@ KolibriRuntime::emitDibujaEdit(
 
         emitter.emitMovRegImm32(
             0xBB,
-            (358u << 16) + (renglon.y + 3));
+            (91u << 16) + (renglon.y + 3));
 
         emitter.emitMovRegImm32(
             0xB9,
@@ -3805,6 +4209,204 @@ KolibriRuntime::emitDibujaEdit(
         emitter.size();
 
     emitter.patchRel32(cerradoPatch, cerrado);
+
+    emitter.emitRet();
+}
+
+
+
+// ============================================================
+// KPP_KONSOLE_FILE_MENU_V1
+// KONSOLE — BOTÓN FILE Y MENÚ
+//
+// Identificadores:
+//   8  = FILE
+//   9  = OPEN
+//   10 = SAVE
+//   11 = CLOSE
+//
+// menuAbierto:
+//   0 = cerrado
+//   1 = EDIT
+//   2 = FILE
+//
+// Las cadenas están en menuTexto DATA:
+//   63 = FILE
+//   68 = OPEN
+//   73 = SAVE
+//   78 = CLOSE
+// ============================================================
+
+void
+KolibriRuntime::emitDibujaFile(
+    X86Emitter& emitter)
+{
+    // --------------------------------------------------------
+    // BOTÓN FILE
+    // --------------------------------------------------------
+
+    emitter.emitMovEaxImm32(8);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (15u << 16) + 65u);
+
+    emitter.emitMovRegImm32(
+        0xB9,
+        (20u << 16) + 17u);
+
+    emitter.emitMovRegImm32(
+        0xBA,
+        8);
+
+    emitter.emitMovRegImm32(
+        0xBE,
+        0x00305070u);
+
+    emitter.emitInt(0x40);
+
+    // --------------------------------------------------------
+    // TEXTO FILE
+    // --------------------------------------------------------
+
+    emitter.emitMovEaxImm32(4);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (30u << 16) + 24u);
+
+    emitter.emitMovRegImm32(
+        0xB9,
+        0x80FFFFFFu);
+
+    emitter.emitByte(0xBA);
+
+    menuTextoPatchList.push_back(
+        emitter.emitImm32Placeholder());
+
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xC2);
+    emitter.emitByte(63);
+
+    emitter.emitByte(0xBE);
+
+    const std::size_t fileLengthPatch =
+        emitter.emitImm32Placeholder();
+
+    emitter.patch32(fileLengthPatch, 4);
+
+    emitter.emitInt(0x40);
+
+    // --------------------------------------------------------
+    // COMPROBAR ESTADO FILE
+    // --------------------------------------------------------
+
+    menuAbiertoPatchList.push_back(
+        emitter.emitMovEaxMem32Placeholder());
+
+    emitter.emitCmpEaxImm32(2);
+
+    const std::size_t noFileMenuPatch =
+        emitter.emitJneRel32Placeholder();
+
+    // --------------------------------------------------------
+    // PANEL
+    // --------------------------------------------------------
+
+    emitter.emitMovEaxImm32(13);
+
+    emitter.emitMovRegImm32(
+        0xBB,
+        (15u << 16) + 110u);
+
+    emitter.emitMovRegImm32(
+        0xB9,
+        (37u << 16) + 44u);
+
+    emitter.emitMovRegImm32(
+        0xBA,
+        0x00181818u);
+
+    emitter.emitInt(0x40);
+
+    struct FileRow
+    {
+        std::uint32_t y;
+        std::uint32_t id;
+        std::uint32_t textOffset;
+        std::uint32_t textLength;
+    };
+
+    const FileRow rows[3] = {
+        {37,  9, 68, 4},
+        {51, 10, 73, 4},
+        {65, 11, 78, 5},
+    };
+
+    for (const FileRow& row : rows)
+    {
+        // Botón.
+        emitter.emitMovEaxImm32(8);
+
+        emitter.emitMovRegImm32(
+            0xBB,
+            (15u << 16) + 110u);
+
+        emitter.emitMovRegImm32(
+            0xB9,
+            (row.y << 16) + 14u);
+
+        emitter.emitMovRegImm32(
+            0xBA,
+            row.id);
+
+        emitter.emitMovRegImm32(
+            0xBE,
+            0x00282828u);
+
+        emitter.emitInt(0x40);
+
+        // Texto.
+        emitter.emitMovEaxImm32(4);
+
+        emitter.emitMovRegImm32(
+            0xBB,
+            (21u << 16) + (row.y + 3));
+
+        emitter.emitMovRegImm32(
+            0xB9,
+            0x80FFFFFFu);
+
+        emitter.emitByte(0xBA);
+
+        menuTextoPatchList.push_back(
+            emitter.emitImm32Placeholder());
+
+        emitter.emitByte(0x83);
+        emitter.emitByte(0xC2);
+
+        emitter.emitByte(
+            static_cast<std::uint8_t>(
+                row.textOffset));
+
+        emitter.emitByte(0xBE);
+
+        const std::size_t lengthPatch =
+            emitter.emitImm32Placeholder();
+
+        emitter.patch32(
+            lengthPatch,
+            row.textLength);
+
+        emitter.emitInt(0x40);
+    }
+
+    const std::size_t end =
+        emitter.size();
+
+    emitter.patchRel32(
+        noFileMenuPatch,
+        end);
 
     emitter.emitRet();
 }

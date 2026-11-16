@@ -351,6 +351,7 @@ struct KolibriFileIoRuntimeResult
 };
 
 
+// KPP_KONSOLE_FILE_MENU_V1
 class KolibriRuntime
 {
 public:
@@ -556,6 +557,12 @@ private:
     emitDibujaEdit(
         X86Emitter& emitter);
 
+    // KPP_KONSOLE_FILE_MENU_V1
+    // Dibuja FILE y sus opciones OPEN / SAVE / CLOSE.
+    void
+    emitDibujaFile(
+        X86Emitter& emitter);
+
     // Konsole (rebanada EDIT): copia las lineas del
     // historial al portapapeles — de cada registro,
     // el texto hasta su primer NUL o su longitud de
@@ -606,6 +613,9 @@ private:
     std::vector<std::size_t> clipBufferPatchList;
     std::vector<std::size_t> menuTextoPatchList;
     std::vector<std::size_t> editCallPatchList;
+
+    // KPP_KONSOLE_FILE_MENU_V1
+    std::vector<std::size_t> fileCallPatchList;
 };
 
 }
