@@ -9175,7 +9175,7 @@ int inicia_nodos21()
     nkind[16] = 14; nini[16] = 29; nfin[16] = 29; nhijo1[16] = -1; nsig[16] = 17; nval[16] = 29; naux[16] = -1; nsize[16] = 0;
     nkind[17] = 12; nini[17] = 31; nfin[17] = 31; nhijo1[17] = -1; nsig[17] = -1; nval[17] = 1; naux[17] = -1; nsize[17] = 0;
     nkind[18] = 17; nini[18] = 29; nfin[18] = 29; nhijo1[18] = 16; nsig[18] = -1; nval[18] = 14; naux[18] = -1; nsize[18] = 0;
-    nkind[19] = 6; nini[19] = 27; nfin[19] = 27; nhijo1[19] = 16; nsig[19] = -1; nval[19] = 27; naux[19] = 18; nsize[19] = 0;
+    nkind[19] = 6; nini[19] = 27; nfin[19] = 27; nhijo1[19] = -1; nsig[19] = -1; nval[19] = 27; naux[19] = 18; nsize[19] = 0;
     nkind[20] = 14; nini[20] = 35; nfin[20] = 35; nhijo1[20] = -1; nsig[20] = -1; nval[20] = 35; naux[20] = -1; nsize[20] = 0;
     nkind[21] = 9; nini[21] = 34; nfin[21] = 34; nhijo1[21] = 20; nsig[21] = -1; nval[21] = 0; naux[21] = -1; nsize[21] = 0;
     return 0;
