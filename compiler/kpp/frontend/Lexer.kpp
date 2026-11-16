@@ -1,3 +1,4 @@
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // Lexer.kpp — Stage 1, pieza 1.
 // Lee FUENTE.KPP una sola vez y vuelca (tipo, inicio, largo, valor) por token.
 // Codigos de token: orden de TokenType en include/kpp/Token.hpp (Stage 0).
@@ -11,7 +12,7 @@
 //   - && NO cortocircuita en K++: baja a una sola AND con los dos lados
 //     evaluados (IRGenerator.cpp / X86Backend.cpp). Ningun fuente[pos]
 //     va a la derecha de un &&: los guardas de fin de fuente van en
-//     if separados, y los escaneos usan un flag sigue, no break (no existe).
+//     if separados, y los escaneos usan un flag sigue, no break (existe desde la Ampliación 2; el escaneo conserva el flag).
 //   - Sin literales de caracter en K++: se comparan codigos numericos.
 //   - // salta hasta fin de linea; / solo sigue siendo Divide (b35d47c).
 //   - String sin escapes, igual que el Lexer.cpp de Stage 0.
@@ -239,6 +240,22 @@ int escanea()
                                 if (fuente[inicio + 4] == 101)
                                 {
                                     tipo = 12;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 98)
+                {
+                    if (fuente[inicio + 1] == 114)
+                    {
+                        if (fuente[inicio + 2] == 101)
+                        {
+                            if (fuente[inicio + 3] == 97)
+                            {
+                                if (fuente[inicio + 4] == 107)
+                                {
+                                    tipo = 40;
                                 }
                             }
                         }

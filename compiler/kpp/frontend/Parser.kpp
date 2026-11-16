@@ -1,3 +1,4 @@
+////////////////////////////////////////////////////////////////////////
 // Parser.kpp — Stage 1, pieza 2 (parser), rebanada 8.
 // Traduccion de src/frontend/Parser.cpp (Stage 0) a K++, en el
 // estilo de subrutinas con estado compartido:
@@ -187,7 +188,8 @@ enum TokenType
     Dot,
 
     // AMPLIACIONES (al final, nunca en medio)
-    KwVoid
+    KwVoid,
+    KwBreak
 };
 
 // Tabla de clases de nodo: copia IDENTICA del enum de
@@ -221,7 +223,8 @@ enum NodeKind
     BinaryExpression,
 
     // AMPLIACIONES (al final, nunca en medio)
-    CallStatement
+    CallStatement,
+    BreakStatement
 };
 
 // ============================================================
@@ -1517,6 +1520,21 @@ int parse_sentencia()
         }
     }
 
+    // Break: break;
+    // (Ampliacion 2, NodeKind::BreakStatement, el
+    // 19). Se reconoce por su palabra clave y el
+    // punto y coma; el nodo no lleva hijos — su
+    // significado es su posicion dentro del while.
+    // Que haya un while que lo contenga es regla
+    // del analizador (codigo 52), no de esta pieza.
+    if (t == TokenType::KwBreak)
+    {
+        int ok = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::BreakStatement, ini);
+        nsent = nsent + 1;
+        return n;
+    }
+
     // Asignacion: nombre = expr;  /  nombre[i] = expr;
     // El nombre queda en nval (indice de su token); el
     // indice, si lo hay, en hijo1; el valor en naux
@@ -2404,6 +2422,22 @@ int escanea()
                                 if (fuente[inicio + 4] == 101)
                                 {
                                     tipo = 12;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 98)
+                {
+                    if (fuente[inicio + 1] == 114)
+                    {
+                        if (fuente[inicio + 2] == 101)
+                        {
+                            if (fuente[inicio + 3] == 97)
+                            {
+                                if (fuente[inicio + 4] == 107)
+                                {
+                                    tipo = 40;
                                 }
                             }
                         }
@@ -3337,6 +3371,33 @@ int carga_fuente13()
     return 0;
 }
 
+int carga_fuente14()
+{
+    int fuente[1024];
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
+    fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 105;  fuente[18] = 110;  fuente[19] = 116;  fuente[20] = 32;  fuente[21] = 105;  fuente[22] = 32;  fuente[23] = 61;
+    fuente[24] = 32;  fuente[25] = 48;  fuente[26] = 59;  fuente[27] = 10;  fuente[28] = 32;  fuente[29] = 32;  fuente[30] = 32;  fuente[31] = 32;
+    fuente[32] = 119;  fuente[33] = 104;  fuente[34] = 105;  fuente[35] = 108;  fuente[36] = 101;  fuente[37] = 32;  fuente[38] = 40;  fuente[39] = 105;
+    fuente[40] = 32;  fuente[41] = 60;  fuente[42] = 32;  fuente[43] = 49;  fuente[44] = 48;  fuente[45] = 41;  fuente[46] = 10;  fuente[47] = 32;
+    fuente[48] = 32;  fuente[49] = 32;  fuente[50] = 32;  fuente[51] = 123;  fuente[52] = 10;  fuente[53] = 32;  fuente[54] = 32;  fuente[55] = 32;
+    fuente[56] = 32;  fuente[57] = 32;  fuente[58] = 32;  fuente[59] = 32;  fuente[60] = 32;  fuente[61] = 105;  fuente[62] = 102;  fuente[63] = 32;
+    fuente[64] = 40;  fuente[65] = 105;  fuente[66] = 32;  fuente[67] = 61;  fuente[68] = 61;  fuente[69] = 32;  fuente[70] = 51;  fuente[71] = 41;
+    fuente[72] = 10;  fuente[73] = 32;  fuente[74] = 32;  fuente[75] = 32;  fuente[76] = 32;  fuente[77] = 32;  fuente[78] = 32;  fuente[79] = 32;
+    fuente[80] = 32;  fuente[81] = 123;  fuente[82] = 10;  fuente[83] = 32;  fuente[84] = 32;  fuente[85] = 32;  fuente[86] = 32;  fuente[87] = 32;
+    fuente[88] = 32;  fuente[89] = 32;  fuente[90] = 32;  fuente[91] = 32;  fuente[92] = 32;  fuente[93] = 32;  fuente[94] = 32;  fuente[95] = 98;
+    fuente[96] = 114;  fuente[97] = 101;  fuente[98] = 97;  fuente[99] = 107;  fuente[100] = 59;  fuente[101] = 10;  fuente[102] = 32;  fuente[103] = 32;
+    fuente[104] = 32;  fuente[105] = 32;  fuente[106] = 32;  fuente[107] = 32;  fuente[108] = 32;  fuente[109] = 32;  fuente[110] = 125;  fuente[111] = 10;
+    fuente[112] = 32;  fuente[113] = 32;  fuente[114] = 32;  fuente[115] = 32;  fuente[116] = 32;  fuente[117] = 32;  fuente[118] = 32;  fuente[119] = 32;
+    fuente[120] = 105;  fuente[121] = 32;  fuente[122] = 61;  fuente[123] = 32;  fuente[124] = 105;  fuente[125] = 32;  fuente[126] = 43;  fuente[127] = 32;
+    fuente[128] = 49;  fuente[129] = 59;  fuente[130] = 10;  fuente[131] = 32;  fuente[132] = 32;  fuente[133] = 32;  fuente[134] = 32;  fuente[135] = 125;
+    fuente[136] = 10;  fuente[137] = 32;  fuente[138] = 32;  fuente[139] = 32;  fuente[140] = 32;  fuente[141] = 114;  fuente[142] = 101;  fuente[143] = 116;
+    fuente[144] = 117;  fuente[145] = 114;  fuente[146] = 110;  fuente[147] = 32;  fuente[148] = 105;  fuente[149] = 59;  fuente[150] = 10;  fuente[151] = 125;
+    fuente[152] = 10;
+    total = 153;
+    return 0;
+}
+
 int reinicia()
 {
     pos = 0;
@@ -3552,6 +3613,22 @@ int main()
     print_int(cuenta(NodeKind::CallStatement));
     print_int(cuenta(NodeKind::CallExpression));
     print_int(cuenta(NodeKind::ReturnStatement));
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(alcanzables());
+
+    int r12 = reinicia();
+    int cf14 = carga_fuente14();
+    int es14 = escanea();
+    int p14 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(cuenta(NodeKind::BreakStatement));
+    print_int(cuenta(NodeKind::WhileStatement));
+    print_int(cuenta(NodeKind::IfStatement));
     print_int(fin_programa());
     print_int(bloques_abiertos());
     print_int(alcanzables());

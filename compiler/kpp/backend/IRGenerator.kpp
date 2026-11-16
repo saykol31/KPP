@@ -1,3 +1,5 @@
+//////////////////////////////////////////////////////////////////////
+
 // IRGenerator.kpp — Stage 1, backend.
 // El generador de IR: traduce el AST del contrato a la
 // corriente de instrucciones que el X86Backend consume.
@@ -239,7 +241,8 @@ enum NodeKind
     BinaryExpression,
 
     // AMPLIACIONES (al final, nunca en medio)
-    CallStatement
+    CallStatement,
+    BreakStatement
 };
 
 // ============================================================
@@ -258,6 +261,12 @@ int netiq;
 // El eco de la Ampliacion 1: 1 si la funcion que
 // se esta generando es void.
 int fun_es_void;
+// El eco de la Ampliacion 2: el tope de la pila de
+// etiquetas de fin de los while en generacion. La
+// pila en si se declara dentro de genera_sentencia,
+// como las demas tablas de la pieza (compartida
+// por nombre); el tope es un escalar compartido.
+int fin_tope;
 
 // ============================================================
 // LA PISCINA DE TEXTO.
@@ -981,6 +990,7 @@ int genera_sentencia(int s)
     int naux[256];
     int nsize[256];
     int campotok[256];
+    int fin_pila[256];
     int k = nkind[s];
     if (k == NodeKind::VariableDeclaration)
     {
@@ -1105,10 +1115,22 @@ int genera_sentencia(int s)
         int cuerpo = nsig[cond2];
         if (cuerpo >= 0)
         {
+            fin_pila[fin_tope] = fin_e;
+            fin_tope = fin_tope + 1;
             int g3 = genera_bloque(cuerpo);
+            fin_tope = fin_tope - 1;
         }
         int e15 = emite_ir(IROpcode::Jump, ini_e, 0, 0, 0, 0);
         int e16 = emite_ir(IROpcode::Label, fin_e, 0, 0, 0, 0);
+        return 0;
+    }
+    if (k == NodeKind::BreakStatement)
+    {
+        // El break (Ampliacion 2): salta a la etiqueta
+        // de fin del while mas interno, la de la cima
+        // de la pila que mantiene la rama de while.
+        int destino = fin_pila[fin_tope - 1];
+        int eb = emite_ir(IROpcode::Jump, destino, 0, 0, 0, 0);
         return 0;
     }
     if (k == NodeKind::PrintStatement)
@@ -1181,6 +1203,7 @@ int genera_funcion(int f)
     contvar = 0;
     netiq = 0;
     fun_es_void = es_void(nini[f]);
+    fin_tope = 0;
     int ea = entra_ambito();
     int nt = nval[f];
     int nombre = ref_token(nt);
@@ -5779,6 +5802,456 @@ int inicia_ir10()
     return 0;
 }
 
+// ============================================================
+// SONDA 11 — EL ECO DE BREAK.
+//
+// int main() { int i = 0; while (i < 10) { if (i == 3)
+// { break; } i = i + 1; } return i; }
+//
+// La corriente gana el JUMP del break: apunta a la
+// etiqueta 1, la de fin del while (la 0 es su inicio),
+// que es la que se emite tras el JUMP de vuelta.
+// ============================================================
+
+int inicia_ir11()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 109;
+    fuente[5] = 97;
+    fuente[6] = 105;
+    fuente[7] = 110;
+    fuente[8] = 40;
+    fuente[9] = 41;
+    fuente[10] = 32;
+    fuente[11] = 123;
+    fuente[12] = 32;
+    fuente[13] = 105;
+    fuente[14] = 110;
+    fuente[15] = 116;
+    fuente[16] = 32;
+    fuente[17] = 105;
+    fuente[18] = 32;
+    fuente[19] = 61;
+    fuente[20] = 32;
+    fuente[21] = 48;
+    fuente[22] = 59;
+    fuente[23] = 32;
+    fuente[24] = 119;
+    fuente[25] = 104;
+    fuente[26] = 105;
+    fuente[27] = 108;
+    fuente[28] = 101;
+    fuente[29] = 32;
+    fuente[30] = 40;
+    fuente[31] = 105;
+    fuente[32] = 32;
+    fuente[33] = 60;
+    fuente[34] = 32;
+    fuente[35] = 49;
+    fuente[36] = 48;
+    fuente[37] = 41;
+    fuente[38] = 32;
+    fuente[39] = 123;
+    fuente[40] = 32;
+    fuente[41] = 105;
+    fuente[42] = 102;
+    fuente[43] = 32;
+    fuente[44] = 40;
+    fuente[45] = 105;
+    fuente[46] = 32;
+    fuente[47] = 61;
+    fuente[48] = 61;
+    fuente[49] = 32;
+    fuente[50] = 51;
+    fuente[51] = 41;
+    fuente[52] = 32;
+    fuente[53] = 123;
+    fuente[54] = 32;
+    fuente[55] = 98;
+    fuente[56] = 114;
+    fuente[57] = 101;
+    fuente[58] = 97;
+    fuente[59] = 107;
+    fuente[60] = 59;
+    fuente[61] = 32;
+    fuente[62] = 125;
+    fuente[63] = 32;
+    fuente[64] = 105;
+    fuente[65] = 32;
+    fuente[66] = 61;
+    fuente[67] = 32;
+    fuente[68] = 105;
+    fuente[69] = 32;
+    fuente[70] = 43;
+    fuente[71] = 32;
+    fuente[72] = 49;
+    fuente[73] = 59;
+    fuente[74] = 32;
+    fuente[75] = 125;
+    fuente[76] = 32;
+    fuente[77] = 114;
+    fuente[78] = 101;
+    fuente[79] = 116;
+    fuente[80] = 117;
+    fuente[81] = 114;
+    fuente[82] = 110;
+    fuente[83] = 32;
+    fuente[84] = 105;
+    fuente[85] = 59;
+    fuente[86] = 32;
+    fuente[87] = 125;
+    tok_tipo[0] = 4;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 3;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 4;
+    tok_largo[1] = 4;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 29;
+    tok_inicio[2] = 8;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 30;
+    tok_inicio[3] = 9;
+    tok_largo[3] = 1;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 33;
+    tok_inicio[4] = 11;
+    tok_largo[4] = 1;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 4;
+    tok_inicio[5] = 13;
+    tok_largo[5] = 3;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 1;
+    tok_inicio[6] = 17;
+    tok_largo[6] = 1;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 13;
+    tok_inicio[7] = 19;
+    tok_largo[7] = 1;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 2;
+    tok_inicio[8] = 21;
+    tok_largo[8] = 1;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 36;
+    tok_inicio[9] = 22;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 12;
+    tok_inicio[10] = 24;
+    tok_largo[10] = 5;
+    tok_valor[10] = 0;
+    tok_tipo[11] = 29;
+    tok_inicio[11] = 30;
+    tok_largo[11] = 1;
+    tok_valor[11] = 0;
+    tok_tipo[12] = 1;
+    tok_inicio[12] = 31;
+    tok_largo[12] = 1;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 22;
+    tok_inicio[13] = 33;
+    tok_largo[13] = 1;
+    tok_valor[13] = 0;
+    tok_tipo[14] = 2;
+    tok_inicio[14] = 35;
+    tok_largo[14] = 2;
+    tok_valor[14] = 10;
+    tok_tipo[15] = 30;
+    tok_inicio[15] = 37;
+    tok_largo[15] = 1;
+    tok_valor[15] = 0;
+    tok_tipo[16] = 33;
+    tok_inicio[16] = 39;
+    tok_largo[16] = 1;
+    tok_valor[16] = 0;
+    tok_tipo[17] = 10;
+    tok_inicio[17] = 41;
+    tok_largo[17] = 2;
+    tok_valor[17] = 0;
+    tok_tipo[18] = 29;
+    tok_inicio[18] = 44;
+    tok_largo[18] = 1;
+    tok_valor[18] = 0;
+    tok_tipo[19] = 1;
+    tok_inicio[19] = 45;
+    tok_largo[19] = 1;
+    tok_valor[19] = 0;
+    tok_tipo[20] = 20;
+    tok_inicio[20] = 47;
+    tok_largo[20] = 2;
+    tok_valor[20] = 0;
+    tok_tipo[21] = 2;
+    tok_inicio[21] = 50;
+    tok_largo[21] = 1;
+    tok_valor[21] = 3;
+    tok_tipo[22] = 30;
+    tok_inicio[22] = 51;
+    tok_largo[22] = 1;
+    tok_valor[22] = 0;
+    tok_tipo[23] = 33;
+    tok_inicio[23] = 53;
+    tok_largo[23] = 1;
+    tok_valor[23] = 0;
+    tok_tipo[24] = 40;
+    tok_inicio[24] = 55;
+    tok_largo[24] = 5;
+    tok_valor[24] = 0;
+    tok_tipo[25] = 36;
+    tok_inicio[25] = 60;
+    tok_largo[25] = 1;
+    tok_valor[25] = 0;
+    tok_tipo[26] = 34;
+    tok_inicio[26] = 62;
+    tok_largo[26] = 1;
+    tok_valor[26] = 0;
+    tok_tipo[27] = 1;
+    tok_inicio[27] = 64;
+    tok_largo[27] = 1;
+    tok_valor[27] = 0;
+    tok_tipo[28] = 13;
+    tok_inicio[28] = 66;
+    tok_largo[28] = 1;
+    tok_valor[28] = 0;
+    tok_tipo[29] = 1;
+    tok_inicio[29] = 68;
+    tok_largo[29] = 1;
+    tok_valor[29] = 0;
+    tok_tipo[30] = 14;
+    tok_inicio[30] = 70;
+    tok_largo[30] = 1;
+    tok_valor[30] = 0;
+    tok_tipo[31] = 2;
+    tok_inicio[31] = 72;
+    tok_largo[31] = 1;
+    tok_valor[31] = 1;
+    tok_tipo[32] = 36;
+    tok_inicio[32] = 73;
+    tok_largo[32] = 1;
+    tok_valor[32] = 0;
+    tok_tipo[33] = 34;
+    tok_inicio[33] = 75;
+    tok_largo[33] = 1;
+    tok_valor[33] = 0;
+    tok_tipo[34] = 8;
+    tok_inicio[34] = 77;
+    tok_largo[34] = 6;
+    tok_valor[34] = 0;
+    tok_tipo[35] = 1;
+    tok_inicio[35] = 84;
+    tok_largo[35] = 1;
+    tok_valor[35] = 0;
+    tok_tipo[36] = 36;
+    tok_inicio[36] = 85;
+    tok_largo[36] = 1;
+    tok_valor[36] = 0;
+    tok_tipo[37] = 34;
+    tok_inicio[37] = 87;
+    tok_largo[37] = 2;
+    tok_valor[37] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 38;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 1;
+    nini[1] = 0;
+    nfin[1] = 0;
+    nhijo1[1] = 2;
+    nsig[1] = -1;
+    nval[1] = 1;
+    naux[1] = 0;
+    nsize[1] = 0;
+    nkind[2] = 4;
+    nini[2] = 0;
+    nfin[2] = 0;
+    nhijo1[2] = 4;
+    nsig[2] = -1;
+    nval[2] = 0;
+    naux[2] = -1;
+    nsize[2] = 0;
+    nkind[3] = 12;
+    nini[3] = 8;
+    nfin[3] = 8;
+    nhijo1[3] = -1;
+    nsig[3] = -1;
+    nval[3] = 0;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 5;
+    nini[4] = 5;
+    nfin[4] = 5;
+    nhijo1[4] = 3;
+    nsig[4] = 8;
+    nval[4] = 6;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 14;
+    nini[5] = 12;
+    nfin[5] = 12;
+    nhijo1[5] = -1;
+    nsig[5] = 6;
+    nval[5] = 12;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 12;
+    nini[6] = 14;
+    nfin[6] = 14;
+    nhijo1[6] = -1;
+    nsig[6] = -1;
+    nval[6] = 10;
+    naux[6] = -1;
+    nsize[6] = 0;
+    nkind[7] = 17;
+    nini[7] = 12;
+    nfin[7] = 12;
+    nhijo1[7] = 5;
+    nsig[7] = 9;
+    nval[7] = 22;
+    naux[7] = -1;
+    nsize[7] = 0;
+    nkind[8] = 8;
+    nini[8] = 10;
+    nfin[8] = 10;
+    nhijo1[8] = 7;
+    nsig[8] = 21;
+    nval[8] = 0;
+    naux[8] = -1;
+    nsize[8] = 0;
+    nkind[9] = 4;
+    nini[9] = 0;
+    nfin[9] = 0;
+    nhijo1[9] = 13;
+    nsig[9] = -1;
+    nval[9] = 0;
+    naux[9] = -1;
+    nsize[9] = 0;
+    nkind[10] = 14;
+    nini[10] = 19;
+    nfin[10] = 19;
+    nhijo1[10] = -1;
+    nsig[10] = 11;
+    nval[10] = 19;
+    naux[10] = -1;
+    nsize[10] = 0;
+    nkind[11] = 12;
+    nini[11] = 21;
+    nfin[11] = 21;
+    nhijo1[11] = -1;
+    nsig[11] = -1;
+    nval[11] = 3;
+    naux[11] = -1;
+    nsize[11] = 0;
+    nkind[12] = 17;
+    nini[12] = 19;
+    nfin[12] = 19;
+    nhijo1[12] = 10;
+    nsig[12] = 14;
+    nval[12] = 20;
+    naux[12] = -1;
+    nsize[12] = 0;
+    nkind[13] = 7;
+    nini[13] = 17;
+    nfin[13] = 17;
+    nhijo1[13] = 12;
+    nsig[13] = 19;
+    nval[13] = 0;
+    naux[13] = -1;
+    nsize[13] = 0;
+    nkind[14] = 4;
+    nini[14] = 0;
+    nfin[14] = 0;
+    nhijo1[14] = 15;
+    nsig[14] = -1;
+    nval[14] = 0;
+    naux[14] = -1;
+    nsize[14] = 0;
+    nkind[15] = 19;
+    nini[15] = 24;
+    nfin[15] = 24;
+    nhijo1[15] = -1;
+    nsig[15] = -1;
+    nval[15] = 0;
+    naux[15] = -1;
+    nsize[15] = 0;
+    nkind[16] = 14;
+    nini[16] = 29;
+    nfin[16] = 29;
+    nhijo1[16] = -1;
+    nsig[16] = 17;
+    nval[16] = 29;
+    naux[16] = -1;
+    nsize[16] = 0;
+    nkind[17] = 12;
+    nini[17] = 31;
+    nfin[17] = 31;
+    nhijo1[17] = -1;
+    nsig[17] = -1;
+    nval[17] = 1;
+    naux[17] = -1;
+    nsize[17] = 0;
+    nkind[18] = 17;
+    nini[18] = 29;
+    nfin[18] = 29;
+    nhijo1[18] = 16;
+    nsig[18] = -1;
+    nval[18] = 14;
+    naux[18] = -1;
+    nsize[18] = 0;
+    nkind[19] = 6;
+    nini[19] = 27;
+    nfin[19] = 27;
+    nhijo1[19] = 16;
+    nsig[19] = -1;
+    nval[19] = 27;
+    naux[19] = 18;
+    nsize[19] = 0;
+    nkind[20] = 14;
+    nini[20] = 35;
+    nfin[20] = 35;
+    nhijo1[20] = -1;
+    nsig[20] = -1;
+    nval[20] = 35;
+    naux[20] = -1;
+    nsize[20] = 0;
+    nkind[21] = 9;
+    nini[21] = 34;
+    nfin[21] = 34;
+    nhijo1[21] = 20;
+    nsig[21] = -1;
+    nval[21] = 0;
+    naux[21] = -1;
+    nsize[21] = 0;
+    tok_count = 38;
+    nnodos = 22;
+    return 0;
+}
+
 int main()
 {
     int a1 = inicia_ir1();
@@ -5820,6 +6293,10 @@ int main()
     int a10 = inicia_ir10();
     int g10 = genera();
     int i10 = imprime_ir();
+
+    int a11 = inicia_ir11();
+    int g11 = genera();
+    int i11 = imprime_ir();
 
     return 0;
 }
