@@ -255,7 +255,7 @@ int llamada_en_sentencia;
 // while del analisis en curso.
 int nivel_ciclo;
 
-int anota_error(int codigo)
+void anota_error(int codigo)
 {
     int serr_codigo[256];
     if (serr_count < 256)
@@ -263,7 +263,6 @@ int anota_error(int codigo)
         serr_codigo[serr_count] = codigo;
         serr_count = serr_count + 1;
     }
-    return 0;
 }
 
 int mismo_texto(int a, int b)
@@ -284,7 +283,7 @@ int mismo_texto(int a, int b)
     int ia = tok_inicio[a];
     int ib = tok_inicio[b];
     int i = 0;
-    while (i < la)
+    for (i = 0; i < la; i = i + 1)
     {
         int ca = fuente[ia + i];
         int cb = fuente[ib + i];
@@ -292,7 +291,6 @@ int mismo_texto(int a, int b)
         {
             return 0;
         }
-        i = i + 1;
     }
     return 1;
 }
@@ -335,14 +333,13 @@ int busca_struct(int tok)
 {
     int sstruct_tok[256];
     int i = 0;
-    while (i < nsstruct)
+    for (i = 0; i < nsstruct; i = i + 1)
     {
         int t = sstruct_tok[i];
         if (mismo_texto(t, tok) == 1)
         {
             return 1;
         }
-        i = i + 1;
     }
     return 0;
 }
@@ -351,14 +348,13 @@ int busca_global(int tok)
 {
     int sglobal_tok[256];
     int i = 0;
-    while (i < nsglobal)
+    for (i = 0; i < nsglobal; i = i + 1)
     {
         int t = sglobal_tok[i];
         if (mismo_texto(t, tok) == 1)
         {
             return 1;
         }
-        i = i + 1;
     }
     return 0;
 }
@@ -367,19 +363,18 @@ int busca_funcion(int tok)
 {
     int sfuncion_tok[256];
     int i = 0;
-    while (i < nsfunc)
+    for (i = 0; i < nsfunc; i = i + 1)
     {
         int t = sfuncion_tok[i];
         if (mismo_texto(t, tok) == 1)
         {
             return 1;
         }
-        i = i + 1;
     }
     return 0;
 }
 
-int registra_estructuras()
+void registra_estructuras()
 {
     int nhijo1[256];
     int nsig[256];
@@ -398,13 +393,13 @@ int registra_estructuras()
             int nombre = nval[d];
             if (busca_struct(nombre) == 1)
             {
-                int e = anota_error(1);
+                anota_error(1);
             }
             else
             {
                 if (nsstruct >= 256)
                 {
-                    int eg = anota_error(50);
+                    anota_error(50);
                 }
                 else
                 {
@@ -439,37 +434,35 @@ int registra_estructuras()
                     }
                     if (malo == 1)
                     {
-                        int er = anota_error(51);
+                        anota_error(51);
                         cantidad = 0;
                     }
                     int j = 0;
-                    while (j < cantidad)
+                    for (j = 0; j < cantidad; j = j + 1)
                     {
                         int ftok = campotok[inicio + j];
                         int fcodigo = campotipo[inicio + j];
                         if (busca_campo_fila(nombre, ftok) == 1)
                         {
-                            int e2 = anota_error(38);
+                            anota_error(38);
                         }
                         if (fcodigo != TokenType::KwInt)
                         {
                             if (fcodigo != TokenType::KwString)
                             {
-                                int e3 = anota_error(39);
+                                anota_error(39);
                             }
                         }
-                        int a = agrega_campo(nombre, ftok, fcodigo);
-                        j = j + 1;
+                        agrega_campo(nombre, ftok, fcodigo);
                     }
                 }
             }
         }
         d = nsig[d];
     }
-    return 0;
 }
 
-int registra_globales()
+void registra_globales()
 {
     int nkind[256];
     int nhijo1[256];
@@ -485,13 +478,13 @@ int registra_globales()
             int nombre = nval[d];
             if (busca_global(nombre) == 1)
             {
-                int e = anota_error(2);
+                anota_error(2);
             }
             else
             {
                 if (nsglobal >= 256)
                 {
-                    int eg = anota_error(50);
+                    anota_error(50);
                 }
                 else
                 {
@@ -502,10 +495,9 @@ int registra_globales()
         }
         d = nsig[d];
     }
-    return 0;
 }
 
-int registra_funciones()
+void registra_funciones()
 {
     int nkind[256];
     int nhijo1[256];
@@ -525,13 +517,13 @@ int registra_funciones()
             }
             if (busca_funcion(nombre) == 1)
             {
-                int e = anota_error(3);
+                anota_error(3);
             }
             else
             {
                 if (nsfunc >= 256)
                 {
-                    int eg = anota_error(50);
+                    anota_error(50);
                 }
                 else
                 {
@@ -542,10 +534,9 @@ int registra_funciones()
         }
         d = nsig[d];
     }
-    return 0;
 }
 
-int analiza()
+void analiza()
 {
     serr_count = 0;
     llamada_en_sentencia = 0;
@@ -555,19 +546,18 @@ int analiza()
     nsfunc = 0;
     hay_main = 0;
     nscampo = 0;
-    int a = registra_estructuras();
-    int b = registra_globales();
-    int c = registra_funciones();
-    int d = analiza_cuerpos();
+    registra_estructuras();
+    registra_globales();
+    registra_funciones();
+    analiza_cuerpos();
     // El chequeo de main va DESPUES de los cuerpos:
     // su posicion en analyze() de Stage 0 (en la
     // SA-1 iba tras los registros porque aun no
     // habia cuerpos que analizar).
     if (hay_main == 0)
     {
-        int e = anota_error(4);
+        anota_error(4);
     }
-    return serr_count;
 }
 
 // ============================================================
@@ -622,40 +612,31 @@ int analiza()
 int nsim;
 int nivel;
 
-int entra_ambito()
+void entra_ambito()
 {
     nivel = nivel + 1;
-    return 0;
 }
 
-int sale_ambito()
+void sale_ambito()
 {
     int ssim_nivel[256];
-    int sigue = 1;
-    while (sigue == 1)
+    while (1)
     {
         if (nsim == 0)
         {
-            sigue = 0;
+            break;
         }
-        else
+        int u = ssim_nivel[nsim - 1];
+        if (u != nivel)
         {
-            int u = ssim_nivel[nsim - 1];
-            if (u != nivel)
-            {
-                sigue = 0;
-            }
-            else
-            {
-                nsim = nsim - 1;
-            }
+            break;
         }
+        nsim = nsim - 1;
     }
     nivel = nivel - 1;
-    return 0;
 }
 
-int registra_simbolo(int tok, int tipo, int tam)
+void registra_simbolo(int tok, int tipo, int tam)
 {
     int ssim_tok[256];
     int ssim_tipo[256];
@@ -663,29 +644,27 @@ int registra_simbolo(int tok, int tipo, int tam)
     int ssim_nivel[256];
     if (nsim >= 256)
     {
-        int e = anota_error(50);
-        return 0;
+        anota_error(50);
+        return;
     }
     ssim_tok[nsim] = tok;
     ssim_tipo[nsim] = tipo;
     ssim_tam[nsim] = tam;
     ssim_nivel[nsim] = nivel;
     nsim = nsim + 1;
-    return 0;
 }
 
 int busca_local(int tok)
 {
     int ssim_tok[256];
     int i = nsim - 1;
-    while (i >= 0)
+    for (i = nsim - 1; i >= 0; i = i - 1)
     {
         int t = ssim_tok[i];
         if (mismo_texto(t, tok) == 1)
         {
             return i;
         }
-        i = i - 1;
     }
     return 0 - 1;
 }
@@ -695,7 +674,7 @@ int busca_en_actual(int tok)
     int ssim_tok[256];
     int ssim_nivel[256];
     int i = 0;
-    while (i < nsim)
+    for (i = 0; i < nsim; i = i + 1)
     {
         int t = ssim_tok[i];
         int nv = ssim_nivel[i];
@@ -706,7 +685,6 @@ int busca_en_actual(int tok)
                 return 1;
             }
         }
-        i = i + 1;
     }
     return 0;
 }
@@ -777,22 +755,21 @@ int es_void(int tok)
     return 1;
 }
 
-int camina_bloque(int b)
+void camina_bloque(int b)
 {
     int nhijo1[256];
     int nsig[256];
-    int e = entra_ambito();
+    entra_ambito();
     int s = nhijo1[b];
     while (s != 0 - 1)
     {
-        int r = analiza_sentencia(s);
+        analiza_sentencia(s);
         s = nsig[s];
     }
-    int x = sale_ambito();
-    return 0;
+    sale_ambito();
 }
 
-int analiza_sentencia(int s)
+void analiza_sentencia(int s)
 {
     int nkind[256];
     int nini[256];
@@ -804,8 +781,8 @@ int analiza_sentencia(int s)
     int tok_tipo[256];
     if (nkind[s] == NodeKind::Block)
     {
-        int c = camina_bloque(s);
-        return 0;
+        camina_bloque(s);
+        return;
     }
     if (nkind[s] == NodeKind::VariableDeclaration)
     {
@@ -813,20 +790,20 @@ int analiza_sentencia(int s)
         int tipo = nini[s];
         if (busca_en_actual(nombre) == 1)
         {
-            int e = anota_error(8);
-            return 0;
+            anota_error(8);
+            return;
         }
         if (nsize[s] > 0)
         {
             if (es_int(tipo) == 0)
             {
-                int e2 = anota_error(9);
-                return 0;
+                anota_error(9);
+                return;
             }
             if (nhijo1[s] != 0 - 1)
             {
-                int e3 = anota_error(10);
-                return 0;
+                anota_error(10);
+                return;
             }
         }
         // El inicializador se analiza ANTES de validar el
@@ -835,7 +812,7 @@ int analiza_sentencia(int s)
         int init = nhijo1[s];
         if (init != 0 - 1)
         {
-            int a = analiza_expresion(init);
+            analiza_expresion(init);
         }
         int tt = tok_tipo[tipo];
         int valido = 0;
@@ -856,15 +833,15 @@ int analiza_sentencia(int s)
         }
         if (valido == 0)
         {
-            int e4 = anota_error(11);
-            return 0;
+            anota_error(11);
+            return;
         }
         if (init != 0 - 1)
         {
             int it = inferir_tipo(init);
             if (it == 0 - 2)
             {
-                int e5 = anota_error(16);
+                anota_error(16);
             }
             else
             {
@@ -872,13 +849,13 @@ int analiza_sentencia(int s)
                 {
                     if (tipos_iguales(it, tipo) == 0)
                     {
-                        int e6 = anota_error(16);
+                        anota_error(16);
                     }
                 }
             }
         }
-        int r = registra_simbolo(nombre, tipo, nsize[s]);
-        return 0;
+        registra_simbolo(nombre, tipo, nsize[s]);
+        return;
     }
     if (nkind[s] == NodeKind::AssignmentStatement)
     {
@@ -888,8 +865,8 @@ int analiza_sentencia(int s)
         {
             if (busca_global(nombre) == 0)
             {
-                int e = anota_error(12);
-                return 0;
+                anota_error(12);
+                return;
             }
         }
         int campo = es_campo(s);
@@ -901,45 +878,45 @@ int analiza_sentencia(int s)
                 int tam = tamano_de(nombre);
                 if (tam <= 0)
                 {
-                    int e2 = anota_error(23);
-                    return 0;
+                    anota_error(23);
+                    return;
                 }
                 if (nkind[idx] == NodeKind::IntegerLiteral)
                 {
                     int lv = nval[idx];
                     if (lv < 0)
                     {
-                        int e3 = anota_error(24);
-                        return 0;
+                        anota_error(24);
+                        return;
                     }
                     if (lv >= tam)
                     {
-                        int e4 = anota_error(24);
-                        return 0;
+                        anota_error(24);
+                        return;
                     }
                 }
                 int ttipo = tipo_de(nombre);
                 if (es_int(ttipo) == 0)
                 {
-                    int e5 = anota_error(25);
-                    return 0;
+                    anota_error(25);
+                    return;
                 }
-                int a = analiza_expresion(idx);
+                analiza_expresion(idx);
                 int itx = inferir_tipo(idx);
                 if (es_tipo_int_inferido(itx) == 0)
                 {
-                    int e6 = anota_error(26);
-                    return 0;
+                    anota_error(26);
+                    return;
                 }
             }
         }
         int valor = naux[s];
         if (valor == 0 - 1)
         {
-            int e7 = anota_error(21);
-            return 0;
+            anota_error(21);
+            return;
         }
-        int a2 = analiza_expresion(valor);
+        analiza_expresion(valor);
         int destino = tipo_de(nombre);
         if (campo == 1)
         {
@@ -955,7 +932,7 @@ int analiza_sentencia(int s)
         int it2 = inferir_tipo(valor);
         if (it2 == 0 - 2)
         {
-            int e8 = anota_error(22);
+            anota_error(22);
         }
         else
         {
@@ -963,56 +940,56 @@ int analiza_sentencia(int s)
             {
                 if (tipos_iguales(it2, destino) == 0)
                 {
-                    int e9 = anota_error(22);
+                    anota_error(22);
                 }
             }
         }
-        return 0;
+        return;
     }
     if (nkind[s] == NodeKind::IfStatement)
     {
         int cond = nhijo1[s];
         if (cond == 0 - 1)
         {
-            int e = anota_error(17);
-            int e2 = anota_error(18);
-            return 0;
+            anota_error(17);
+            anota_error(18);
+            return;
         }
-        int a = analiza_expresion(cond);
+        analiza_expresion(cond);
         int thenb = nsig[cond];
         if (thenb == 0 - 1)
         {
-            int e3 = anota_error(18);
-            return 0;
+            anota_error(18);
+            return;
         }
-        int c1 = camina_bloque(thenb);
+        camina_bloque(thenb);
         int els = nsig[thenb];
         if (els != 0 - 1)
         {
-            int c2 = camina_bloque(els);
+            camina_bloque(els);
         }
-        return 0;
+        return;
     }
     if (nkind[s] == NodeKind::WhileStatement)
     {
         int cond = nhijo1[s];
         if (cond == 0 - 1)
         {
-            int e = anota_error(19);
-            int e2 = anota_error(20);
-            return 0;
+            anota_error(19);
+            anota_error(20);
+            return;
         }
-        int a = analiza_expresion(cond);
+        analiza_expresion(cond);
         int cuerpo = nsig[cond];
         if (cuerpo == 0 - 1)
         {
-            int e3 = anota_error(20);
-            return 0;
+            anota_error(20);
+            return;
         }
         nivel_ciclo = nivel_ciclo + 1;
-        int c1 = camina_bloque(cuerpo);
+        camina_bloque(cuerpo);
         nivel_ciclo = nivel_ciclo - 1;
-        return 0;
+        return;
     }
     if (nkind[s] == NodeKind::ForStatement)
     {
@@ -1029,26 +1006,26 @@ int analiza_sentencia(int s)
         int p = nhijo1[s];
         if (p == 0 - 1)
         {
-            int e = anota_error(20);
-            return 0;
+            anota_error(20);
+            return;
         }
         if (nkind[p] == NodeKind::VariableDeclaration)
         {
-            int a0 = analiza_sentencia(p);
+            analiza_sentencia(p);
             p = nsig[p];
         }
         else
         {
             if (nkind[p] == NodeKind::AssignmentStatement)
             {
-                int a0 = analiza_sentencia(p);
+                analiza_sentencia(p);
                 p = nsig[p];
             }
         }
         if (p == 0 - 1)
         {
-            int e2 = anota_error(20);
-            return 0;
+            anota_error(20);
+            return;
         }
         int cond = p;
         p = nsig[p];
@@ -1064,18 +1041,18 @@ int analiza_sentencia(int s)
         }
         if (cuerpo == 0 - 1)
         {
-            int e3 = anota_error(20);
-            return 0;
+            anota_error(20);
+            return;
         }
         nivel_ciclo = nivel_ciclo + 1;
-        int a = analiza_expresion(cond);
-        int c1 = camina_bloque(cuerpo);
+        analiza_expresion(cond);
+        camina_bloque(cuerpo);
         if (paso != 0 - 1)
         {
-            int a2 = analiza_sentencia(paso);
+            analiza_sentencia(paso);
         }
         nivel_ciclo = nivel_ciclo - 1;
-        return 0;
+        return;
     }
     if (nkind[s] == NodeKind::ReturnStatement)
     {
@@ -1086,36 +1063,36 @@ int analiza_sentencia(int s)
             // acusando el 13 de siempre.
             if (es_void(tipo_ret_actual) == 0)
             {
-                int e = anota_error(13);
+                anota_error(13);
             }
-            return 0;
+            return;
         }
         if (es_void(tipo_ret_actual) == 1)
         {
-            int e2 = anota_error(53);
+            anota_error(53);
         }
-        int a = analiza_expresion(nhijo1[s]);
-        return 0;
+        analiza_expresion(nhijo1[s]);
+        return;
     }
     if (nkind[s] == NodeKind::PrintStatement)
     {
         if (nhijo1[s] == 0 - 1)
         {
-            int e = anota_error(14);
-            return 0;
+            anota_error(14);
+            return;
         }
-        int a = analiza_expresion(nhijo1[s]);
-        return 0;
+        analiza_expresion(nhijo1[s]);
+        return;
     }
     if (nkind[s] == NodeKind::PrintIntegerStatement)
     {
         if (nhijo1[s] == 0 - 1)
         {
-            int e = anota_error(15);
-            return 0;
+            anota_error(15);
+            return;
         }
-        int a = analiza_expresion(nhijo1[s]);
-        return 0;
+        analiza_expresion(nhijo1[s]);
+        return;
     }
     if (nkind[s] == NodeKind::CallStatement)
     {
@@ -1126,12 +1103,12 @@ int analiza_sentencia(int s)
         // void, esta es su unica posicion legal.
         if (nhijo1[s] == 0 - 1)
         {
-            return 0;
+            return;
         }
         llamada_en_sentencia = 1;
-        int a = analiza_expresion(nhijo1[s]);
+        analiza_expresion(nhijo1[s]);
         llamada_en_sentencia = 0;
-        return 0;
+        return;
     }
     if (nkind[s] == NodeKind::BreakStatement)
     {
@@ -1142,14 +1119,13 @@ int analiza_sentencia(int s)
         // sin tocarla.
         if (nivel_ciclo == 0)
         {
-            int e = anota_error(52);
+            anota_error(52);
         }
-        return 0;
+        return;
     }
-    return 0;
 }
 
-int analiza_funcion(int f)
+void analiza_funcion(int f)
 {
     int nini[256];
     int nhijo1[256];
@@ -1159,14 +1135,14 @@ int analiza_funcion(int f)
     int partok[256];
     nsim = 0;
     nivel = 0;
-    int e0 = entra_ambito();
+    entra_ambito();
     int tipo_ret = nini[f];
     tipo_ret_actual = tipo_ret;
     if (es_int(tipo_ret) == 0)
     {
         if (es_void(tipo_ret) == 0)
         {
-            int e = anota_error(6);
+            anota_error(6);
         }
     }
     int pini = naux[f];
@@ -1191,16 +1167,16 @@ int analiza_funcion(int f)
     }
     if (malo == 1)
     {
-        int er = anota_error(51);
+        anota_error(51);
         pcant = 0;
     }
     int j = 0;
-    while (j < pcant)
+    for (j = 0; j < pcant; j = j + 1)
     {
         int t = partok[pini + j];
         if (busca_en_actual(t) == 1)
         {
-            int e2 = anota_error(5);
+            anota_error(5);
         }
         else
         {
@@ -1211,28 +1187,26 @@ int analiza_funcion(int f)
             // cabecera"). Con el tipo de retorno de la
             // funcion, un parametro de una void quedaria
             // registrado como si fuera void.
-            int r = registra_simbolo(t, t - 1, 0);
+            registra_simbolo(t, t - 1, 0);
         }
-        j = j + 1;
     }
     int cuerpo = nhijo1[f];
     if (cuerpo == 0 - 1)
     {
-        int e3 = anota_error(7);
-        int x = sale_ambito();
-        return 0;
+        anota_error(7);
+        sale_ambito();
+        return;
     }
     int s = nhijo1[cuerpo];
     while (s != 0 - 1)
     {
-        int r2 = analiza_sentencia(s);
+        analiza_sentencia(s);
         s = nsig[s];
     }
-    int x2 = sale_ambito();
-    return 0;
+    sale_ambito();
 }
 
-int analiza_cuerpos()
+void analiza_cuerpos()
 {
     int nkind[256];
     int nhijo1[256];
@@ -1243,11 +1217,10 @@ int analiza_cuerpos()
         int k = nkind[d];
         if (k == NodeKind::FunctionDeclaration)
         {
-            int r = analiza_funcion(d);
+            analiza_funcion(d);
         }
         d = nsig[d];
     }
-    return 0;
 }
 // ============================================================
 // REBANADA SA-3 — LAS EXPRESIONES (traduccion de
@@ -1538,21 +1511,20 @@ int nodo_de_funcion(int tok)
 // Stage 0, que conserva la primera version de un campo.
 // ------------------------------------------------------------
 
-int agrega_campo(int estructura, int campo, int codigo)
+void agrega_campo(int estructura, int campo, int codigo)
 {
     int scampo_struct[256];
     int scampo_tok[256];
     int scampo_tipo[256];
     if (nscampo >= 256)
     {
-        int e = anota_error(50);
-        return 0;
+        anota_error(50);
+        return;
     }
     scampo_struct[nscampo] = estructura;
     scampo_tok[nscampo] = campo;
     scampo_tipo[nscampo] = codigo;
     nscampo = nscampo + 1;
-    return 0;
 }
 
 int busca_campo_fila(int estructura, int campo)
@@ -1560,7 +1532,7 @@ int busca_campo_fila(int estructura, int campo)
     int scampo_struct[256];
     int scampo_tok[256];
     int i = 0;
-    while (i < nscampo)
+    for (i = 0; i < nscampo; i = i + 1)
     {
         int fs = scampo_struct[i];
         int ms = mismo_texto(fs, estructura);
@@ -1573,7 +1545,6 @@ int busca_campo_fila(int estructura, int campo)
                 return 1;
             }
         }
-        i = i + 1;
     }
     return 0;
 }
@@ -1586,7 +1557,7 @@ int codigo_de_campo(int estructura, int campo)
     int scampo_tok[256];
     int scampo_tipo[256];
     int i = 0;
-    while (i < nscampo)
+    for (i = 0; i < nscampo; i = i + 1)
     {
         int fs = scampo_struct[i];
         int ms = mismo_texto(fs, estructura);
@@ -1599,7 +1570,6 @@ int codigo_de_campo(int estructura, int campo)
                 return scampo_tipo[i];
             }
         }
-        i = i + 1;
     }
     return 0 - 1;
 }
@@ -1792,7 +1762,7 @@ int inferir_tipo(int n)
 // ANALIZA EXPRESION (analyzeExpression de Stage 0).
 // ------------------------------------------------------------
 
-int analiza_expresion(int n)
+void analiza_expresion(int n)
 {
     int nkind[256];
     int nhijo1[256];
@@ -1801,15 +1771,15 @@ int analiza_expresion(int n)
     int nsize[256];
     if (n == 0 - 1)
     {
-        return 0;
+        return;
     }
     if (nkind[n] == NodeKind::IntegerLiteral)
     {
-        return 0;
+        return;
     }
     if (nkind[n] == NodeKind::StringLiteral)
     {
-        return 0;
+        return;
     }
     if (nkind[n] == NodeKind::VariableExpression)
     {
@@ -1817,42 +1787,42 @@ int analiza_expresion(int n)
         int tt = tipo_de(base);
         if (tt == 0 - 1)
         {
-            int e = anota_error(27);
-            return 0;
+            anota_error(27);
+            return;
         }
         if (es_campo(n) == 1)
         {
             if (busca_struct(tt) == 0)
             {
-                int e2 = anota_error(28);
-                return 0;
+                anota_error(28);
+                return;
             }
             int campotok = nhijo1[n];
             int fc = codigo_de_campo(tt, campotok);
             if (fc == 0 - 1)
             {
-                int e3 = anota_error(29);
-                return 0;
+                anota_error(29);
+                return;
             }
             if (fc != TokenType::KwInt)
             {
                 if (fc != TokenType::KwString)
                 {
-                    int e4 = anota_error(30);
-                    return 0;
+                    anota_error(30);
+                    return;
                 }
             }
-            return 0;
+            return;
         }
         if (es_int(tt) == 0)
         {
             if (es_string(tt) == 0)
             {
-                int e5 = anota_error(30);
-                return 0;
+                anota_error(30);
+                return;
             }
         }
-        return 0;
+        return;
     }
     if (nkind[n] == NodeKind::ArrayAccessExpression)
     {
@@ -1860,48 +1830,48 @@ int analiza_expresion(int n)
         int tt = tipo_de(base);
         if (tt == 0 - 1)
         {
-            int e = anota_error(31);
-            return 0;
+            anota_error(31);
+            return;
         }
         int tam = tamano_de(base);
         if (tam <= 0)
         {
-            int e2 = anota_error(23);
-            return 0;
+            anota_error(23);
+            return;
         }
         if (es_int(tt) == 0)
         {
-            int e3 = anota_error(25);
-            return 0;
+            anota_error(25);
+            return;
         }
         int idx = nhijo1[n];
         if (idx == 0 - 1)
         {
-            int e4 = anota_error(32);
-            return 0;
+            anota_error(32);
+            return;
         }
         if (nkind[idx] == NodeKind::IntegerLiteral)
         {
             int lv = nval[idx];
             if (lv < 0)
             {
-                int e5 = anota_error(24);
-                return 0;
+                anota_error(24);
+                return;
             }
             if (lv >= tam)
             {
-                int e6 = anota_error(24);
-                return 0;
+                anota_error(24);
+                return;
             }
         }
-        int a = analiza_expresion(idx);
+        analiza_expresion(idx);
         int itx = inferir_tipo(idx);
         if (es_tipo_int_inferido(itx) == 0)
         {
-            int e7 = anota_error(26);
-            return 0;
+            anota_error(26);
+            return;
         }
-        return 0;
+        return;
     }
     if (nkind[n] == NodeKind::CallExpression)
     {
@@ -1934,101 +1904,101 @@ int analiza_expresion(int n)
         {
             if (nargs != 2)
             {
-                int e = anota_error(40);
-                return 0;
+                anota_error(40);
+                return;
             }
             if (nkind[a1] != NodeKind::StringLiteral)
             {
-                int e2 = anota_error(41);
-                return 0;
+                anota_error(41);
+                return;
             }
             if (nkind[a2] != NodeKind::VariableExpression)
             {
-                int e3 = anota_error(42);
-                return 0;
+                anota_error(42);
+                return;
             }
             int anombre = nval[a2];
             int atipo = tipo_de(anombre);
             if (atipo == 0 - 1)
             {
-                int e4 = anota_error(43);
-                return 0;
+                anota_error(43);
+                return;
             }
             if (es_int(atipo) == 0)
             {
-                int e5 = anota_error(44);
-                return 0;
+                anota_error(44);
+                return;
             }
             int cap = tamano_de(anombre);
             if (cap <= 0)
             {
-                int e6 = anota_error(45);
-                return 0;
+                anota_error(45);
+                return;
             }
-            return 0;
+            return;
         }
         if (es_file_write(cal) == 1)
         {
             if (nargs != 3)
             {
-                int e = anota_error(46);
-                return 0;
+                anota_error(46);
+                return;
             }
             if (nkind[a1] != NodeKind::StringLiteral)
             {
-                int e2 = anota_error(41);
-                return 0;
+                anota_error(41);
+                return;
             }
             if (nkind[a2] != NodeKind::VariableExpression)
             {
-                int e3 = anota_error(42);
-                return 0;
+                anota_error(42);
+                return;
             }
             int anombre = nval[a2];
             int atipo = tipo_de(anombre);
             if (atipo == 0 - 1)
             {
-                int e4 = anota_error(43);
-                return 0;
+                anota_error(43);
+                return;
             }
             if (es_int(atipo) == 0)
             {
-                int e5 = anota_error(44);
-                return 0;
+                anota_error(44);
+                return;
             }
             int cap = tamano_de(anombre);
             if (cap <= 0)
             {
-                int e6 = anota_error(45);
-                return 0;
+                anota_error(45);
+                return;
             }
-            int a = analiza_expresion(a3);
+            analiza_expresion(a3);
             int itc = inferir_tipo(a3);
             if (es_tipo_int_inferido(itc) == 0)
             {
-                int e7 = anota_error(47);
-                return 0;
+                anota_error(47);
+                return;
             }
             if (nkind[a3] == NodeKind::IntegerLiteral)
             {
                 int cv = nval[a3];
                 if (cv < 0)
                 {
-                    int e8 = anota_error(48);
-                    return 0;
+                    anota_error(48);
+                    return;
                 }
                 if (cv > cap)
                 {
-                    int e9 = anota_error(49);
-                    return 0;
+                    anota_error(49);
+                    return;
                 }
             }
-            return 0;
+            return;
         }
         if (busca_funcion(cal) == 0)
         {
-            int e = anota_error(33);
-            return 0;
+            anota_error(33);
+            return;
         }
         int fd = nodo_de_funcion(cal);
         if (en_sent == 0)
@@ -2036,60 +2006,59 @@ int analiza_expresion(int n)
             int nini[256];
             if (es_void(nini[fd]) == 1)
             {
-                int e3 = anota_error(54);
-                return 0;
+                anota_error(54);
+                return;
             }
         }
         if (nargs != nsize[fd])
         {
-            int e2 = anota_error(34);
-            return 0;
+            anota_error(34);
+            return;
         }
         int arg = a1;
         while (arg != 0 - 1)
         {
-            int a = analiza_expresion(arg);
+            analiza_expresion(arg);
             arg = nsig[arg];
         }
-        return 0;
+        return;
     }
     if (nkind[n] == NodeKind::BinaryExpression)
     {
         int izq = nhijo1[n];
         if (izq == 0 - 1)
         {
-            int e = anota_error(35);
-            int e2 = anota_error(36);
-            return 0;
+            anota_error(35);
+            anota_error(36);
+            return;
         }
-        int a = analiza_expresion(izq);
+        analiza_expresion(izq);
         int der = nsig[izq];
         if (der == 0 - 1)
         {
-            int e3 = anota_error(36);
+            anota_error(36);
         }
         else
         {
-            int a2 = analiza_expresion(der);
+            analiza_expresion(der);
         }
         int op = nval[n];
         if (op < 14)
         {
-            int e4 = anota_error(37);
-            return 0;
+            anota_error(37);
+            return;
         }
         if (op > 28)
         {
-            int e5 = anota_error(37);
-            return 0;
+            anota_error(37);
+            return;
         }
-        return 0;
+        return;
     }
-    return 0;
 }
 
 
-int imprime_fila()
+void imprime_fila()
 {
     int serr_codigo[256];
     print_int(nsstruct);
@@ -2097,13 +2066,11 @@ int imprime_fila()
     print_int(nsfunc);
     print_int(serr_count);
     int i = 0;
-    while (i < serr_count)
+    for (i = 0; i < serr_count; i = i + 1)
     {
         int c = serr_codigo[i];
         print_int(c);
-        i = i + 1;
     }
-    return 0;
 }
 
 // Las cuatro tablas de la SA-1, recargadas COMPLETAS
@@ -2115,7 +2082,7 @@ int imprime_fila()
 // Aqui cada tabla es el escaneo entero de su
 // fuente, como las de la SA-2: nini es el token
 // del tipo y partok trae los parametros de verdad.
-int inicia_nodos1()
+void inicia_nodos1()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -2381,10 +2348,9 @@ int inicia_nodos1()
     nkind[8] = 4; nini[8] = 0; nfin[8] = 0; nhijo1[8] = 9; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
     nkind[9] = 9; nini[9] = 30; nfin[9] = 30; nhijo1[9] = 10; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
     nkind[10] = 14; nini[10] = 31; nfin[10] = 31; nhijo1[10] = -1; nsig[10] = -1; nval[10] = 31; naux[10] = -1; nsize[10] = 0;
-    return 0;
 }
 
-int inicia_nodos2()
+void inicia_nodos2()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -2688,10 +2654,9 @@ int inicia_nodos2()
     nkind[10] = 4; nini[10] = 0; nfin[10] = 0; nhijo1[10] = 11; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
     nkind[11] = 9; nini[11] = 36; nfin[11] = 36; nhijo1[11] = 12; nsig[11] = -1; nval[11] = 0; naux[11] = -1; nsize[11] = 0;
     nkind[12] = 12; nini[12] = 37; nfin[12] = 37; nhijo1[12] = -1; nsig[12] = -1; nval[12] = 2; naux[12] = -1; nsize[12] = 0;
-    return 0;
 }
 
-int inicia_nodos3()
+void inicia_nodos3()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -2791,10 +2756,9 @@ int inicia_nodos3()
     nkind[0] = 0; nini[0] = 0; nfin[0] = 11; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
     nkind[1] = 2; nini[1] = 0; nfin[1] = 0; nhijo1[1] = -1; nsig[1] = 2; nval[1] = 1; naux[1] = 0; nsize[1] = 1;
     nkind[2] = 5; nini[2] = 8; nfin[2] = 8; nhijo1[2] = -1; nsig[2] = -1; nval[2] = 9; naux[2] = -1; nsize[2] = 0;
-    return 0;
 }
 
-int inicia_nodos4()
+void inicia_nodos4()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -3024,10 +2988,9 @@ int inicia_nodos4()
     nkind[8] = 4; nini[8] = 0; nfin[8] = 0; nhijo1[8] = 9; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
     nkind[9] = 9; nini[9] = 25; nfin[9] = 25; nhijo1[9] = 10; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
     nkind[10] = 12; nini[10] = 26; nfin[10] = 26; nhijo1[10] = -1; nsig[10] = -1; nval[10] = 1; naux[10] = -1; nsize[10] = 0;
-    return 0;
 }
 
-int inicia_nodos5()
+void inicia_nodos5()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -3125,10 +3088,9 @@ int inicia_nodos5()
     nkind[19] = NodeKind::VariableExpression; nini[19] = 42; nfin[19] = 42; nhijo1[19] = -1; nsig[19] = -1; nval[19] = 42; naux[19] = -1; nsize[19] = 0;
     nnodos = 20;
     tok_count = 45;
-    return 0;
 }
 
-int inicia_nodos6()
+void inicia_nodos6()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -3211,10 +3173,9 @@ int inicia_nodos6()
     nkind[14] = NodeKind::IntegerLiteral; nini[14] = 34; nfin[14] = 34; nhijo1[14] = -1; nsig[14] = -1; nval[14] = 0; naux[14] = -1; nsize[14] = 0;
     nnodos = 15;
     tok_count = 37;
-    return 0;
 }
 
-int inicia_nodos7()
+void inicia_nodos7()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -3555,10 +3516,9 @@ int inicia_nodos7()
     nkind[9] = 12; nini[9] = 40; nfin[9] = 40; nhijo1[9] = -1; nsig[9] = -1; nval[9] = 1; naux[9] = -1; nsize[9] = 0;
     nkind[10] = 9; nini[10] = 42; nfin[10] = 42; nhijo1[10] = 11; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
     nkind[11] = 12; nini[11] = 43; nfin[11] = 43; nhijo1[11] = -1; nsig[11] = -1; nval[11] = 0; naux[11] = -1; nsize[11] = 0;
-    return 0;
 }
 
-int inicia_nodos8()
+void inicia_nodos8()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -3627,10 +3587,9 @@ int inicia_nodos8()
     nkind[12] = NodeKind::IntegerLiteral; nini[12] = 25; nfin[12] = 25; nhijo1[12] = -1; nsig[12] = -1; nval[12] = 0; naux[12] = -1; nsize[12] = 0;
     nnodos = 13;
     tok_count = 28;
-    return 0;
 }
 
-int inicia_nodos9()
+void inicia_nodos9()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -3682,10 +3641,9 @@ int inicia_nodos9()
     nkind[7] = NodeKind::IntegerLiteral; nini[7] = 16; nfin[7] = 16; nhijo1[7] = -1; nsig[7] = -1; nval[7] = 0; naux[7] = -1; nsize[7] = 0;
     nnodos = 8;
     tok_count = 19;
-    return 0;
 }
 
-int inicia_nodos10()
+void inicia_nodos10()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -4435,10 +4393,9 @@ int inicia_nodos10()
     nkind[33] = 14; nini[33] = 96; nfin[33] = 96; nhijo1[33] = -1; nsig[33] = -1; nval[33] = 96; naux[33] = -1; nsize[33] = 0;
     nkind[34] = 9; nini[34] = 99; nfin[34] = 99; nhijo1[34] = 35; nsig[34] = -1; nval[34] = 0; naux[34] = -1; nsize[34] = 0;
     nkind[35] = 14; nini[35] = 100; nfin[35] = 100; nhijo1[35] = -1; nsig[35] = -1; nval[35] = 100; naux[35] = -1; nsize[35] = 0;
-    return 0;
 }
 
-int inicia_nodos11()
+void inicia_nodos11()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -4757,10 +4714,9 @@ int inicia_nodos11()
     nkind[12] = 14; nini[12] = 36; nfin[12] = 36; nhijo1[12] = 38; nsig[12] = -1; nval[12] = 36; naux[12] = -1; nsize[12] = 0;
     nkind[13] = 9; nini[13] = 40; nfin[13] = 40; nhijo1[13] = 14; nsig[13] = -1; nval[13] = 0; naux[13] = -1; nsize[13] = 0;
     nkind[14] = 14; nini[14] = 41; nfin[14] = 41; nhijo1[14] = -1; nsig[14] = -1; nval[14] = 41; naux[14] = -1; nsize[14] = 0;
-    return 0;
 }
 
-int inicia_nodos12()
+void inicia_nodos12()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -5124,10 +5080,9 @@ int inicia_nodos12()
     nkind[18] = 12; nini[18] = 46; nfin[18] = 46; nhijo1[18] = -1; nsig[18] = -1; nval[18] = 2; naux[18] = -1; nsize[18] = 0;
     nkind[19] = 9; nini[19] = 48; nfin[19] = 48; nhijo1[19] = 20; nsig[19] = -1; nval[19] = 0; naux[19] = -1; nsize[19] = 0;
     nkind[20] = 12; nini[20] = 49; nfin[20] = 49; nhijo1[20] = -1; nsig[20] = -1; nval[20] = 0; naux[20] = -1; nsize[20] = 0;
-    return 0;
 }
 
-int inicia_nodos13()
+void inicia_nodos13()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -5555,10 +5510,9 @@ int inicia_nodos13()
     nkind[23] = 13; nini[23] = 54; nfin[23] = 54; nhijo1[23] = -1; nsig[23] = -1; nval[23] = 54; naux[23] = -1; nsize[23] = 0;
     nkind[24] = 9; nini[24] = 56; nfin[24] = 56; nhijo1[24] = 25; nsig[24] = -1; nval[24] = 0; naux[24] = -1; nsize[24] = 0;
     nkind[25] = 12; nini[25] = 57; nfin[25] = 57; nhijo1[25] = -1; nsig[25] = -1; nval[25] = 0; naux[25] = -1; nsize[25] = 0;
-    return 0;
 }
 
-int inicia_nodos14()
+void inicia_nodos14()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -6115,10 +6069,9 @@ int inicia_nodos14()
     nkind[26] = 12; nini[26] = 8; nfin[26] = 8; nhijo1[26] = -1; nsig[26] = -1; nval[26] = -1; naux[26] = -1; nsize[26] = 0;
     nkind[27] = 9; nini[27] = 69; nfin[27] = 69; nhijo1[27] = 28; nsig[27] = -1; nval[27] = 0; naux[27] = -1; nsize[27] = 0;
     nkind[28] = 12; nini[28] = 70; nfin[28] = 70; nhijo1[28] = -1; nsig[28] = -1; nval[28] = 0; naux[28] = -1; nsize[28] = 0;
-    return 0;
 }
 
-int inicia_nodos15()
+void inicia_nodos15()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -6410,10 +6363,9 @@ int inicia_nodos15()
     nkind[18] = 12; nini[18] = 35; nfin[18] = 35; nhijo1[18] = -1; nsig[18] = -1; nval[18] = 2; naux[18] = -1; nsize[18] = 0;
     nkind[19] = 9; nini[19] = 37; nfin[19] = 37; nhijo1[19] = 20; nsig[19] = -1; nval[19] = 0; naux[19] = -1; nsize[19] = 0;
     nkind[20] = 12; nini[20] = 38; nfin[20] = 38; nhijo1[20] = -1; nsig[20] = -1; nval[20] = 0; naux[20] = -1; nsize[20] = 0;
-    return 0;
 }
 
-int inicia_nodos16()
+void inicia_nodos16()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -6603,10 +6555,9 @@ int inicia_nodos16()
     nkind[3] = 4; nini[3] = 0; nfin[3] = 0; nhijo1[3] = 4; nsig[3] = -1; nval[3] = 0; naux[3] = -1; nsize[3] = 0;
     nkind[4] = 9; nini[4] = 19; nfin[4] = 19; nhijo1[4] = 5; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
     nkind[5] = 12; nini[5] = 20; nfin[5] = 20; nhijo1[5] = -1; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
-    return 0;
 }
 
-int inicia_nodos17()
+void inicia_nodos17()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -8219,7 +8170,6 @@ int inicia_nodos17()
     nkind[72] = 4; nini[72] = 0; nfin[72] = 0; nhijo1[72] = 73; nsig[72] = -1; nval[72] = 0; naux[72] = -1; nsize[72] = 0;
     nkind[73] = 9; nini[73] = 215; nfin[73] = 215; nhijo1[73] = 74; nsig[73] = -1; nval[73] = 0; naux[73] = -1; nsize[73] = 0;
     nkind[74] = 12; nini[74] = 216; nfin[74] = 216; nhijo1[74] = -1; nsig[74] = -1; nval[74] = 0; naux[74] = -1; nsize[74] = 0;
-    return 0;
 }
 
 // ============================================================
@@ -8236,7 +8186,7 @@ int inicia_nodos17()
 // mala se analiza sin parametros. Esperado:
 // nsstruct 2, nsglobal 0, nsfunc 2, errores 51, 51, 51.
 // ============================================================
-int inicia_nodos18()
+void inicia_nodos18()
 {
     int fuente[1024];
     fuente[0] = 115;
@@ -8520,7 +8470,6 @@ int inicia_nodos18()
     nkind[8] = 4; nini[8] = 0; nfin[8] = 0; nhijo1[8] = 9; nsig[8] = -1; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
     nkind[9] = 9; nini[9] = 32; nfin[9] = 32; nhijo1[9] = 10; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
     nkind[10] = 12; nini[10] = 33; nfin[10] = 33; nhijo1[10] = -1; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
-    return 0;
 }
 
 // ============================================================
@@ -8534,7 +8483,7 @@ int inicia_nodos18()
 // la void no acusa nada).
 // ============================================================
 
-int inicia_nodos19()
+void inicia_nodos19()
 {
     int fuente[1024];
     fuente[0] = 118;
@@ -8728,7 +8677,6 @@ int inicia_nodos19()
     nkind[8] = 18; nini[8] = 16; nfin[8] = 16; nhijo1[8] = 7; nsig[8] = 10; nval[8] = 0; naux[8] = -1; nsize[8] = 0;
     nkind[9] = 12; nini[9] = 21; nfin[9] = 21; nhijo1[9] = -1; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
     nkind[10] = 9; nini[10] = 20; nfin[10] = 20; nhijo1[10] = 9; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
-    return 0;
 }
 
 // ============================================================
@@ -8745,7 +8693,7 @@ int inicia_nodos19()
 // existia, tambien lo acusa).
 // ============================================================
 
-int inicia_nodos20()
+void inicia_nodos20()
 {
     int fuente[1024];
     fuente[0] = 118;
@@ -8946,7 +8894,6 @@ int inicia_nodos20()
     nkind[8] = 5; nini[8] = 14; nfin[8] = 14; nhijo1[8] = 7; nsig[8] = 10; nval[8] = 15; naux[8] = -1; nsize[8] = 0;
     nkind[9] = 12; nini[9] = 22; nfin[9] = 22; nhijo1[9] = -1; nsig[9] = -1; nval[9] = 0; naux[9] = -1; nsize[9] = 0;
     nkind[10] = 9; nini[10] = 21; nfin[10] = 21; nhijo1[10] = 9; nsig[10] = -1; nval[10] = 0; naux[10] = -1; nsize[10] = 0;
-    return 0;
 }
 
 // ============================================================
@@ -8960,7 +8907,7 @@ int inicia_nodos20()
 // hereda sin tocarla).
 // ============================================================
 
-int inicia_nodos21()
+void inicia_nodos21()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -9242,7 +9189,6 @@ int inicia_nodos21()
     nkind[19] = 6; nini[19] = 27; nfin[19] = 27; nhijo1[19] = -1; nsig[19] = -1; nval[19] = 27; naux[19] = 18; nsize[19] = 0;
     nkind[20] = 14; nini[20] = 35; nfin[20] = 35; nhijo1[20] = -1; nsig[20] = -1; nval[20] = 35; naux[20] = -1; nsize[20] = 0;
     nkind[21] = 9; nini[21] = 34; nfin[21] = 34; nhijo1[21] = 20; nsig[21] = -1; nval[21] = 0; naux[21] = -1; nsize[21] = 0;
-    return 0;
 }
 
 // ============================================================
@@ -9254,7 +9200,7 @@ int inicia_nodos21()
 // que lo contenga.
 // ============================================================
 
-int inicia_nodos22()
+void inicia_nodos22()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -9355,7 +9301,6 @@ int inicia_nodos22()
     nkind[3] = 19; nini[3] = 5; nfin[3] = 5; nhijo1[3] = -1; nsig[3] = 4; nval[3] = 0; naux[3] = -1; nsize[3] = 0;
     nkind[4] = 12; nini[4] = 8; nfin[4] = 8; nhijo1[4] = -1; nsig[4] = -1; nval[4] = 0; naux[4] = -1; nsize[4] = 0;
     nkind[5] = 9; nini[5] = 7; nfin[5] = 7; nhijo1[5] = 4; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
-    return 0;
 }
 
 // ============================================================
@@ -9380,7 +9325,7 @@ int inicia_nodos22()
 // nivel de ciclo sube en la rama del for.
 // ============================================================
 
-int inicia_nodos23()
+void inicia_nodos23()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -9797,7 +9742,6 @@ int inicia_nodos23()
     nkind[25] = 6; nini[25] = 38; nfin[25] = 38; nhijo1[25] = -1; nsig[25] = -1; nval[25] = 38; naux[25] = 24; nsize[25] = 0;
     nkind[26] = 14; nini[26] = 46; nfin[26] = 46; nhijo1[26] = -1; nsig[26] = -1; nval[26] = 46; naux[26] = -1; nsize[26] = 0;
     nkind[27] = 9; nini[27] = 45; nfin[27] = 45; nhijo1[27] = 26; nsig[27] = -1; nval[27] = 0; naux[27] = -1; nsize[27] = 0;
-    return 0;
 }
 
 // ============================================================
@@ -9819,7 +9763,7 @@ int inicia_nodos23()
 // despues del ciclo es legal y no acusa.
 // ============================================================
 
-int inicia_nodos24()
+void inicia_nodos24()
 {
     int fuente[1024];
     fuente[0] = 105;
@@ -10159,82 +10103,81 @@ int inicia_nodos24()
     nkind[21] = 6; nini[21] = 35; nfin[21] = 35; nhijo1[21] = -1; nsig[21] = 23; nval[21] = 35; naux[21] = 20; nsize[21] = 0;
     nkind[22] = 14; nini[22] = 40; nfin[22] = 40; nhijo1[22] = -1; nsig[22] = -1; nval[22] = 40; naux[22] = -1; nsize[22] = 0;
     nkind[23] = 9; nini[23] = 39; nfin[23] = 39; nhijo1[23] = 22; nsig[23] = -1; nval[23] = 0; naux[23] = -1; nsize[23] = 0;
-    return 0;
 }
 
 int main()
 {
-    int r1 = inicia_nodos1();
-    int a1 = analiza();
-    int p1 = imprime_fila();
-    int r2 = inicia_nodos2();
-    int a2 = analiza();
-    int p2 = imprime_fila();
-    int r3 = inicia_nodos3();
-    int a3 = analiza();
-    int p3 = imprime_fila();
-    int r4 = inicia_nodos4();
-    int a4 = analiza();
-    int p4 = imprime_fila();
-    int r5 = inicia_nodos5();
-    int a5 = analiza();
-    int p5 = imprime_fila();
-    int r6 = inicia_nodos6();
-    int a6 = analiza();
-    int p6 = imprime_fila();
-    int r7 = inicia_nodos7();
-    int a7 = analiza();
-    int p7 = imprime_fila();
-    int r8 = inicia_nodos8();
-    int a8 = analiza();
-    int p8 = imprime_fila();
-    int r9 = inicia_nodos9();
-    int a9 = analiza();
-    int p9 = imprime_fila();
-    int r10 = inicia_nodos10();
-    int a10 = analiza();
-    int p10 = imprime_fila();
-    int r11 = inicia_nodos11();
-    int a11 = analiza();
-    int p11 = imprime_fila();
-    int r12 = inicia_nodos12();
-    int a12 = analiza();
-    int p12 = imprime_fila();
-    int r13 = inicia_nodos13();
-    int a13 = analiza();
-    int p13 = imprime_fila();
-    int r14 = inicia_nodos14();
-    int a14 = analiza();
-    int p14 = imprime_fila();
-    int r15 = inicia_nodos15();
-    int a15 = analiza();
-    int p15 = imprime_fila();
-    int r16 = inicia_nodos16();
-    int a16 = analiza();
-    int p16 = imprime_fila();
-    int r17 = inicia_nodos17();
-    int a17 = analiza();
-    int p17 = imprime_fila();
-    int r18 = inicia_nodos18();
-    int a18 = analiza();
-    int p18 = imprime_fila();
-    int r19 = inicia_nodos19();
-    int a19 = analiza();
-    int p19 = imprime_fila();
-    int r20 = inicia_nodos20();
-    int a20 = analiza();
-    int p20 = imprime_fila();
-    int r21 = inicia_nodos21();
-    int a21 = analiza();
-    int p21 = imprime_fila();
-    int r22 = inicia_nodos22();
-    int a22 = analiza();
-    int p22 = imprime_fila();
-    int r23 = inicia_nodos23();
-    int a23 = analiza();
-    int p23 = imprime_fila();
-    int r24 = inicia_nodos24();
-    int a24 = analiza();
-    int p24 = imprime_fila();
+    inicia_nodos1();
+    analiza();
+    imprime_fila();
+    inicia_nodos2();
+    analiza();
+    imprime_fila();
+    inicia_nodos3();
+    analiza();
+    imprime_fila();
+    inicia_nodos4();
+    analiza();
+    imprime_fila();
+    inicia_nodos5();
+    analiza();
+    imprime_fila();
+    inicia_nodos6();
+    analiza();
+    imprime_fila();
+    inicia_nodos7();
+    analiza();
+    imprime_fila();
+    inicia_nodos8();
+    analiza();
+    imprime_fila();
+    inicia_nodos9();
+    analiza();
+    imprime_fila();
+    inicia_nodos10();
+    analiza();
+    imprime_fila();
+    inicia_nodos11();
+    analiza();
+    imprime_fila();
+    inicia_nodos12();
+    analiza();
+    imprime_fila();
+    inicia_nodos13();
+    analiza();
+    imprime_fila();
+    inicia_nodos14();
+    analiza();
+    imprime_fila();
+    inicia_nodos15();
+    analiza();
+    imprime_fila();
+    inicia_nodos16();
+    analiza();
+    imprime_fila();
+    inicia_nodos17();
+    analiza();
+    imprime_fila();
+    inicia_nodos18();
+    analiza();
+    imprime_fila();
+    inicia_nodos19();
+    analiza();
+    imprime_fila();
+    inicia_nodos20();
+    analiza();
+    imprime_fila();
+    inicia_nodos21();
+    analiza();
+    imprime_fila();
+    inicia_nodos22();
+    analiza();
+    imprime_fila();
+    inicia_nodos23();
+    analiza();
+    imprime_fila();
+    inicia_nodos24();
+    analiza();
+    imprime_fila();
     return 0;
 }
