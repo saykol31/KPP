@@ -48,7 +48,8 @@ enum NodeKind
 
     // AMPLIACIONES (al final, nunca en medio)
     CallStatement,
-    BreakStatement
+    BreakStatement,
+    ForStatement
 };
 
 // Tabla de tipos de token: la lista del Lexer
@@ -1010,6 +1011,69 @@ int analiza_sentencia(int s)
         }
         nivel_ciclo = nivel_ciclo + 1;
         int c1 = camina_bloque(cuerpo);
+        nivel_ciclo = nivel_ciclo - 1;
+        return 0;
+    }
+    if (nkind[s] == NodeKind::ForStatement)
+    {
+        // El for (Ampliacion 3): los hijos cuelgan en
+        // cadena — el inicio (si lo hay), la condicion
+        // (siempre: el Parser siembra el literal 1 si
+        // venia vacia), el paso (si lo hay) y el
+        // cuerpo, siempre el ultimo. El inicio se
+        // analiza en el ambito que contiene al for: su
+        // variable vive ahi (v1), como en Stage 0. La
+        // condicion, el cuerpo y el paso van con el
+        // nivel de ciclo subido — el break dentro del
+        // for es legal, como dentro del while.
+        int p = nhijo1[s];
+        if (p == 0 - 1)
+        {
+            int e = anota_error(20);
+            return 0;
+        }
+        if (nkind[p] == NodeKind::VariableDeclaration)
+        {
+            int a0 = analiza_sentencia(p);
+            p = nsig[p];
+        }
+        else
+        {
+            if (nkind[p] == NodeKind::AssignmentStatement)
+            {
+                int a0 = analiza_sentencia(p);
+                p = nsig[p];
+            }
+        }
+        if (p == 0 - 1)
+        {
+            int e2 = anota_error(20);
+            return 0;
+        }
+        int cond = p;
+        p = nsig[p];
+        int paso = 0 - 1;
+        int cuerpo = p;
+        if (p != 0 - 1)
+        {
+            if (nkind[p] == NodeKind::AssignmentStatement)
+            {
+                paso = p;
+                cuerpo = nsig[p];
+            }
+        }
+        if (cuerpo == 0 - 1)
+        {
+            int e3 = anota_error(20);
+            return 0;
+        }
+        nivel_ciclo = nivel_ciclo + 1;
+        int a = analiza_expresion(cond);
+        int c1 = camina_bloque(cuerpo);
+        if (paso != 0 - 1)
+        {
+            int a2 = analiza_sentencia(paso);
+        }
         nivel_ciclo = nivel_ciclo - 1;
         return 0;
     }
@@ -9294,6 +9358,810 @@ int inicia_nodos22()
     return 0;
 }
 
+// ============================================================
+// SONDA 23 — EL ECO DE FOR, EL CAMINO FELIZ.
+//
+// int main()
+// {
+//     int s = 0;
+//     for (int i = 0; i < 10; i = i + 1)
+//     {
+//         if (i == 3)
+//         {
+//             break;
+//         }
+//         s = s + i;
+//     }
+//     return s;
+// }
+//
+// Fila esperada: 0, 0, 1, 0 — el for se analiza
+// entero y el break de dentro no acusa el 52: el
+// nivel de ciclo sube en la rama del for.
+// ============================================================
+
+int inicia_nodos23()
+{
+    int fuente[1024];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 109;
+    fuente[5] = 97;
+    fuente[6] = 105;
+    fuente[7] = 110;
+    fuente[8] = 40;
+    fuente[9] = 41;
+    fuente[10] = 10;
+    fuente[11] = 123;
+    fuente[12] = 10;
+    fuente[13] = 32;
+    fuente[14] = 32;
+    fuente[15] = 32;
+    fuente[16] = 32;
+    fuente[17] = 105;
+    fuente[18] = 110;
+    fuente[19] = 116;
+    fuente[20] = 32;
+    fuente[21] = 115;
+    fuente[22] = 32;
+    fuente[23] = 61;
+    fuente[24] = 32;
+    fuente[25] = 48;
+    fuente[26] = 59;
+    fuente[27] = 10;
+    fuente[28] = 32;
+    fuente[29] = 32;
+    fuente[30] = 32;
+    fuente[31] = 32;
+    fuente[32] = 102;
+    fuente[33] = 111;
+    fuente[34] = 114;
+    fuente[35] = 32;
+    fuente[36] = 40;
+    fuente[37] = 105;
+    fuente[38] = 110;
+    fuente[39] = 116;
+    fuente[40] = 32;
+    fuente[41] = 105;
+    fuente[42] = 32;
+    fuente[43] = 61;
+    fuente[44] = 32;
+    fuente[45] = 48;
+    fuente[46] = 59;
+    fuente[47] = 32;
+    fuente[48] = 105;
+    fuente[49] = 32;
+    fuente[50] = 60;
+    fuente[51] = 32;
+    fuente[52] = 49;
+    fuente[53] = 48;
+    fuente[54] = 59;
+    fuente[55] = 32;
+    fuente[56] = 105;
+    fuente[57] = 32;
+    fuente[58] = 61;
+    fuente[59] = 32;
+    fuente[60] = 105;
+    fuente[61] = 32;
+    fuente[62] = 43;
+    fuente[63] = 32;
+    fuente[64] = 49;
+    fuente[65] = 41;
+    fuente[66] = 10;
+    fuente[67] = 32;
+    fuente[68] = 32;
+    fuente[69] = 32;
+    fuente[70] = 32;
+    fuente[71] = 123;
+    fuente[72] = 10;
+    fuente[73] = 32;
+    fuente[74] = 32;
+    fuente[75] = 32;
+    fuente[76] = 32;
+    fuente[77] = 32;
+    fuente[78] = 32;
+    fuente[79] = 32;
+    fuente[80] = 32;
+    fuente[81] = 105;
+    fuente[82] = 102;
+    fuente[83] = 32;
+    fuente[84] = 40;
+    fuente[85] = 105;
+    fuente[86] = 32;
+    fuente[87] = 61;
+    fuente[88] = 61;
+    fuente[89] = 32;
+    fuente[90] = 51;
+    fuente[91] = 41;
+    fuente[92] = 10;
+    fuente[93] = 32;
+    fuente[94] = 32;
+    fuente[95] = 32;
+    fuente[96] = 32;
+    fuente[97] = 32;
+    fuente[98] = 32;
+    fuente[99] = 32;
+    fuente[100] = 32;
+    fuente[101] = 123;
+    fuente[102] = 10;
+    fuente[103] = 32;
+    fuente[104] = 32;
+    fuente[105] = 32;
+    fuente[106] = 32;
+    fuente[107] = 32;
+    fuente[108] = 32;
+    fuente[109] = 32;
+    fuente[110] = 32;
+    fuente[111] = 32;
+    fuente[112] = 32;
+    fuente[113] = 32;
+    fuente[114] = 32;
+    fuente[115] = 98;
+    fuente[116] = 114;
+    fuente[117] = 101;
+    fuente[118] = 97;
+    fuente[119] = 107;
+    fuente[120] = 59;
+    fuente[121] = 10;
+    fuente[122] = 32;
+    fuente[123] = 32;
+    fuente[124] = 32;
+    fuente[125] = 32;
+    fuente[126] = 32;
+    fuente[127] = 32;
+    fuente[128] = 32;
+    fuente[129] = 32;
+    fuente[130] = 125;
+    fuente[131] = 10;
+    fuente[132] = 32;
+    fuente[133] = 32;
+    fuente[134] = 32;
+    fuente[135] = 32;
+    fuente[136] = 32;
+    fuente[137] = 32;
+    fuente[138] = 32;
+    fuente[139] = 32;
+    fuente[140] = 115;
+    fuente[141] = 32;
+    fuente[142] = 61;
+    fuente[143] = 32;
+    fuente[144] = 115;
+    fuente[145] = 32;
+    fuente[146] = 43;
+    fuente[147] = 32;
+    fuente[148] = 105;
+    fuente[149] = 59;
+    fuente[150] = 10;
+    fuente[151] = 32;
+    fuente[152] = 32;
+    fuente[153] = 32;
+    fuente[154] = 32;
+    fuente[155] = 125;
+    fuente[156] = 10;
+    fuente[157] = 32;
+    fuente[158] = 32;
+    fuente[159] = 32;
+    fuente[160] = 32;
+    fuente[161] = 114;
+    fuente[162] = 101;
+    fuente[163] = 116;
+    fuente[164] = 117;
+    fuente[165] = 114;
+    fuente[166] = 110;
+    fuente[167] = 32;
+    fuente[168] = 115;
+    fuente[169] = 59;
+    fuente[170] = 10;
+    fuente[171] = 125;
+    fuente[172] = 10;
+    tok_count = 49;
+    int tok_tipo[256];
+    tok_tipo[0] = 4;
+    tok_tipo[1] = 1;
+    tok_tipo[2] = 29;
+    tok_tipo[3] = 30;
+    tok_tipo[4] = 33;
+    tok_tipo[5] = 4;
+    tok_tipo[6] = 1;
+    tok_tipo[7] = 13;
+    tok_tipo[8] = 2;
+    tok_tipo[9] = 36;
+    tok_tipo[10] = 41;
+    tok_tipo[11] = 29;
+    tok_tipo[12] = 4;
+    tok_tipo[13] = 1;
+    tok_tipo[14] = 13;
+    tok_tipo[15] = 2;
+    tok_tipo[16] = 36;
+    tok_tipo[17] = 1;
+    tok_tipo[18] = 22;
+    tok_tipo[19] = 2;
+    tok_tipo[20] = 36;
+    tok_tipo[21] = 1;
+    tok_tipo[22] = 13;
+    tok_tipo[23] = 1;
+    tok_tipo[24] = 14;
+    tok_tipo[25] = 2;
+    tok_tipo[26] = 30;
+    tok_tipo[27] = 33;
+    tok_tipo[28] = 10;
+    tok_tipo[29] = 29;
+    tok_tipo[30] = 1;
+    tok_tipo[31] = 20;
+    tok_tipo[32] = 2;
+    tok_tipo[33] = 30;
+    tok_tipo[34] = 33;
+    tok_tipo[35] = 40;
+    tok_tipo[36] = 36;
+    tok_tipo[37] = 34;
+    tok_tipo[38] = 1;
+    tok_tipo[39] = 13;
+    tok_tipo[40] = 1;
+    tok_tipo[41] = 14;
+    tok_tipo[42] = 1;
+    tok_tipo[43] = 36;
+    tok_tipo[44] = 34;
+    tok_tipo[45] = 8;
+    tok_tipo[46] = 1;
+    tok_tipo[47] = 36;
+    tok_tipo[48] = 34;
+    int tok_inicio[256];
+    tok_inicio[0] = 0;
+    tok_inicio[1] = 4;
+    tok_inicio[2] = 8;
+    tok_inicio[3] = 9;
+    tok_inicio[4] = 11;
+    tok_inicio[5] = 17;
+    tok_inicio[6] = 21;
+    tok_inicio[7] = 23;
+    tok_inicio[8] = 25;
+    tok_inicio[9] = 26;
+    tok_inicio[10] = 32;
+    tok_inicio[11] = 36;
+    tok_inicio[12] = 37;
+    tok_inicio[13] = 41;
+    tok_inicio[14] = 43;
+    tok_inicio[15] = 45;
+    tok_inicio[16] = 46;
+    tok_inicio[17] = 48;
+    tok_inicio[18] = 50;
+    tok_inicio[19] = 52;
+    tok_inicio[20] = 54;
+    tok_inicio[21] = 56;
+    tok_inicio[22] = 58;
+    tok_inicio[23] = 60;
+    tok_inicio[24] = 62;
+    tok_inicio[25] = 64;
+    tok_inicio[26] = 65;
+    tok_inicio[27] = 71;
+    tok_inicio[28] = 81;
+    tok_inicio[29] = 84;
+    tok_inicio[30] = 85;
+    tok_inicio[31] = 87;
+    tok_inicio[32] = 90;
+    tok_inicio[33] = 91;
+    tok_inicio[34] = 101;
+    tok_inicio[35] = 115;
+    tok_inicio[36] = 120;
+    tok_inicio[37] = 130;
+    tok_inicio[38] = 140;
+    tok_inicio[39] = 142;
+    tok_inicio[40] = 144;
+    tok_inicio[41] = 146;
+    tok_inicio[42] = 148;
+    tok_inicio[43] = 149;
+    tok_inicio[44] = 155;
+    tok_inicio[45] = 161;
+    tok_inicio[46] = 168;
+    tok_inicio[47] = 169;
+    tok_inicio[48] = 171;
+    int tok_largo[256];
+    tok_largo[0] = 3;
+    tok_largo[1] = 4;
+    tok_largo[2] = 1;
+    tok_largo[3] = 1;
+    tok_largo[4] = 1;
+    tok_largo[5] = 3;
+    tok_largo[6] = 1;
+    tok_largo[7] = 1;
+    tok_largo[8] = 1;
+    tok_largo[9] = 1;
+    tok_largo[10] = 3;
+    tok_largo[11] = 1;
+    tok_largo[12] = 3;
+    tok_largo[13] = 1;
+    tok_largo[14] = 1;
+    tok_largo[15] = 1;
+    tok_largo[16] = 1;
+    tok_largo[17] = 1;
+    tok_largo[18] = 1;
+    tok_largo[19] = 2;
+    tok_largo[20] = 1;
+    tok_largo[21] = 1;
+    tok_largo[22] = 1;
+    tok_largo[23] = 1;
+    tok_largo[24] = 1;
+    tok_largo[25] = 1;
+    tok_largo[26] = 1;
+    tok_largo[27] = 1;
+    tok_largo[28] = 2;
+    tok_largo[29] = 1;
+    tok_largo[30] = 1;
+    tok_largo[31] = 2;
+    tok_largo[32] = 1;
+    tok_largo[33] = 1;
+    tok_largo[34] = 1;
+    tok_largo[35] = 5;
+    tok_largo[36] = 1;
+    tok_largo[37] = 1;
+    tok_largo[38] = 1;
+    tok_largo[39] = 1;
+    tok_largo[40] = 1;
+    tok_largo[41] = 1;
+    tok_largo[42] = 1;
+    tok_largo[43] = 1;
+    tok_largo[44] = 1;
+    tok_largo[45] = 6;
+    tok_largo[46] = 1;
+    tok_largo[47] = 1;
+    tok_largo[48] = 1;
+    int tok_valor[256];
+    tok_valor[0] = 0;
+    tok_valor[1] = 0;
+    tok_valor[2] = 0;
+    tok_valor[3] = 0;
+    tok_valor[4] = 0;
+    tok_valor[5] = 0;
+    tok_valor[6] = 0;
+    tok_valor[7] = 0;
+    tok_valor[8] = 0;
+    tok_valor[9] = 0;
+    tok_valor[10] = 0;
+    tok_valor[11] = 0;
+    tok_valor[12] = 0;
+    tok_valor[13] = 0;
+    tok_valor[14] = 0;
+    tok_valor[15] = 0;
+    tok_valor[16] = 0;
+    tok_valor[17] = 0;
+    tok_valor[18] = 0;
+    tok_valor[19] = 10;
+    tok_valor[20] = 0;
+    tok_valor[21] = 0;
+    tok_valor[22] = 0;
+    tok_valor[23] = 0;
+    tok_valor[24] = 0;
+    tok_valor[25] = 1;
+    tok_valor[26] = 0;
+    tok_valor[27] = 0;
+    tok_valor[28] = 0;
+    tok_valor[29] = 0;
+    tok_valor[30] = 0;
+    tok_valor[31] = 0;
+    tok_valor[32] = 3;
+    tok_valor[33] = 0;
+    tok_valor[34] = 0;
+    tok_valor[35] = 0;
+    tok_valor[36] = 0;
+    tok_valor[37] = 0;
+    tok_valor[38] = 0;
+    tok_valor[39] = 0;
+    tok_valor[40] = 0;
+    tok_valor[41] = 0;
+    tok_valor[42] = 0;
+    tok_valor[43] = 0;
+    tok_valor[44] = 0;
+    tok_valor[45] = 0;
+    tok_valor[46] = 0;
+    tok_valor[47] = 0;
+    tok_valor[48] = 0;
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    nnodos = 28;
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    nkind[0] = 0; nini[0] = 0; nfin[0] = 49; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = 1; nini[1] = 0; nfin[1] = 0; nhijo1[1] = 2; nsig[1] = -1; nval[1] = 1; naux[1] = 0; nsize[1] = 0;
+    nkind[2] = 4; nini[2] = 0; nfin[2] = 0; nhijo1[2] = 4; nsig[2] = -1; nval[2] = 0; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = 12; nini[3] = 8; nfin[3] = 8; nhijo1[3] = -1; nsig[3] = -1; nval[3] = 0; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = 5; nini[4] = 5; nfin[4] = 5; nhijo1[4] = 3; nsig[4] = 14; nval[4] = 6; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = 12; nini[5] = 15; nfin[5] = 15; nhijo1[5] = -1; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = 5; nini[6] = 12; nfin[6] = 12; nhijo1[6] = 5; nsig[6] = 9; nval[6] = 13; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = 14; nini[7] = 17; nfin[7] = 17; nhijo1[7] = -1; nsig[7] = 8; nval[7] = 17; naux[7] = -1; nsize[7] = 0;
+    nkind[8] = 12; nini[8] = 19; nfin[8] = 19; nhijo1[8] = -1; nsig[8] = -1; nval[8] = 10; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = 17; nini[9] = 17; nfin[9] = 17; nhijo1[9] = 7; nsig[9] = 13; nval[9] = 22; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = 14; nini[10] = 23; nfin[10] = 23; nhijo1[10] = -1; nsig[10] = 11; nval[10] = 23; naux[10] = -1; nsize[10] = 0;
+    nkind[11] = 12; nini[11] = 25; nfin[11] = 25; nhijo1[11] = -1; nsig[11] = -1; nval[11] = 1; naux[11] = -1; nsize[11] = 0;
+    nkind[12] = 17; nini[12] = 23; nfin[12] = 23; nhijo1[12] = 10; nsig[12] = -1; nval[12] = 14; naux[12] = -1; nsize[12] = 0;
+    nkind[13] = 6; nini[13] = 21; nfin[13] = 21; nhijo1[13] = -1; nsig[13] = 15; nval[13] = 21; naux[13] = 12; nsize[13] = 0;
+    nkind[14] = 20; nini[14] = 10; nfin[14] = 45; nhijo1[14] = 6; nsig[14] = 27; nval[14] = 0; naux[14] = -1; nsize[14] = 0;
+    nkind[15] = 4; nini[15] = 0; nfin[15] = 0; nhijo1[15] = 19; nsig[15] = -1; nval[15] = 0; naux[15] = -1; nsize[15] = 0;
+    nkind[16] = 14; nini[16] = 30; nfin[16] = 30; nhijo1[16] = -1; nsig[16] = 17; nval[16] = 30; naux[16] = -1; nsize[16] = 0;
+    nkind[17] = 12; nini[17] = 32; nfin[17] = 32; nhijo1[17] = -1; nsig[17] = -1; nval[17] = 3; naux[17] = -1; nsize[17] = 0;
+    nkind[18] = 17; nini[18] = 30; nfin[18] = 30; nhijo1[18] = 16; nsig[18] = 20; nval[18] = 20; naux[18] = -1; nsize[18] = 0;
+    nkind[19] = 7; nini[19] = 28; nfin[19] = 28; nhijo1[19] = 18; nsig[19] = 25; nval[19] = 0; naux[19] = -1; nsize[19] = 0;
+    nkind[20] = 4; nini[20] = 0; nfin[20] = 0; nhijo1[20] = 21; nsig[20] = -1; nval[20] = 0; naux[20] = -1; nsize[20] = 0;
+    nkind[21] = 19; nini[21] = 35; nfin[21] = 35; nhijo1[21] = -1; nsig[21] = -1; nval[21] = 0; naux[21] = -1; nsize[21] = 0;
+    nkind[22] = 14; nini[22] = 40; nfin[22] = 40; nhijo1[22] = -1; nsig[22] = 23; nval[22] = 40; naux[22] = -1; nsize[22] = 0;
+    nkind[23] = 14; nini[23] = 42; nfin[23] = 42; nhijo1[23] = -1; nsig[23] = -1; nval[23] = 42; naux[23] = -1; nsize[23] = 0;
+    nkind[24] = 17; nini[24] = 40; nfin[24] = 40; nhijo1[24] = 22; nsig[24] = -1; nval[24] = 14; naux[24] = -1; nsize[24] = 0;
+    nkind[25] = 6; nini[25] = 38; nfin[25] = 38; nhijo1[25] = -1; nsig[25] = -1; nval[25] = 38; naux[25] = 24; nsize[25] = 0;
+    nkind[26] = 14; nini[26] = 46; nfin[26] = 46; nhijo1[26] = -1; nsig[26] = -1; nval[26] = 46; naux[26] = -1; nsize[26] = 0;
+    nkind[27] = 9; nini[27] = 45; nfin[27] = 45; nhijo1[27] = 26; nsig[27] = -1; nval[27] = 0; naux[27] = -1; nsize[27] = 0;
+    return 0;
+}
+
+// ============================================================
+// SONDA 24 — EL ECO DE FOR, EL AMBITO DEL INICIO.
+//
+// int main()
+// {
+//     int s = 0;
+//     for (int i = 0; i < 3; i = i + 1)
+//     {
+//         s = s + i;
+//     }
+//     s = i;
+//     return s;
+// }
+//
+// Fila esperada: 0, 0, 1, 0 — la variable del inicio
+// vive en el ambito que contiene al for (v1): usarla
+// despues del ciclo es legal y no acusa.
+// ============================================================
+
+int inicia_nodos24()
+{
+    int fuente[1024];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 109;
+    fuente[5] = 97;
+    fuente[6] = 105;
+    fuente[7] = 110;
+    fuente[8] = 40;
+    fuente[9] = 41;
+    fuente[10] = 10;
+    fuente[11] = 123;
+    fuente[12] = 10;
+    fuente[13] = 32;
+    fuente[14] = 32;
+    fuente[15] = 32;
+    fuente[16] = 32;
+    fuente[17] = 105;
+    fuente[18] = 110;
+    fuente[19] = 116;
+    fuente[20] = 32;
+    fuente[21] = 115;
+    fuente[22] = 32;
+    fuente[23] = 61;
+    fuente[24] = 32;
+    fuente[25] = 48;
+    fuente[26] = 59;
+    fuente[27] = 10;
+    fuente[28] = 32;
+    fuente[29] = 32;
+    fuente[30] = 32;
+    fuente[31] = 32;
+    fuente[32] = 102;
+    fuente[33] = 111;
+    fuente[34] = 114;
+    fuente[35] = 32;
+    fuente[36] = 40;
+    fuente[37] = 105;
+    fuente[38] = 110;
+    fuente[39] = 116;
+    fuente[40] = 32;
+    fuente[41] = 105;
+    fuente[42] = 32;
+    fuente[43] = 61;
+    fuente[44] = 32;
+    fuente[45] = 48;
+    fuente[46] = 59;
+    fuente[47] = 32;
+    fuente[48] = 105;
+    fuente[49] = 32;
+    fuente[50] = 60;
+    fuente[51] = 32;
+    fuente[52] = 51;
+    fuente[53] = 59;
+    fuente[54] = 32;
+    fuente[55] = 105;
+    fuente[56] = 32;
+    fuente[57] = 61;
+    fuente[58] = 32;
+    fuente[59] = 105;
+    fuente[60] = 32;
+    fuente[61] = 43;
+    fuente[62] = 32;
+    fuente[63] = 49;
+    fuente[64] = 41;
+    fuente[65] = 10;
+    fuente[66] = 32;
+    fuente[67] = 32;
+    fuente[68] = 32;
+    fuente[69] = 32;
+    fuente[70] = 123;
+    fuente[71] = 10;
+    fuente[72] = 32;
+    fuente[73] = 32;
+    fuente[74] = 32;
+    fuente[75] = 32;
+    fuente[76] = 32;
+    fuente[77] = 32;
+    fuente[78] = 32;
+    fuente[79] = 32;
+    fuente[80] = 115;
+    fuente[81] = 32;
+    fuente[82] = 61;
+    fuente[83] = 32;
+    fuente[84] = 115;
+    fuente[85] = 32;
+    fuente[86] = 43;
+    fuente[87] = 32;
+    fuente[88] = 105;
+    fuente[89] = 59;
+    fuente[90] = 10;
+    fuente[91] = 32;
+    fuente[92] = 32;
+    fuente[93] = 32;
+    fuente[94] = 32;
+    fuente[95] = 125;
+    fuente[96] = 10;
+    fuente[97] = 32;
+    fuente[98] = 32;
+    fuente[99] = 32;
+    fuente[100] = 32;
+    fuente[101] = 115;
+    fuente[102] = 32;
+    fuente[103] = 61;
+    fuente[104] = 32;
+    fuente[105] = 105;
+    fuente[106] = 59;
+    fuente[107] = 10;
+    fuente[108] = 32;
+    fuente[109] = 32;
+    fuente[110] = 32;
+    fuente[111] = 32;
+    fuente[112] = 114;
+    fuente[113] = 101;
+    fuente[114] = 116;
+    fuente[115] = 117;
+    fuente[116] = 114;
+    fuente[117] = 110;
+    fuente[118] = 32;
+    fuente[119] = 115;
+    fuente[120] = 59;
+    fuente[121] = 10;
+    fuente[122] = 125;
+    fuente[123] = 10;
+    tok_count = 43;
+    int tok_tipo[256];
+    tok_tipo[0] = 4;
+    tok_tipo[1] = 1;
+    tok_tipo[2] = 29;
+    tok_tipo[3] = 30;
+    tok_tipo[4] = 33;
+    tok_tipo[5] = 4;
+    tok_tipo[6] = 1;
+    tok_tipo[7] = 13;
+    tok_tipo[8] = 2;
+    tok_tipo[9] = 36;
+    tok_tipo[10] = 41;
+    tok_tipo[11] = 29;
+    tok_tipo[12] = 4;
+    tok_tipo[13] = 1;
+    tok_tipo[14] = 13;
+    tok_tipo[15] = 2;
+    tok_tipo[16] = 36;
+    tok_tipo[17] = 1;
+    tok_tipo[18] = 22;
+    tok_tipo[19] = 2;
+    tok_tipo[20] = 36;
+    tok_tipo[21] = 1;
+    tok_tipo[22] = 13;
+    tok_tipo[23] = 1;
+    tok_tipo[24] = 14;
+    tok_tipo[25] = 2;
+    tok_tipo[26] = 30;
+    tok_tipo[27] = 33;
+    tok_tipo[28] = 1;
+    tok_tipo[29] = 13;
+    tok_tipo[30] = 1;
+    tok_tipo[31] = 14;
+    tok_tipo[32] = 1;
+    tok_tipo[33] = 36;
+    tok_tipo[34] = 34;
+    tok_tipo[35] = 1;
+    tok_tipo[36] = 13;
+    tok_tipo[37] = 1;
+    tok_tipo[38] = 36;
+    tok_tipo[39] = 8;
+    tok_tipo[40] = 1;
+    tok_tipo[41] = 36;
+    tok_tipo[42] = 34;
+    int tok_inicio[256];
+    tok_inicio[0] = 0;
+    tok_inicio[1] = 4;
+    tok_inicio[2] = 8;
+    tok_inicio[3] = 9;
+    tok_inicio[4] = 11;
+    tok_inicio[5] = 17;
+    tok_inicio[6] = 21;
+    tok_inicio[7] = 23;
+    tok_inicio[8] = 25;
+    tok_inicio[9] = 26;
+    tok_inicio[10] = 32;
+    tok_inicio[11] = 36;
+    tok_inicio[12] = 37;
+    tok_inicio[13] = 41;
+    tok_inicio[14] = 43;
+    tok_inicio[15] = 45;
+    tok_inicio[16] = 46;
+    tok_inicio[17] = 48;
+    tok_inicio[18] = 50;
+    tok_inicio[19] = 52;
+    tok_inicio[20] = 53;
+    tok_inicio[21] = 55;
+    tok_inicio[22] = 57;
+    tok_inicio[23] = 59;
+    tok_inicio[24] = 61;
+    tok_inicio[25] = 63;
+    tok_inicio[26] = 64;
+    tok_inicio[27] = 70;
+    tok_inicio[28] = 80;
+    tok_inicio[29] = 82;
+    tok_inicio[30] = 84;
+    tok_inicio[31] = 86;
+    tok_inicio[32] = 88;
+    tok_inicio[33] = 89;
+    tok_inicio[34] = 95;
+    tok_inicio[35] = 101;
+    tok_inicio[36] = 103;
+    tok_inicio[37] = 105;
+    tok_inicio[38] = 106;
+    tok_inicio[39] = 112;
+    tok_inicio[40] = 119;
+    tok_inicio[41] = 120;
+    tok_inicio[42] = 122;
+    int tok_largo[256];
+    tok_largo[0] = 3;
+    tok_largo[1] = 4;
+    tok_largo[2] = 1;
+    tok_largo[3] = 1;
+    tok_largo[4] = 1;
+    tok_largo[5] = 3;
+    tok_largo[6] = 1;
+    tok_largo[7] = 1;
+    tok_largo[8] = 1;
+    tok_largo[9] = 1;
+    tok_largo[10] = 3;
+    tok_largo[11] = 1;
+    tok_largo[12] = 3;
+    tok_largo[13] = 1;
+    tok_largo[14] = 1;
+    tok_largo[15] = 1;
+    tok_largo[16] = 1;
+    tok_largo[17] = 1;
+    tok_largo[18] = 1;
+    tok_largo[19] = 1;
+    tok_largo[20] = 1;
+    tok_largo[21] = 1;
+    tok_largo[22] = 1;
+    tok_largo[23] = 1;
+    tok_largo[24] = 1;
+    tok_largo[25] = 1;
+    tok_largo[26] = 1;
+    tok_largo[27] = 1;
+    tok_largo[28] = 1;
+    tok_largo[29] = 1;
+    tok_largo[30] = 1;
+    tok_largo[31] = 1;
+    tok_largo[32] = 1;
+    tok_largo[33] = 1;
+    tok_largo[34] = 1;
+    tok_largo[35] = 1;
+    tok_largo[36] = 1;
+    tok_largo[37] = 1;
+    tok_largo[38] = 1;
+    tok_largo[39] = 6;
+    tok_largo[40] = 1;
+    tok_largo[41] = 1;
+    tok_largo[42] = 1;
+    int tok_valor[256];
+    tok_valor[0] = 0;
+    tok_valor[1] = 0;
+    tok_valor[2] = 0;
+    tok_valor[3] = 0;
+    tok_valor[4] = 0;
+    tok_valor[5] = 0;
+    tok_valor[6] = 0;
+    tok_valor[7] = 0;
+    tok_valor[8] = 0;
+    tok_valor[9] = 0;
+    tok_valor[10] = 0;
+    tok_valor[11] = 0;
+    tok_valor[12] = 0;
+    tok_valor[13] = 0;
+    tok_valor[14] = 0;
+    tok_valor[15] = 0;
+    tok_valor[16] = 0;
+    tok_valor[17] = 0;
+    tok_valor[18] = 0;
+    tok_valor[19] = 3;
+    tok_valor[20] = 0;
+    tok_valor[21] = 0;
+    tok_valor[22] = 0;
+    tok_valor[23] = 0;
+    tok_valor[24] = 0;
+    tok_valor[25] = 1;
+    tok_valor[26] = 0;
+    tok_valor[27] = 0;
+    tok_valor[28] = 0;
+    tok_valor[29] = 0;
+    tok_valor[30] = 0;
+    tok_valor[31] = 0;
+    tok_valor[32] = 0;
+    tok_valor[33] = 0;
+    tok_valor[34] = 0;
+    tok_valor[35] = 0;
+    tok_valor[36] = 0;
+    tok_valor[37] = 0;
+    tok_valor[38] = 0;
+    tok_valor[39] = 0;
+    tok_valor[40] = 0;
+    tok_valor[41] = 0;
+    tok_valor[42] = 0;
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    nnodos = 24;
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    nkind[0] = 0; nini[0] = 0; nfin[0] = 43; nhijo1[0] = 1; nsig[0] = -1; nval[0] = 0; naux[0] = -1; nsize[0] = 0;
+    nkind[1] = 1; nini[1] = 0; nfin[1] = 0; nhijo1[1] = 2; nsig[1] = -1; nval[1] = 1; naux[1] = 0; nsize[1] = 0;
+    nkind[2] = 4; nini[2] = 0; nfin[2] = 0; nhijo1[2] = 4; nsig[2] = -1; nval[2] = 0; naux[2] = -1; nsize[2] = 0;
+    nkind[3] = 12; nini[3] = 8; nfin[3] = 8; nhijo1[3] = -1; nsig[3] = -1; nval[3] = 0; naux[3] = -1; nsize[3] = 0;
+    nkind[4] = 5; nini[4] = 5; nfin[4] = 5; nhijo1[4] = 3; nsig[4] = 14; nval[4] = 6; naux[4] = -1; nsize[4] = 0;
+    nkind[5] = 12; nini[5] = 15; nfin[5] = 15; nhijo1[5] = -1; nsig[5] = -1; nval[5] = 0; naux[5] = -1; nsize[5] = 0;
+    nkind[6] = 5; nini[6] = 12; nfin[6] = 12; nhijo1[6] = 5; nsig[6] = 9; nval[6] = 13; naux[6] = -1; nsize[6] = 0;
+    nkind[7] = 14; nini[7] = 17; nfin[7] = 17; nhijo1[7] = -1; nsig[7] = 8; nval[7] = 17; naux[7] = -1; nsize[7] = 0;
+    nkind[8] = 12; nini[8] = 19; nfin[8] = 19; nhijo1[8] = -1; nsig[8] = -1; nval[8] = 3; naux[8] = -1; nsize[8] = 0;
+    nkind[9] = 17; nini[9] = 17; nfin[9] = 17; nhijo1[9] = 7; nsig[9] = 13; nval[9] = 22; naux[9] = -1; nsize[9] = 0;
+    nkind[10] = 14; nini[10] = 23; nfin[10] = 23; nhijo1[10] = -1; nsig[10] = 11; nval[10] = 23; naux[10] = -1; nsize[10] = 0;
+    nkind[11] = 12; nini[11] = 25; nfin[11] = 25; nhijo1[11] = -1; nsig[11] = -1; nval[11] = 1; naux[11] = -1; nsize[11] = 0;
+    nkind[12] = 17; nini[12] = 23; nfin[12] = 23; nhijo1[12] = 10; nsig[12] = -1; nval[12] = 14; naux[12] = -1; nsize[12] = 0;
+    nkind[13] = 6; nini[13] = 21; nfin[13] = 21; nhijo1[13] = -1; nsig[13] = 15; nval[13] = 21; naux[13] = 12; nsize[13] = 0;
+    nkind[14] = 20; nini[14] = 10; nfin[14] = 35; nhijo1[14] = 6; nsig[14] = 21; nval[14] = 0; naux[14] = -1; nsize[14] = 0;
+    nkind[15] = 4; nini[15] = 0; nfin[15] = 0; nhijo1[15] = 19; nsig[15] = -1; nval[15] = 0; naux[15] = -1; nsize[15] = 0;
+    nkind[16] = 14; nini[16] = 30; nfin[16] = 30; nhijo1[16] = -1; nsig[16] = 17; nval[16] = 30; naux[16] = -1; nsize[16] = 0;
+    nkind[17] = 14; nini[17] = 32; nfin[17] = 32; nhijo1[17] = -1; nsig[17] = -1; nval[17] = 32; naux[17] = -1; nsize[17] = 0;
+    nkind[18] = 17; nini[18] = 30; nfin[18] = 30; nhijo1[18] = 16; nsig[18] = -1; nval[18] = 14; naux[18] = -1; nsize[18] = 0;
+    nkind[19] = 6; nini[19] = 28; nfin[19] = 28; nhijo1[19] = -1; nsig[19] = -1; nval[19] = 28; naux[19] = 18; nsize[19] = 0;
+    nkind[20] = 14; nini[20] = 37; nfin[20] = 37; nhijo1[20] = -1; nsig[20] = -1; nval[20] = 37; naux[20] = -1; nsize[20] = 0;
+    nkind[21] = 6; nini[21] = 35; nfin[21] = 35; nhijo1[21] = -1; nsig[21] = 23; nval[21] = 35; naux[21] = 20; nsize[21] = 0;
+    nkind[22] = 14; nini[22] = 40; nfin[22] = 40; nhijo1[22] = -1; nsig[22] = -1; nval[22] = 40; naux[22] = -1; nsize[22] = 0;
+    nkind[23] = 9; nini[23] = 39; nfin[23] = 39; nhijo1[23] = 22; nsig[23] = -1; nval[23] = 0; naux[23] = -1; nsize[23] = 0;
+    return 0;
+}
+
 int main()
 {
     int r1 = inicia_nodos1();
@@ -9362,5 +10230,11 @@ int main()
     int r22 = inicia_nodos22();
     int a22 = analiza();
     int p22 = imprime_fila();
+    int r23 = inicia_nodos23();
+    int a23 = analiza();
+    int p23 = imprime_fila();
+    int r24 = inicia_nodos24();
+    int a24 = analiza();
+    int p24 = imprime_fila();
     return 0;
 }

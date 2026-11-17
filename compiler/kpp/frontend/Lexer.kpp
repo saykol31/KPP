@@ -171,6 +171,16 @@ int escanea()
                         }
                     }
                 }
+                if (fuente[inicio] == 102)
+                {
+                    if (fuente[inicio + 1] == 111)
+                    {
+                        if (fuente[inicio + 2] == 114)
+                        {
+                            tipo = 41;
+                        }
+                    }
+                }
             }
             if (largo == 4)
             {
