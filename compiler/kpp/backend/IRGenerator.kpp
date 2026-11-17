@@ -302,11 +302,10 @@ int agrega_token(int tok)
     int ini = tok_inicio[tok];
     int n = tok_largo[tok];
     int i = 0;
-    while (i < n)
+    for (i = 0; i < n; i = i + 1)
     {
         int c = fuente[ini + i];
         int a = agrega_car(c);
-        i = i + 1;
     }
     return 0;
 }
@@ -315,11 +314,10 @@ int agrega_tramo(int ini, int largo)
 {
     int pool[16384];
     int i = 0;
-    while (i < largo)
+    for (i = 0; i < largo; i = i + 1)
     {
         int c = pool[ini + i];
         int a = agrega_car(c);
-        i = i + 1;
     }
     return 0;
 }
@@ -370,7 +368,7 @@ int mismo_texto(int a, int b)
     int ia = tok_inicio[a];
     int ib = tok_inicio[b];
     int i = 0;
-    while (i < la)
+    for (i = 0; i < la; i = i + 1)
     {
         int ca = fuente[ia + i];
         int cb = fuente[ib + i];
@@ -378,7 +376,6 @@ int mismo_texto(int a, int b)
         {
             return 0;
         }
-        i = i + 1;
     }
     return 1;
 }
@@ -417,40 +414,31 @@ int emite_ir(int op, int nombre, int operando, int resultado, int aux, int valor
 // la referencia a su nombre IR en la piscina, su
 // capacidad de arreglo y el sello de nivel.
 
-int entra_ambito()
+void entra_ambito()
 {
     nivel = nivel + 1;
-    return 0;
 }
 
-int sale_ambito()
+void sale_ambito()
 {
     int vscope_nivel[256];
-    int sigue = 1;
-    while (sigue == 1)
+    while (1)
     {
         if (nvar == 0)
         {
-            sigue = 0;
+            break;
         }
-        else
+        int u = vscope_nivel[nvar - 1];
+        if (u != nivel)
         {
-            int u = vscope_nivel[nvar - 1];
-            if (u != nivel)
-            {
-                sigue = 0;
-            }
-            else
-            {
-                nvar = nvar - 1;
-            }
+            break;
         }
+        nvar = nvar - 1;
     }
     nivel = nivel - 1;
-    return 0;
 }
 
-int registra_var(int tok, int campo, int ref, int tam)
+void registra_var(int tok, int campo, int ref, int tam)
 {
     int vscope_tok[256];
     int vscope_campo[256];
@@ -466,7 +454,6 @@ int registra_var(int tok, int campo, int ref, int tam)
         vscope_nivel[nvar] = nivel;
         nvar = nvar + 1;
     }
-    return 0;
 }
 
 int busca_var(int tok, int campo)
@@ -474,7 +461,7 @@ int busca_var(int tok, int campo)
     int vscope_tok[256];
     int vscope_campo[256];
     int i = nvar - 1;
-    while (i >= 0)
+    for (i = nvar - 1; i >= 0; i = i - 1)
     {
         int t = vscope_tok[i];
         if (mismo_texto(t, tok) == 1)
@@ -495,7 +482,6 @@ int busca_var(int tok, int campo)
                 }
             }
         }
-        i = i - 1;
     }
     return -1;
 }
@@ -899,7 +885,7 @@ int genera_expresion(int e)
         {
             int ini_u = pool_len;
             int j = 0;
-            while (j < narg)
+            for (j = 0; j < narg; j = j + 1)
             {
                 if (j > 0)
                 {
@@ -908,7 +894,6 @@ int genera_expresion(int e)
                 }
                 int tj = temps[base + j];
                 int aj = agrega_ref(tj);
-                j = j + 1;
             }
             unidos = ini_u * 128 + (pool_len - ini_u);
         }
@@ -979,26 +964,25 @@ int resuelve_campo(int tok, int campo)
 // sentencia Block y los bloques de if/while.
 // ============================================================
 
-int genera_bloque(int b)
+void genera_bloque(int b)
 {
     int nhijo1[256];
     int nsig[256];
-    int ea = entra_ambito();
+    entra_ambito();
     int s = nhijo1[b];
     while (s >= 0)
     {
-        int g = genera_sentencia(s);
+        genera_sentencia(s);
         s = nsig[s];
     }
-    int sa = sale_ambito();
-    return 0;
+    sale_ambito();
 }
 
 // ============================================================
 // GENERAR SENTENCIA (cobertura IR-1 e IR-2).
 // ============================================================
 
-int genera_sentencia(int s)
+void genera_sentencia(int s)
 {
     int nkind[256];
     int nini[256];
@@ -1021,7 +1005,7 @@ int genera_sentencia(int s)
         int largo_m = pool_len - ini_m;
         contvar = contvar + 1;
         int tam = nsize[s];
-        int r1 = registra_var(nt, -1, mangled, tam);
+        registra_var(nt, -1, mangled, tam);
         int e1 = emite_ir(IROpcode::Declare, mangled, 0, 0, 0, tam);
         int tipo = nini[s];
         int est = struct_de(tipo);
@@ -1030,7 +1014,7 @@ int genera_sentencia(int s)
             int ci = naux[est];
             int cc = nsize[est];
             int j = 0;
-            while (j < cc)
+            for (j = 0; j < cc; j = j + 1)
             {
                 int ct = campotok[ci + j];
                 int ini_f = pool_len;
@@ -1038,9 +1022,8 @@ int genera_sentencia(int s)
                 int b2 = agrega_car(46);
                 int b3 = agrega_token(ct);
                 int fmang = ini_f * 128 + (pool_len - ini_f);
-                int r2 = registra_var(nt, ct, fmang, 0);
+                registra_var(nt, ct, fmang, 0);
                 int e2 = emite_ir(IROpcode::Declare, fmang, 0, 0, 0, 0);
-                j = j + 1;
             }
         }
         int ini = nhijo1[s];
@@ -1053,13 +1036,13 @@ int genera_sentencia(int s)
                 int v = nval[ini];
                 int e3 = emite_ir(IROpcode::Const, 0, 0, t, 0, v);
                 int e4 = emite_ir(IROpcode::Store, mangled, t, 0, 0, 0);
-                return 0;
+                return;
             }
             int t2 = genera_expresion(ini);
             int e5 = emite_ir(IROpcode::Store, mangled, t2, 0, 0, 0);
-            return 0;
+            return;
         }
-        return 0;
+        return;
     }
     if (k == NodeKind::AssignmentStatement)
     {
@@ -1073,23 +1056,23 @@ int genera_sentencia(int s)
                 int tv = genera_expresion(valor);
                 int dest = resuelve_campo(nt2, h);
                 int e6 = emite_ir(IROpcode::Store, dest, tv, 0, 0, 0);
-                return 0;
+                return;
             }
             int ti = genera_expresion(h);
             int tv2 = genera_expresion(valor);
             int arr = resuelve(nt2);
             int e7 = emite_ir(IROpcode::ArrayStore, arr, ti, tv2, 0, 0);
-            return 0;
+            return;
         }
         int tv3 = genera_expresion(valor);
         int dest2 = resuelve(nt2);
         int e8 = emite_ir(IROpcode::Store, dest2, tv3, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::Block)
     {
-        int g = genera_bloque(s);
-        return 0;
+        genera_bloque(s);
+        return;
     }
     if (k == NodeKind::IfStatement)
     {
@@ -1111,16 +1094,16 @@ int genera_sentencia(int s)
         int e9 = emite_ir(IROpcode::JumpIfZero, destino, tc, 0, 0, 0);
         if (entonces >= 0)
         {
-            int g1 = genera_bloque(entonces);
+            genera_bloque(entonces);
         }
         if (sino >= 0)
         {
             int e10 = emite_ir(IROpcode::Jump, fin, 0, 0, 0, 0);
             int e11 = emite_ir(IROpcode::Label, els, 0, 0, 0, 0);
-            int g2 = genera_bloque(sino);
+            genera_bloque(sino);
         }
         int e12 = emite_ir(IROpcode::Label, fin, 0, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::WhileStatement)
     {
@@ -1135,12 +1118,12 @@ int genera_sentencia(int s)
         {
             fin_pila[fin_tope] = fin_e;
             fin_tope = fin_tope + 1;
-            int g3 = genera_bloque(cuerpo);
+            genera_bloque(cuerpo);
             fin_tope = fin_tope - 1;
         }
         int e15 = emite_ir(IROpcode::Jump, ini_e, 0, 0, 0, 0);
         int e16 = emite_ir(IROpcode::Label, fin_e, 0, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::ForStatement)
     {
@@ -1182,7 +1165,7 @@ int genera_sentencia(int s)
         }
         if (iniciog >= 0)
         {
-            int g0 = genera_sentencia(iniciog);
+            genera_sentencia(iniciog);
         }
         int in_e = ref_etiqueta();
         int fn_e = ref_etiqueta();
@@ -1193,16 +1176,16 @@ int genera_sentencia(int s)
         {
             fin_pila[fin_tope] = fn_e;
             fin_tope = fin_tope + 1;
-            int g3 = genera_bloque(cuerpof);
+            genera_bloque(cuerpof);
             fin_tope = fin_tope - 1;
         }
         if (pasof >= 0)
         {
-            int g4 = genera_sentencia(pasof);
+            genera_sentencia(pasof);
         }
         int e25 = emite_ir(IROpcode::Jump, in_e, 0, 0, 0, 0);
         int e26 = emite_ir(IROpcode::Label, fn_e, 0, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::BreakStatement)
     {
@@ -1211,21 +1194,21 @@ int genera_sentencia(int s)
         // de la pila que mantiene la rama de while.
         int destino = fin_pila[fin_tope - 1];
         int eb = emite_ir(IROpcode::Jump, destino, 0, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::PrintStatement)
     {
         int ep = nhijo1[s];
         int tp = genera_expresion(ep);
         int e17 = emite_ir(IROpcode::Print, 0, tp, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::PrintIntegerStatement)
     {
         int ei = nhijo1[s];
         int ti2 = genera_expresion(ei);
         int e18 = emite_ir(IROpcode::PrintInteger, 0, ti2, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::ReturnStatement)
     {
@@ -1242,18 +1225,18 @@ int genera_sentencia(int s)
             {
                 int e0 = emite_ir(IROpcode::Return, 0, 0, 0, 0, 0);
             }
-            return 0;
+            return;
         }
         int ke = nkind[e];
         if (ke == NodeKind::IntegerLiteral)
         {
             int v = nval[e];
             int e19 = emite_ir(IROpcode::Return, 0, 0, 0, 0, v);
-            return 0;
+            return;
         }
         int t = genera_expresion(e);
         int e20 = emite_ir(IROpcode::Return, 0, t, 0, 0, 0);
-        return 0;
+        return;
     }
     if (k == NodeKind::CallStatement)
     {
@@ -1261,16 +1244,15 @@ int genera_sentencia(int s)
         // la llamada se genera y su temporal queda
         // sin leer — descartado, como en el Stage 0.
         int tc = genera_expresion(nhijo1[s]);
-        return 0;
+        return;
     }
-    return 0;
 }
 
 // ============================================================
 // GENERAR FUNCION.
 // ============================================================
 
-int genera_funcion(int f)
+void genera_funcion(int f)
 {
     int nini[256];
     int nhijo1[256];
@@ -1285,7 +1267,7 @@ int genera_funcion(int f)
     fun_es_void = es_void(nini[f]);
     fin_tope = 0;
     temps_tope = 0;
-    int ea = entra_ambito();
+    entra_ambito();
     int nt = nval[f];
     int nombre = ref_token(nt);
     int params = 0;
@@ -1295,7 +1277,7 @@ int genera_funcion(int f)
     {
         int ini_p = pool_len;
         int j = 0;
-        while (j < cant)
+        for (j = 0; j < cant; j = j + 1)
         {
             if (j > 0)
             {
@@ -1304,7 +1286,6 @@ int genera_funcion(int f)
             }
             int pt = partok[inicio + j];
             int a = agrega_token(pt);
-            j = j + 1;
         }
         params = ini_p * 128 + (pool_len - ini_p);
     }
@@ -1315,20 +1296,19 @@ int genera_funcion(int f)
         int s = nhijo1[cuerpo];
         while (s >= 0)
         {
-            int g = genera_sentencia(s);
+            genera_sentencia(s);
             s = nsig[s];
         }
     }
     int e2 = emite_ir(IROpcode::FunctionEnd, 0, 0, 0, 0, 0);
-    int sa = sale_ambito();
-    return 0;
+    sale_ambito();
 }
 
 // ============================================================
 // GENERAR EL PROGRAMA.
 // ============================================================
 
-int genera()
+void genera()
 {
     int nkind[256];
     int nhijo1[256];
@@ -1358,198 +1338,195 @@ int genera()
         int k2 = nkind[d];
         if (k2 == NodeKind::FunctionDeclaration)
         {
-            int g = genera_funcion(d);
+            genera_funcion(d);
         }
         d = nsig[d];
     }
-    return 0;
 }
 
 // ============================================================
 // IMPRIMIR LA CORRIENTE (la sonda).
 // ============================================================
 
-int imprime_op(int op)
+void imprime_op(int op)
 {
     if (op == IROpcode::FunctionBegin)
     {
         print("FUNCTION_BEGIN");
-        return 0;
+        return;
     }
     if (op == IROpcode::FunctionEnd)
     {
         print("FUNCTION_END");
-        return 0;
+        return;
     }
     if (op == IROpcode::Const)
     {
         print("CONST");
-        return 0;
+        return;
     }
     if (op == IROpcode::StringConst)
     {
         print("STRING_CONST");
-        return 0;
+        return;
     }
     if (op == IROpcode::Declare)
     {
         print("DECLARE");
-        return 0;
+        return;
     }
     if (op == IROpcode::Store)
     {
         print("STORE");
-        return 0;
+        return;
     }
     if (op == IROpcode::Load)
     {
         print("LOAD");
-        return 0;
+        return;
     }
     if (op == IROpcode::ArrayLoad)
     {
         print("ARRAY_LOAD");
-        return 0;
+        return;
     }
     if (op == IROpcode::ArrayStore)
     {
         print("ARRAY_STORE");
-        return 0;
+        return;
     }
     if (op == IROpcode::FileRead)
     {
         print("FILE_READ");
-        return 0;
+        return;
     }
     if (op == IROpcode::FileWrite)
     {
         print("FILE_WRITE");
-        return 0;
+        return;
     }
     if (op == IROpcode::Add)
     {
         print("ADD");
-        return 0;
+        return;
     }
     if (op == IROpcode::Sub)
     {
         print("SUB");
-        return 0;
+        return;
     }
     if (op == IROpcode::Mul)
     {
         print("MUL");
-        return 0;
+        return;
     }
     if (op == IROpcode::Div)
     {
         print("DIV");
-        return 0;
+        return;
     }
     if (op == IROpcode::Mod)
     {
         print("MOD");
-        return 0;
+        return;
     }
     if (op == IROpcode::Pow)
     {
         print("POW");
-        return 0;
+        return;
     }
     if (op == IROpcode::Call)
     {
         print("CALL");
-        return 0;
+        return;
     }
     if (op == IROpcode::Return)
     {
         print("RETURN");
-        return 0;
+        return;
     }
     if (op == IROpcode::Print)
     {
         print("PRINT");
-        return 0;
+        return;
     }
     if (op == IROpcode::PrintInteger)
     {
         print("PRINT_INTEGER");
-        return 0;
+        return;
     }
     if (op == IROpcode::CompareEqual)
     {
         print("COMPARE_EQUAL");
-        return 0;
+        return;
     }
     if (op == IROpcode::CompareNotEqual)
     {
         print("COMPARE_NOT_EQUAL");
-        return 0;
+        return;
     }
     if (op == IROpcode::CompareLess)
     {
         print("COMPARE_LESS");
-        return 0;
+        return;
     }
     if (op == IROpcode::CompareLessEqual)
     {
         print("COMPARE_LESS_EQUAL");
-        return 0;
+        return;
     }
     if (op == IROpcode::CompareGreater)
     {
         print("COMPARE_GREATER");
-        return 0;
+        return;
     }
     if (op == IROpcode::CompareGreaterEqual)
     {
         print("COMPARE_GREATER_EQUAL");
-        return 0;
+        return;
     }
     if (op == IROpcode::LogicalAnd)
     {
         print("LOGICAL_AND");
-        return 0;
+        return;
     }
     if (op == IROpcode::LogicalOr)
     {
         print("LOGICAL_OR");
-        return 0;
+        return;
     }
     if (op == IROpcode::LogicalNot)
     {
         print("LOGICAL_NOT");
-        return 0;
+        return;
     }
     if (op == IROpcode::Label)
     {
         print("LABEL");
-        return 0;
+        return;
     }
     if (op == IROpcode::Jump)
     {
         print("JUMP");
-        return 0;
+        return;
     }
     if (op == IROpcode::JumpIfZero)
     {
         print("JUMP_IF_ZERO");
-        return 0;
+        return;
     }
     print_int(op);
-    return 0;
 }
 
-int imprime_ref(int ref)
+void imprime_ref(int ref)
 {
     int ini = ref / 128;
     print_int(ini);
     int largo = ref - ini * 128;
     print_int(largo);
-    return 0;
 }
 
-int imprime_ir()
+void imprime_ir()
 {
     int iop[2048];
     int inombre[2048];
@@ -1559,31 +1536,27 @@ int imprime_ir()
     int ivalor[2048];
     int pool[16384];
     int i = 0;
-    while (i < nir)
+    for (i = 0; i < nir; i = i + 1)
     {
         int op = iop[i];
-        int a = imprime_op(op);
+        imprime_op(op);
         int n = inombre[i];
-        int b = imprime_ref(n);
+        imprime_ref(n);
         int o = ioperando[i];
-        int c = imprime_ref(o);
+        imprime_ref(o);
         int r = iresultado[i];
-        int d = imprime_ref(r);
+        imprime_ref(r);
         int x = iaux[i];
-        int e = imprime_ref(x);
+        imprime_ref(x);
         int v = ivalor[i];
         print_int(v);
-        i = i + 1;
     }
     print_int(pool_len);
-    i = 0;
-    while (i < pool_len)
+    for (i = 0; i < pool_len; i = i + 1)
     {
         int ch = pool[i];
         print_int(ch);
-        i = i + 1;
     }
-    return 0;
 }
 
 // ============================================================
@@ -1593,7 +1566,7 @@ int imprime_ir()
 // del SemanticAnalyzer.
 // ============================================================
 
-int inicia_ir1()
+void inicia_ir1()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -1797,10 +1770,9 @@ int inicia_ir1()
     nsize[7] = 0;
     tok_count = 17;
     nnodos = 8;
-    return 0;
 }
 
-int inicia_ir2()
+void inicia_ir2()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -2236,10 +2208,9 @@ int inicia_ir2()
     campotok[1] = 7;
     tok_count = 43;
     nnodos = 12;
-    return 0;
 }
 
-int inicia_ir3()
+void inicia_ir3()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -2474,7 +2445,6 @@ int inicia_ir3()
     nsize[8] = 0;
     tok_count = 19;
     nnodos = 9;
-    return 0;
 }
 
 // ============================================================
@@ -2483,7 +2453,7 @@ int inicia_ir3()
 // cadena verificada.
 // ============================================================
 
-int inicia_ir4()
+void inicia_ir4()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -2897,10 +2867,9 @@ int inicia_ir4()
     nsize[15] = 0;
     tok_count = 35;
     nnodos = 16;
-    return 0;
 }
 
-int inicia_ir5()
+void inicia_ir5()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -3328,10 +3297,9 @@ int inicia_ir5()
     campotok[1] = 7;
     tok_count = 42;
     nnodos = 13;
-    return 0;
 }
 
-int inicia_ir6()
+void inicia_ir6()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -4005,7 +3973,6 @@ int inicia_ir6()
     nsize[24] = 0;
     tok_count = 54;
     nnodos = 25;
-    return 0;
 }
 
 // ============================================================
@@ -4014,7 +3981,7 @@ int inicia_ir6()
 // cadena verificada.
 // ============================================================
 
-int inicia_ir7()
+void inicia_ir7()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -4534,10 +4501,9 @@ int inicia_ir7()
     nsize[23] = 0;
     tok_count = 43;
     nnodos = 24;
-    return 0;
 }
 
-int inicia_ir8()
+void inicia_ir8()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -5134,10 +5100,9 @@ int inicia_ir8()
     campotok[1] = 7;
     tok_count = 60;
     nnodos = 19;
-    return 0;
 }
 
-int inicia_ir9()
+void inicia_ir9()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -5564,7 +5529,6 @@ int inicia_ir9()
     nsize[14] = 0;
     tok_count = 37;
     nnodos = 15;
-    return 0;
 }
 
 // ============================================================
@@ -5585,7 +5549,7 @@ int inicia_ir9()
 // main, CALL, RETURN, END.
 // ============================================================
 
-int inicia_ir10()
+void inicia_ir10()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -5880,7 +5844,6 @@ int inicia_ir10()
     nsize[11] = 0;
     tok_count = 26;
     nnodos = 12;
-    return 0;
 }
 
 // ============================================================
@@ -5894,7 +5857,7 @@ int inicia_ir10()
 // que es la que se emite tras el JUMP de vuelta.
 // ============================================================
 
-int inicia_ir11()
+void inicia_ir11()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -6330,7 +6293,6 @@ int inicia_ir11()
     nsize[21] = 0;
     tok_count = 38;
     nnodos = 22;
-    return 0;
 }
 
 // ============================================================
@@ -6357,7 +6319,7 @@ int inicia_ir11()
 // y la otra: difiere un solo caracter de la piscina.
 // ============================================================
 
-int inicia_ir12()
+void inicia_ir12()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -6903,7 +6865,6 @@ int inicia_ir12()
     partok[2] = 20;
     tok_count = 51;
     nnodos = 22;
-    return 0;
 }
 
 // ============================================================
@@ -6929,7 +6890,7 @@ int inicia_ir12()
 // salto de vuelta. 24 instrucciones, piscina de 56.
 // ============================================================
 
-int inicia_ir13()
+void inicia_ir13()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -7416,62 +7377,61 @@ int inicia_ir13()
     nsize[21] = 0;
     tok_count = 38;
     nnodos = 22;
-    return 0;
 }
 
 int main()
 {
-    int a1 = inicia_ir1();
-    int g1 = genera();
-    int i1 = imprime_ir();
+    inicia_ir1();
+    genera();
+    imprime_ir();
 
-    int a2 = inicia_ir2();
-    int g2 = genera();
-    int i2 = imprime_ir();
+    inicia_ir2();
+    genera();
+    imprime_ir();
 
-    int a3 = inicia_ir3();
-    int g3 = genera();
-    int i3 = imprime_ir();
+    inicia_ir3();
+    genera();
+    imprime_ir();
 
-    int a4 = inicia_ir4();
-    int g4 = genera();
-    int i4 = imprime_ir();
+    inicia_ir4();
+    genera();
+    imprime_ir();
 
-    int a5 = inicia_ir5();
-    int g5 = genera();
-    int i5 = imprime_ir();
+    inicia_ir5();
+    genera();
+    imprime_ir();
 
-    int a6 = inicia_ir6();
-    int g6 = genera();
-    int i6 = imprime_ir();
+    inicia_ir6();
+    genera();
+    imprime_ir();
 
-    int a7 = inicia_ir7();
-    int g7 = genera();
-    int i7 = imprime_ir();
+    inicia_ir7();
+    genera();
+    imprime_ir();
 
-    int a8 = inicia_ir8();
-    int g8 = genera();
-    int i8 = imprime_ir();
+    inicia_ir8();
+    genera();
+    imprime_ir();
 
-    int a9 = inicia_ir9();
-    int g9 = genera();
-    int i9 = imprime_ir();
+    inicia_ir9();
+    genera();
+    imprime_ir();
 
-    int a10 = inicia_ir10();
-    int g10 = genera();
-    int i10 = imprime_ir();
+    inicia_ir10();
+    genera();
+    imprime_ir();
 
-    int a11 = inicia_ir11();
-    int g11 = genera();
-    int i11 = imprime_ir();
+    inicia_ir11();
+    genera();
+    imprime_ir();
 
-    int a12 = inicia_ir12();
-    int g12 = genera();
-    int i12 = imprime_ir();
+    inicia_ir12();
+    genera();
+    imprime_ir();
 
-    int a13 = inicia_ir13();
-    int g13 = genera();
-    int i13 = imprime_ir();
+    inicia_ir13();
+    genera();
+    imprime_ir();
 
     return 0;
 }
