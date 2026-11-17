@@ -6,13 +6,17 @@
 //   - El escaneo vive en la subrutina escanea() (rebanada
 //     del acople): los arreglos son compartidos por nombre
 //     y ninguna subrutina necesita recibirlos; escanea()
-//     devuelve tok_count, la raiz de su conjunto — la
-//     convencion de retorno del Parser. main() queda como
+//     es void desde la reescritura del Stage 1: registra
+//     la tabla y el conteo queda en tok_count, el escalar
+//     compartido que el Parser lee. main() queda como
 //     la sonda de la pieza: lee el archivo y la imprime.
 //   - && NO cortocircuita en K++: baja a una sola AND con los dos lados
 //     evaluados (IRGenerator.cpp / X86Backend.cpp). Ningun fuente[pos]
 //     va a la derecha de un &&: los guardas de fin de fuente van en
-//     if separados, y los escaneos usan un flag sigue, no break (existe desde la Ampliación 2; el escaneo conserva el flag).
+//     if separados. Los escaneos internos salen con break
+//     desde la reescritura del Stage 1 (antes usaban un flag
+//     sigue: la bandera existia solo para salir del ciclo, y
+//     break lo dice sin variable).
 //   - Sin literales de caracter en K++: se comparan codigos numericos.
 //   - // salta hasta fin de linea; / solo sigue siendo Divide (b35d47c).
 //   - String sin escapes, igual que el Lexer.cpp de Stage 0.
@@ -51,13 +55,14 @@ int errores;
 // (escanea no lo pone a cero: en el programa acoplado
 // cada corrida lo reinicia antes).
 //
-// Devuelve tok_count, el conteo de tokens: la raiz
-// de su conjunto, la convencion de retorno del
-// Parser aplicada al Lexer. Al salir deja pos = 0,
-// listo para que el Parser consuma la tabla sin
-// copiar un solo token.
+// Es void desde la reescritura del Stage 1: ningun
+// llamador leia el valor que devolvia (main lo
+// capturaba en una variable muerta y el Parser en
+// quince). El conteo queda en tok_count, el escalar
+// compartido. Al salir deja pos = 0, listo para que
+// el Parser consuma la tabla sin copiar un solo token.
 // ============================================================
-int escanea()
+void escanea()
 {
     int fuente[1024];
     int tok_tipo[256];
@@ -70,7 +75,6 @@ int escanea()
     int valor = 0;
     int c = 0;
     int d = 0;
-    int sigue = 0;
     int hay_token = 0;
     pos = 0;
     tok_count = 0;
@@ -97,25 +101,14 @@ int escanea()
             if (d == 47)
             {
                 pos = pos + 2;
-                sigue = 1;
-                while (sigue == 1)
+                while (pos < total)
                 {
-                    if (pos >= total)
+                    c = fuente[pos];
+                    if (c == 10)
                     {
-                        sigue = 0;
+                        break;
                     }
-                    else
-                    {
-                        c = fuente[pos];
-                        if (c == 10)
-                        {
-                            sigue = 0;
-                        }
-                        else
-                        {
-                            pos = pos + 1;
-                        }
-                    }
+                    pos = pos + 1;
                 }
             }
             else
@@ -127,24 +120,16 @@ int escanea()
         }
         else if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95)
         {
-            sigue = 1;
-            while (sigue == 1)
+            while (pos < total)
             {
-                if (pos >= total)
+                c = fuente[pos];
+                if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95)
                 {
-                    sigue = 0;
+                    pos = pos + 1;
                 }
                 else
                 {
-                    c = fuente[pos];
-                    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95)
-                    {
-                        pos = pos + 1;
-                    }
-                    else
-                    {
-                        sigue = 0;
-                    }
+                    break;
                 }
             }
             largo = pos - inicio;
@@ -330,25 +315,17 @@ int escanea()
         }
         else if (c >= 48 && c <= 57)
         {
-            sigue = 1;
-            while (sigue == 1)
+            while (pos < total)
             {
-                if (pos >= total)
+                c = fuente[pos];
+                if (c >= 48 && c <= 57)
                 {
-                    sigue = 0;
+                    valor = valor * 10 + (c - 48);
+                    pos = pos + 1;
                 }
                 else
                 {
-                    c = fuente[pos];
-                    if (c >= 48 && c <= 57)
-                    {
-                        valor = valor * 10 + (c - 48);
-                        pos = pos + 1;
-                    }
-                    else
-                    {
-                        sigue = 0;
-                    }
+                    break;
                 }
             }
             largo = pos - inicio;
@@ -359,25 +336,14 @@ int escanea()
         {
             pos = pos + 1;
             inicio = pos;
-            sigue = 1;
-            while (sigue == 1)
+            while (pos < total)
             {
-                if (pos >= total)
+                c = fuente[pos];
+                if (c == 34)
                 {
-                    sigue = 0;
+                    break;
                 }
-                else
-                {
-                    c = fuente[pos];
-                    if (c == 34)
-                    {
-                        sigue = 0;
-                    }
-                    else
-                    {
-                        pos = pos + 1;
-                    }
-                }
+                pos = pos + 1;
             }
             largo = pos - inicio;
             if (pos < total)
@@ -611,7 +577,6 @@ int escanea()
         }
     }
     pos = 0;
-    return tok_count;
 }
 
 int main()
@@ -633,16 +598,14 @@ int main()
 
     print("TOKENS");
 
-    int n = escanea();
+    escanea();
 
-    i = 0;
-    while (i < tok_count)
+    for (i = 0; i < tok_count; i = i + 1)
     {
         print_int(tok_tipo[i]);
         print_int(tok_inicio[i]);
         print_int(tok_largo[i]);
         print_int(tok_valor[i]);
-        i = i + 1;
     }
     print_int(tok_count);
     print_int(errores);
