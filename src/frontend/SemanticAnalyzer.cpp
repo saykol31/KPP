@@ -872,6 +872,96 @@ void SemanticAnalyzer::analyzeStatement(
 
 
     // ========================================================
+    // FOR (Ampliación 3)
+    //
+    // for (inicio; condición; paso)
+    // {
+    //     ...
+    // }
+    //
+    // El inicio se analiza en el ámbito que contiene al
+    // for: su variable queda registrada como una
+    // declaración normal de ese ámbito (v1). El cuerpo
+    // posee su propio scope y corre con loopDepth
+    // subido: break dentro de un for es legal, como en
+    // el while. El paso se analiza en el ámbito
+    // contenedor, en el mismo orden en que el
+    // generador lo emite.
+    // ========================================================
+
+    if (auto* forStatement =
+        dynamic_cast<const ForStatement*>(
+            &statement))
+    {
+        // ----------------------------------------------------
+        // Analizar inicio (ámbito contenedor).
+        // ----------------------------------------------------
+
+        if (forStatement->init)
+        {
+            analyzeStatement(
+                *forStatement->init);
+        }
+
+        // ----------------------------------------------------
+        // Analizar condición (vacía = verdadera).
+        // ----------------------------------------------------
+
+        if (forStatement->condition)
+        {
+            analyzeExpression(
+                *forStatement->condition);
+        }
+
+        // ----------------------------------------------------
+        // El cuerpo debe existir.
+        // ----------------------------------------------------
+
+        if (!forStatement->body)
+        {
+            semanticErrors.push_back({
+                "for sin bloque en función '" +
+                currentFunction +
+                "'"
+            });
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // Analizar cuerpo con el ciclo abierto.
+        // ----------------------------------------------------
+
+        enterScope();
+
+        loopDepth = loopDepth + 1;
+
+        for (const auto& nestedStatement :
+             forStatement->body->statements)
+        {
+            analyzeStatement(
+                *nestedStatement);
+        }
+
+        loopDepth = loopDepth - 1;
+
+        leaveScope();
+
+        // ----------------------------------------------------
+        // Analizar paso (ámbito contenedor).
+        // ----------------------------------------------------
+
+        if (forStatement->step)
+        {
+            analyzeStatement(
+                *forStatement->step);
+        }
+
+        return;
+    }
+
+
+    // ========================================================
     // BREAK (Ampliación 2)
     // ========================================================
 

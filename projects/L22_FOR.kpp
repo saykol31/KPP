@@ -1,0 +1,38 @@
+int main()
+{
+    int suma = 0;
+
+    for (int i = 1; i <= 10; i = i + 1)
+    {
+        suma = suma + i;
+    }
+
+    print_int(suma);
+
+    int cuenta = 0;
+
+    for (int a = 0; a < 3; a = a + 1)
+    {
+        for (int b = 0; b < 3; b = b + 1)
+        {
+            cuenta = cuenta + 1;
+        }
+    }
+
+    print_int(cuenta);
+
+    int hallado = 0;
+
+    for (int k = 0; k < 20; k = k + 1)
+    {
+        if (k * k > 50)
+        {
+            hallado = k;
+            break;
+        }
+    }
+
+    print_int(hallado);
+
+    return 0;
+}

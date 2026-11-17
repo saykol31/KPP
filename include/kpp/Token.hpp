@@ -102,10 +102,12 @@ enum class TokenType
     // Toda palabra clave nueva se añade AL FINAL del enum,
     // nunca en medio. KwVoid = 39 (Ampliación 1, 2026-11-14).
     // KwBreak = 40 (Ampliación 2, 2026-11-14).
+    // KwFor = 41 (Ampliación 3, 2026-11-15).
     // ========================================================
 
     KwVoid,
-    KwBreak
+    KwBreak,
+    KwFor
 };
 
 struct Token

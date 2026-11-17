@@ -968,6 +968,137 @@ Parser::parseStatement()
 
 
     // ========================================================
+    // FOR (Ampliación 3)
+    //
+    // for (inicio; condición; paso)
+    // {
+    //     ...
+    // }
+    //
+    // El inicio puede ir vacío o ser una declaración o
+    // una asignación: se lee como sentencia y su ';'
+    // hace de primer separador de la cabecera. La
+    // condición puede ir vacía (vale verdadera). El
+    // paso puede ir vacío o ser una asignación, sin
+    // ';': lo cierra el ')' de la cabecera. El cuerpo
+    // es un bloque, como en el while.
+    // ========================================================
+
+    if (match(TokenType::KwFor))
+    {
+        expect(
+            TokenType::LParen,
+            "se esperaba '(' después de for");
+
+        // ----------------------------------------------------
+        // INICIO
+        // ----------------------------------------------------
+
+        std::unique_ptr<Statement> init = nullptr;
+
+        if (!match(TokenType::Semicolon))
+        {
+            init =
+                parseStatement();
+
+            if (dynamic_cast<VariableDeclaration*>(
+                    init.get()) == nullptr &&
+                dynamic_cast<AssignmentStatement*>(
+                    init.get()) == nullptr)
+            {
+                throw std::runtime_error(
+                    "K++: el inicio de for debe ser una "
+                    "declaración o una asignación");
+            }
+        }
+
+        // ----------------------------------------------------
+        // CONDICIÓN
+        // ----------------------------------------------------
+
+        std::unique_ptr<Expression> condition = nullptr;
+
+        if (!check(TokenType::Semicolon))
+        {
+            condition =
+                parseExpression();
+        }
+
+        expect(
+            TokenType::Semicolon,
+            "se esperaba ';' después de la condición de for");
+
+        // ----------------------------------------------------
+        // PASO
+        // ----------------------------------------------------
+
+        std::unique_ptr<Statement> step = nullptr;
+
+        if (!check(TokenType::RParen))
+        {
+            if (!check(TokenType::Identifier))
+            {
+                throw std::runtime_error(
+                    "K++: se esperaba una asignación en el "
+                    "paso de for");
+            }
+
+            std::string name =
+                advance().text;
+
+            std::unique_ptr<Expression> index = nullptr;
+
+            if (match(TokenType::LBracket))
+            {
+                index =
+                    parseExpression();
+
+                expect(
+                    TokenType::RBracket,
+                    "se esperaba ']' después del índice del array");
+            }
+
+            if (match(TokenType::Dot))
+            {
+                if (!check(TokenType::Identifier))
+                {
+                    throw std::runtime_error(
+                        "K++: se esperaba nombre de campo después de '.'");
+                }
+
+                name += "." + advance().text;
+            }
+
+            expect(
+                TokenType::Assign,
+                "se esperaba '=' después del nombre de variable");
+
+            auto expression =
+                parseExpression();
+
+            step =
+                std::make_unique<AssignmentStatement>(
+                    name,
+                    std::move(expression),
+                    std::move(index));
+        }
+
+        expect(
+            TokenType::RParen,
+            "se esperaba ')' después de la cabecera de for");
+
+        auto body =
+            parseBlock();
+
+        return std::make_unique<ForStatement>(
+            std::move(init),
+            std::move(condition),
+            std::move(step),
+            std::move(body));
+    }
+
+
+    // ========================================================
     // RETURN
     //
     // return 42;

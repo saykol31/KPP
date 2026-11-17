@@ -1002,6 +1002,149 @@ void IRGenerator::generateStatement(
     }
 
     // ========================================================
+    // FOR (Ampliación 3)
+    //
+    // inicio (una sola vez)
+    // LABEL startLabel
+    // condición
+    // JUMP_IF_ZERO condición -> endLabel
+    // cuerpo
+    // paso
+    // JUMP -> startLabel
+    // LABEL endLabel
+    //
+    // Sin condición no hay salto de salida: el ciclo
+    // solo se deja por break, como un while (1). La
+    // etiqueta de fin se apila en loopEndLabels antes
+    // del cuerpo: break cae ahí.
+    // ========================================================
+
+    if (auto* forStatement =
+        dynamic_cast<const ForStatement*>(&statement))
+    {
+        // ----------------------------------------------------
+        // Verificar bloque
+        // ----------------------------------------------------
+
+        if (!forStatement->body)
+        {
+            throw std::runtime_error(
+                "K++ IR: for sin bloque");
+        }
+
+        // ----------------------------------------------------
+        // Generar inicio (una sola vez)
+        // ----------------------------------------------------
+
+        if (forStatement->init)
+        {
+            generateStatement(
+                *forStatement->init,
+                function);
+        }
+
+        // ----------------------------------------------------
+        // Crear etiquetas
+        // ----------------------------------------------------
+
+        std::string startLabel =
+            createLabel();
+
+        std::string endLabel =
+            createLabel();
+
+        // ----------------------------------------------------
+        // LABEL inicio
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Label,
+            startLabel,
+            "",
+            "",
+            0
+        });
+
+        // ----------------------------------------------------
+        // Generar condición y salto de salida
+        // ----------------------------------------------------
+
+        if (forStatement->condition)
+        {
+            std::string conditionTemporary =
+                generateExpression(
+                    *forStatement->condition,
+                    function);
+
+            function.instructions.push_back({
+                IROpcode::JumpIfZero,
+                endLabel,
+                conditionTemporary,
+                "",
+                0
+            });
+        }
+
+        // ----------------------------------------------------
+        // Generar cuerpo
+        // ----------------------------------------------------
+
+        loopEndLabels.push_back(
+            endLabel);
+
+        enterVariableScope();
+
+        for (const auto& nestedStatement :
+             forStatement->body->statements)
+        {
+            generateStatement(
+                *nestedStatement,
+                function);
+        }
+
+        leaveVariableScope();
+
+        loopEndLabels.pop_back();
+
+        // ----------------------------------------------------
+        // Generar paso
+        // ----------------------------------------------------
+
+        if (forStatement->step)
+        {
+            generateStatement(
+                *forStatement->step,
+                function);
+        }
+
+        // ----------------------------------------------------
+        // Volver a la condición
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Jump,
+            startLabel,
+            "",
+            "",
+            0
+        });
+
+        // ----------------------------------------------------
+        // LABEL salida
+        // ----------------------------------------------------
+
+        function.instructions.push_back({
+            IROpcode::Label,
+            endLabel,
+            "",
+            "",
+            0
+        });
+
+        return;
+    }
+
+    // ========================================================
     // BREAK (Ampliación 2)
     //
     // Salta a la etiqueta de fin del while más interno:

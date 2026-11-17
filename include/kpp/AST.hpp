@@ -304,6 +304,45 @@ struct WhileStatement : Statement
 };
 
 // ============================================================
+// FOR (Ampliación 3)
+//
+// for (inicio; condición; paso)
+// {
+//     ...
+// }
+//
+// Como el while, con las tres ranuras de la cabecera de
+// C. Cada ranura puede ir vacía: el inicio y el paso son
+// sentencias del nodo (nullptr si vacías) y la condición
+// es una expresión (nullptr = verdadera, como un
+// while (1)). El inicio se registra en el ámbito que
+// contiene al for (v1).
+// ============================================================
+
+struct ForStatement : Statement
+{
+    std::unique_ptr<Statement> init;
+
+    std::unique_ptr<Expression> condition;
+
+    std::unique_ptr<Statement> step;
+
+    std::unique_ptr<Block> body;
+
+    ForStatement(
+        std::unique_ptr<Statement> init,
+        std::unique_ptr<Expression> condition,
+        std::unique_ptr<Statement> step,
+        std::unique_ptr<Block> body)
+        : init(std::move(init)),
+          condition(std::move(condition)),
+          step(std::move(step)),
+          body(std::move(body))
+    {
+    }
+};
+
+// ============================================================
 // PARÁMETRO DE FUNCIÓN
 // ============================================================
 

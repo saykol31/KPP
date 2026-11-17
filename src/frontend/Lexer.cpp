@@ -71,6 +71,9 @@ const char* tokenTypeName(TokenType type)
         case TokenType::KwBreak:
             return "break";
 
+        case TokenType::KwFor:
+            return "for";
+
         // ========================================================
         // ASSIGNMENT
         // ========================================================
@@ -412,6 +415,20 @@ Token Lexer::identifier()
     {
         return {
             TokenType::KwBreak,
+            text,
+            startLine,
+            startColumn
+        };
+    }
+
+    // --------------------------------------------------------
+    // KEYWORD: for
+    // --------------------------------------------------------
+
+    if (text == "for")
+    {
+        return {
+            TokenType::KwFor,
             text,
             startLine,
             startColumn

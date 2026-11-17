@@ -39,6 +39,7 @@ NEGATIVOS=(
     "projects/L13.02_campo_neg_inexistente.kpp"
     "projects/L17.05_indice_neg_fuera_de_rango.kpp"
     "projects/L19.04_global_neg_duplicado.kpp"
+    "projects/L22.01_for_neg_cabecera.kpp"
 
 )
 
