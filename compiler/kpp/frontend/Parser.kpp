@@ -1529,6 +1529,7 @@ int parse_sentencia()
     // del analizador (codigo 52), no de esta pieza.
     if (t == TokenType::KwBreak)
     {
+        int c1 = consume();
         int ok = espera(TokenType::Semicolon);
         int n = emite(NodeKind::BreakStatement, ini);
         nsent = nsent + 1;
