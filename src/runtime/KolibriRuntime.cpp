@@ -4,6 +4,7 @@
 #include <cstdint>
 
 // KPP_KONSOLE_FILE_MENU_V1
+// KPP_PRINT_SIGNO_V1
 
 namespace kpp {
 
@@ -2522,6 +2523,47 @@ KolibriRuntime::emitPrintInteger(
     emitter.emitDecEdi();
     emitter.emitMovEdiMem8Imm8(0);
 
+    // KPP_PRINT_SIGNO_V1 — el signo del entero.
+    //
+    // EBX es la bandera del signo: 0 = sin menos,
+    // 1 = con menos. EBX está salvado en la pila
+    // desde la entrada de la rutina y se restaura
+    // a la salida, así que es rasguño seguro.
+    //
+    // xor ebx, ebx
+    emitter.emitByte(0x31);
+    emitter.emitByte(0xDB);
+
+    // test eax, eax
+    emitter.emitByte(0x85);
+    emitter.emitByte(0xC0);
+
+    // jns sin_signo
+    emitter.emitByte(0x0F);
+    emitter.emitByte(0x89);
+
+    const std::size_t sinSignoPatch =
+        emitter.emitRel32Placeholder();
+
+    // mov ebx, 1
+    emitter.emitMovRegImm32(
+        0xBB,
+        1);
+
+    // neg eax — el valor absoluto. La conversión
+    // que sigue es sin signo (DIV), y negar el
+    // mínimo 0x80000000 lo deja en 2147483648,
+    // que es su valor absoluto correcto.
+    emitter.emitByte(0xF7);
+    emitter.emitByte(0xD8);
+
+    const std::size_t sinSigno =
+        emitter.size();
+
+    emitter.patchRel32(
+        sinSignoPatch,
+        sinSigno);
+
     /*
      * Caso especial: número 0.
      */
@@ -2599,6 +2641,28 @@ KolibriRuntime::emitPrintInteger(
      * EDX = puntero al texto
      * ESI = tamaño máximo
      */
+    // KPP_PRINT_SIGNO_V1 — con la bandera
+    // levantada (EBX = 1), el menos se escribe
+    // un paso antes del primer dígito.
+    //
+    // cmp ebx, 0
+    emitter.emitByte(0x83);
+    emitter.emitByte(0xFB);
+    emitter.emitByte(0x00);
+
+    const std::size_t sinMenosPatch =
+        emitter.emitJeRel32Placeholder();
+
+    emitter.emitDecEdi();
+    emitter.emitMovEdiMem8Imm8('-');
+
+    const std::size_t sinMenos =
+        emitter.size();
+
+    emitter.patchRel32(
+        sinMenosPatch,
+        sinMenos);
+
     // EDX = EDI: el texto son los dígitos
     // convertidos, a los que EDI apunta.
     emitter.emitMovEdxEdi();

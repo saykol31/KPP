@@ -1,0 +1,8 @@
+int main()
+{
+    print_int(0 - 1);
+    print_int(5 - 9);
+    print_int(42);
+    print_int(0);
+    return 0;
+}
