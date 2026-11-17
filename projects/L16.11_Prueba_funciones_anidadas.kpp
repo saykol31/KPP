@@ -1,0 +1,85 @@
+// ============================================================
+// K++ - PRUEBA DE LLAMADAS ANIDADAS
+// Objetivo: detectar corrupción de argumentos temporales.
+// ============================================================
+
+int duplicar(int x)
+{
+    return x * 2;
+}
+
+int triplicar(int x)
+{
+    return x * 3;
+}
+
+int sumar(int a, int b)
+{
+    return a + b;
+}
+
+int calcular(int a, int b)
+{
+    return a + b;
+}
+
+int combinar(int a, int b, int c)
+{
+    return a + b + c;
+}
+
+int main()
+{
+    // --------------------------------------------------------
+    // PRUEBA 1: llamada anidada en el segundo argumento.
+    // Esperado: calcular(10, 40) = 50.
+    // --------------------------------------------------------
+
+    int resultado1 = calcular(10, duplicar(20));
+
+    // --------------------------------------------------------
+    // PRUEBA 2: dos llamadas anidadas.
+    // Esperado: sumar(10, 14) = 24.
+    // --------------------------------------------------------
+
+    int resultado2 = sumar(duplicar(5), duplicar(7));
+
+    // --------------------------------------------------------
+    // PRUEBA 3: anidamiento de tres niveles.
+    // Esperado: calcular(100, 20) = 120.
+    // --------------------------------------------------------
+
+    int resultado3 = calcular(100, duplicar(sumar(5, 5)));
+
+    // --------------------------------------------------------
+    // PRUEBA 4: tres argumentos con llamadas anidadas.
+    // Esperado: combinar(1, 20, 30) = 51.
+    // --------------------------------------------------------
+
+    int resultado4 = combinar(
+        1,
+        duplicar(10),
+        triplicar(10)
+    );
+
+    // --------------------------------------------------------
+    // PRUEBA 5: llamada anidada en el primer argumento.
+    // El segundo argumento debe conservarse.
+    // Esperado: calcular(40, 7) = 47.
+    // --------------------------------------------------------
+
+    int resultado5 = calcular(duplicar(20), 7);
+
+    // --------------------------------------------------------
+    // RETORNO DE CONTROL
+    // Cada prueba correcta debe producir cero.
+    // --------------------------------------------------------
+
+    if (resultado1 != 50) { return 1; }
+    if (resultado2 != 24) { return 2; }
+    if (resultado3 != 120) { return 3; }
+    if (resultado4 != 51) { return 4; }
+    if (resultado5 != 47) { return 5; }
+
+    return 0;
+}

@@ -242,7 +242,8 @@ enum NodeKind
 
     // AMPLIACIONES (al final, nunca en medio)
     CallStatement,
-    BreakStatement
+    BreakStatement,
+    ForStatement
 };
 
 // ============================================================
@@ -267,6 +268,16 @@ int fun_es_void;
 // como las demas tablas de la pieza (compartida
 // por nombre); el tope es un escalar compartido.
 int fin_tope;
+// El tope de la arena de temporales de argumento de
+// las llamadas en generacion. El arreglo temps se
+// declara dentro de genera_expresion (compartido por
+// nombre, como las demas tablas), y cada llamada
+// colecciona sus temporales en las ranuras que
+// empiezan en su base — un escalar local — para que
+// una llamada anidada no pise los de la externa. El
+// tope marca la primera ranura libre: es el mismo
+// patron que fin_tope con su pila.
+int temps_tope;
 
 // ============================================================
 // LA PISCINA DE TEXTO.
@@ -864,7 +875,8 @@ int genera_expresion(int e)
             int em9 = emite_ir(IROpcode::FileWrite, nom7, ident2, t7, tc, cap2);
             return t7;
         }
-        int temps[32];
+        int temps[256];
+        int base = temps_tope;
         int narg = 0;
         int arg = a1;
         while (arg >= 0)
@@ -872,8 +884,13 @@ int genera_expresion(int e)
             int ta = genera_expresion(arg);
             if (narg < 32)
             {
-                temps[narg] = ta;
-                narg = narg + 1;
+                int hueco = base + narg;
+                if (hueco < 256)
+                {
+                    temps[hueco] = ta;
+                    narg = narg + 1;
+                    temps_tope = base + narg;
+                }
             }
             arg = nsig[arg];
         }
@@ -889,12 +906,13 @@ int genera_expresion(int e)
                     int c1 = agrega_car(44);
                     int c2 = agrega_car(32);
                 }
-                int tj = temps[j];
+                int tj = temps[base + j];
                 int aj = agrega_ref(tj);
                 j = j + 1;
             }
             unidos = ini_u * 128 + (pool_len - ini_u);
         }
+        temps_tope = base;
         int t8 = ref_temp();
         int nom8 = ref_token(ct);
         int em10 = emite_ir(IROpcode::Call, nom8, unidos, t8, 0, 0);
@@ -1124,6 +1142,68 @@ int genera_sentencia(int s)
         int e16 = emite_ir(IROpcode::Label, fin_e, 0, 0, 0, 0);
         return 0;
     }
+    if (k == NodeKind::ForStatement)
+    {
+        // El for (Ampliacion 3): los hijos cuelgan en
+        // cadena — el inicio (si lo hay), la condicion
+        // (siempre: el Parser siembra el literal 1 si
+        // venia vacia), el paso (si lo hay) y el
+        // cuerpo. El inicio se genera una vez, antes de
+        // la etiqueta de la condicion; el salto en
+        // falso cae en la etiqueta de fin, que la pila
+        // guarda durante el cuerpo (el break cae ahi);
+        // el paso se genera tras el cuerpo y el salto
+        // de vuelta cierra el ciclo. La forma de saltos
+        // es la del while, con el inicio delante y el
+        // paso detras.
+        int pf = nhijo1[s];
+        int iniciog = 0 - 1;
+        if (nkind[pf] == NodeKind::VariableDeclaration)
+        {
+            iniciog = pf;
+            pf = nsig[pf];
+        }
+        else
+        {
+            if (nkind[pf] == NodeKind::AssignmentStatement)
+            {
+                iniciog = pf;
+                pf = nsig[pf];
+            }
+        }
+        int condf = pf;
+        pf = nsig[pf];
+        int pasof = 0 - 1;
+        int cuerpof = pf;
+        if (nkind[pf] == NodeKind::AssignmentStatement)
+        {
+            pasof = pf;
+            cuerpof = nsig[pf];
+        }
+        if (iniciog >= 0)
+        {
+            int g0 = genera_sentencia(iniciog);
+        }
+        int in_e = ref_etiqueta();
+        int fn_e = ref_etiqueta();
+        int e23 = emite_ir(IROpcode::Label, in_e, 0, 0, 0, 0);
+        int tcf = genera_expresion(condf);
+        int e24 = emite_ir(IROpcode::JumpIfZero, fn_e, tcf, 0, 0, 0);
+        if (cuerpof >= 0)
+        {
+            fin_pila[fin_tope] = fn_e;
+            fin_tope = fin_tope + 1;
+            int g3 = genera_bloque(cuerpof);
+            fin_tope = fin_tope - 1;
+        }
+        if (pasof >= 0)
+        {
+            int g4 = genera_sentencia(pasof);
+        }
+        int e25 = emite_ir(IROpcode::Jump, in_e, 0, 0, 0, 0);
+        int e26 = emite_ir(IROpcode::Label, fn_e, 0, 0, 0, 0);
+        return 0;
+    }
     if (k == NodeKind::BreakStatement)
     {
         // El break (Ampliacion 2): salta a la etiqueta
@@ -1204,6 +1284,7 @@ int genera_funcion(int f)
     netiq = 0;
     fun_es_void = es_void(nini[f]);
     fin_tope = 0;
+    temps_tope = 0;
     int ea = entra_ambito();
     int nt = nval[f];
     int nombre = ref_token(nt);
@@ -6252,6 +6333,1092 @@ int inicia_ir11()
     return 0;
 }
 
+// ============================================================
+// SONDA 12 — LAS LLAMADAS ANIDADAS (el defecto de temps).
+//
+// int duplicar(int x) { return x * 2; }
+// int calcular(int a, int b) { return a + b; }
+// int main() { int r = calcular(10, duplicar(20));
+//     return r; }
+//
+// La sonda caza la corrupcion de los temporales de
+// argumento cuando un argumento de una llamada es a su
+// vez una llamada: la rama de CallExpression de
+// genera_expresion colecciona los temporales en el
+// arreglo temps, que en K++ es compartido por nombre
+// entre todas las entradas a la funcion, y la llamada
+// interna pisa los temporales ya guardados de la
+// externa. En la corriente, el CALL de calcular debe
+// llevar por operando "%0, %2" (%0 es el temporal del
+// 10 y %2 el resultado de duplicar); con el defecto
+// lleva "%1, %2", donde %1 es el temporal del 20 de la
+// llamada interna. El resto de la corriente y la
+// piscina (89 caracteres) no cambian entre una lectura
+// y la otra: difiere un solo caracter de la piscina.
+// ============================================================
+
+int inicia_ir12()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 100;
+    fuente[5] = 117;
+    fuente[6] = 112;
+    fuente[7] = 108;
+    fuente[8] = 105;
+    fuente[9] = 99;
+    fuente[10] = 97;
+    fuente[11] = 114;
+    fuente[12] = 40;
+    fuente[13] = 105;
+    fuente[14] = 110;
+    fuente[15] = 116;
+    fuente[16] = 32;
+    fuente[17] = 120;
+    fuente[18] = 41;
+    fuente[19] = 32;
+    fuente[20] = 123;
+    fuente[21] = 32;
+    fuente[22] = 114;
+    fuente[23] = 101;
+    fuente[24] = 116;
+    fuente[25] = 117;
+    fuente[26] = 114;
+    fuente[27] = 110;
+    fuente[28] = 32;
+    fuente[29] = 120;
+    fuente[30] = 32;
+    fuente[31] = 42;
+    fuente[32] = 32;
+    fuente[33] = 50;
+    fuente[34] = 59;
+    fuente[35] = 32;
+    fuente[36] = 125;
+    fuente[37] = 32;
+    fuente[38] = 105;
+    fuente[39] = 110;
+    fuente[40] = 116;
+    fuente[41] = 32;
+    fuente[42] = 99;
+    fuente[43] = 97;
+    fuente[44] = 108;
+    fuente[45] = 99;
+    fuente[46] = 117;
+    fuente[47] = 108;
+    fuente[48] = 97;
+    fuente[49] = 114;
+    fuente[50] = 40;
+    fuente[51] = 105;
+    fuente[52] = 110;
+    fuente[53] = 116;
+    fuente[54] = 32;
+    fuente[55] = 97;
+    fuente[56] = 44;
+    fuente[57] = 32;
+    fuente[58] = 105;
+    fuente[59] = 110;
+    fuente[60] = 116;
+    fuente[61] = 32;
+    fuente[62] = 98;
+    fuente[63] = 41;
+    fuente[64] = 32;
+    fuente[65] = 123;
+    fuente[66] = 32;
+    fuente[67] = 114;
+    fuente[68] = 101;
+    fuente[69] = 116;
+    fuente[70] = 117;
+    fuente[71] = 114;
+    fuente[72] = 110;
+    fuente[73] = 32;
+    fuente[74] = 97;
+    fuente[75] = 32;
+    fuente[76] = 43;
+    fuente[77] = 32;
+    fuente[78] = 98;
+    fuente[79] = 59;
+    fuente[80] = 32;
+    fuente[81] = 125;
+    fuente[82] = 32;
+    fuente[83] = 105;
+    fuente[84] = 110;
+    fuente[85] = 116;
+    fuente[86] = 32;
+    fuente[87] = 109;
+    fuente[88] = 97;
+    fuente[89] = 105;
+    fuente[90] = 110;
+    fuente[91] = 40;
+    fuente[92] = 41;
+    fuente[93] = 32;
+    fuente[94] = 123;
+    fuente[95] = 32;
+    fuente[96] = 105;
+    fuente[97] = 110;
+    fuente[98] = 116;
+    fuente[99] = 32;
+    fuente[100] = 114;
+    fuente[101] = 32;
+    fuente[102] = 61;
+    fuente[103] = 32;
+    fuente[104] = 99;
+    fuente[105] = 97;
+    fuente[106] = 108;
+    fuente[107] = 99;
+    fuente[108] = 117;
+    fuente[109] = 108;
+    fuente[110] = 97;
+    fuente[111] = 114;
+    fuente[112] = 40;
+    fuente[113] = 49;
+    fuente[114] = 48;
+    fuente[115] = 44;
+    fuente[116] = 32;
+    fuente[117] = 100;
+    fuente[118] = 117;
+    fuente[119] = 112;
+    fuente[120] = 108;
+    fuente[121] = 105;
+    fuente[122] = 99;
+    fuente[123] = 97;
+    fuente[124] = 114;
+    fuente[125] = 40;
+    fuente[126] = 50;
+    fuente[127] = 48;
+    fuente[128] = 41;
+    fuente[129] = 41;
+    fuente[130] = 59;
+    fuente[131] = 32;
+    fuente[132] = 114;
+    fuente[133] = 101;
+    fuente[134] = 116;
+    fuente[135] = 117;
+    fuente[136] = 114;
+    fuente[137] = 110;
+    fuente[138] = 32;
+    fuente[139] = 114;
+    fuente[140] = 59;
+    fuente[141] = 32;
+    fuente[142] = 125;
+    tok_tipo[0] = 4;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 3;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 4;
+    tok_largo[1] = 8;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 29;
+    tok_inicio[2] = 12;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 4;
+    tok_inicio[3] = 13;
+    tok_largo[3] = 3;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 1;
+    tok_inicio[4] = 17;
+    tok_largo[4] = 1;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 30;
+    tok_inicio[5] = 18;
+    tok_largo[5] = 1;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 33;
+    tok_inicio[6] = 20;
+    tok_largo[6] = 1;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 8;
+    tok_inicio[7] = 22;
+    tok_largo[7] = 6;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 1;
+    tok_inicio[8] = 29;
+    tok_largo[8] = 1;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 16;
+    tok_inicio[9] = 31;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 2;
+    tok_inicio[10] = 33;
+    tok_largo[10] = 1;
+    tok_valor[10] = 2;
+    tok_tipo[11] = 36;
+    tok_inicio[11] = 34;
+    tok_largo[11] = 1;
+    tok_valor[11] = 0;
+    tok_tipo[12] = 34;
+    tok_inicio[12] = 36;
+    tok_largo[12] = 1;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 4;
+    tok_inicio[13] = 38;
+    tok_largo[13] = 3;
+    tok_valor[13] = 0;
+    tok_tipo[14] = 1;
+    tok_inicio[14] = 42;
+    tok_largo[14] = 8;
+    tok_valor[14] = 0;
+    tok_tipo[15] = 29;
+    tok_inicio[15] = 50;
+    tok_largo[15] = 1;
+    tok_valor[15] = 0;
+    tok_tipo[16] = 4;
+    tok_inicio[16] = 51;
+    tok_largo[16] = 3;
+    tok_valor[16] = 0;
+    tok_tipo[17] = 1;
+    tok_inicio[17] = 55;
+    tok_largo[17] = 1;
+    tok_valor[17] = 0;
+    tok_tipo[18] = 35;
+    tok_inicio[18] = 56;
+    tok_largo[18] = 1;
+    tok_valor[18] = 0;
+    tok_tipo[19] = 4;
+    tok_inicio[19] = 58;
+    tok_largo[19] = 3;
+    tok_valor[19] = 0;
+    tok_tipo[20] = 1;
+    tok_inicio[20] = 62;
+    tok_largo[20] = 1;
+    tok_valor[20] = 0;
+    tok_tipo[21] = 30;
+    tok_inicio[21] = 63;
+    tok_largo[21] = 1;
+    tok_valor[21] = 0;
+    tok_tipo[22] = 33;
+    tok_inicio[22] = 65;
+    tok_largo[22] = 1;
+    tok_valor[22] = 0;
+    tok_tipo[23] = 8;
+    tok_inicio[23] = 67;
+    tok_largo[23] = 6;
+    tok_valor[23] = 0;
+    tok_tipo[24] = 1;
+    tok_inicio[24] = 74;
+    tok_largo[24] = 1;
+    tok_valor[24] = 0;
+    tok_tipo[25] = 14;
+    tok_inicio[25] = 76;
+    tok_largo[25] = 1;
+    tok_valor[25] = 0;
+    tok_tipo[26] = 1;
+    tok_inicio[26] = 78;
+    tok_largo[26] = 1;
+    tok_valor[26] = 0;
+    tok_tipo[27] = 36;
+    tok_inicio[27] = 79;
+    tok_largo[27] = 1;
+    tok_valor[27] = 0;
+    tok_tipo[28] = 34;
+    tok_inicio[28] = 81;
+    tok_largo[28] = 1;
+    tok_valor[28] = 0;
+    tok_tipo[29] = 4;
+    tok_inicio[29] = 83;
+    tok_largo[29] = 3;
+    tok_valor[29] = 0;
+    tok_tipo[30] = 1;
+    tok_inicio[30] = 87;
+    tok_largo[30] = 4;
+    tok_valor[30] = 0;
+    tok_tipo[31] = 29;
+    tok_inicio[31] = 91;
+    tok_largo[31] = 1;
+    tok_valor[31] = 0;
+    tok_tipo[32] = 30;
+    tok_inicio[32] = 92;
+    tok_largo[32] = 1;
+    tok_valor[32] = 0;
+    tok_tipo[33] = 33;
+    tok_inicio[33] = 94;
+    tok_largo[33] = 1;
+    tok_valor[33] = 0;
+    tok_tipo[34] = 4;
+    tok_inicio[34] = 96;
+    tok_largo[34] = 3;
+    tok_valor[34] = 0;
+    tok_tipo[35] = 1;
+    tok_inicio[35] = 100;
+    tok_largo[35] = 1;
+    tok_valor[35] = 0;
+    tok_tipo[36] = 13;
+    tok_inicio[36] = 102;
+    tok_largo[36] = 1;
+    tok_valor[36] = 0;
+    tok_tipo[37] = 1;
+    tok_inicio[37] = 104;
+    tok_largo[37] = 8;
+    tok_valor[37] = 0;
+    tok_tipo[38] = 29;
+    tok_inicio[38] = 112;
+    tok_largo[38] = 1;
+    tok_valor[38] = 0;
+    tok_tipo[39] = 2;
+    tok_inicio[39] = 113;
+    tok_largo[39] = 2;
+    tok_valor[39] = 10;
+    tok_tipo[40] = 35;
+    tok_inicio[40] = 115;
+    tok_largo[40] = 1;
+    tok_valor[40] = 0;
+    tok_tipo[41] = 1;
+    tok_inicio[41] = 117;
+    tok_largo[41] = 8;
+    tok_valor[41] = 0;
+    tok_tipo[42] = 29;
+    tok_inicio[42] = 125;
+    tok_largo[42] = 1;
+    tok_valor[42] = 0;
+    tok_tipo[43] = 2;
+    tok_inicio[43] = 126;
+    tok_largo[43] = 2;
+    tok_valor[43] = 20;
+    tok_tipo[44] = 30;
+    tok_inicio[44] = 128;
+    tok_largo[44] = 1;
+    tok_valor[44] = 0;
+    tok_tipo[45] = 30;
+    tok_inicio[45] = 129;
+    tok_largo[45] = 1;
+    tok_valor[45] = 0;
+    tok_tipo[46] = 36;
+    tok_inicio[46] = 130;
+    tok_largo[46] = 1;
+    tok_valor[46] = 0;
+    tok_tipo[47] = 8;
+    tok_inicio[47] = 132;
+    tok_largo[47] = 6;
+    tok_valor[47] = 0;
+    tok_tipo[48] = 1;
+    tok_inicio[48] = 139;
+    tok_largo[48] = 1;
+    tok_valor[48] = 0;
+    tok_tipo[49] = 36;
+    tok_inicio[49] = 140;
+    tok_largo[49] = 1;
+    tok_valor[49] = 0;
+    tok_tipo[50] = 34;
+    tok_inicio[50] = 142;
+    tok_largo[50] = 2;
+    tok_valor[50] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 51;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 1;
+    nini[1] = 0;
+    nfin[1] = 0;
+    nhijo1[1] = 2;
+    nsig[1] = 7;
+    nval[1] = 1;
+    naux[1] = 0;
+    nsize[1] = 1;
+    nkind[2] = 4;
+    nini[2] = 0;
+    nfin[2] = 0;
+    nhijo1[2] = 6;
+    nsig[2] = -1;
+    nval[2] = 0;
+    naux[2] = -1;
+    nsize[2] = 0;
+    nkind[3] = 14;
+    nini[3] = 8;
+    nfin[3] = 8;
+    nhijo1[3] = -1;
+    nsig[3] = 4;
+    nval[3] = 8;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 12;
+    nini[4] = 10;
+    nfin[4] = 10;
+    nhijo1[4] = -1;
+    nsig[4] = -1;
+    nval[4] = 2;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 17;
+    nini[5] = 8;
+    nfin[5] = 8;
+    nhijo1[5] = 3;
+    nsig[5] = -1;
+    nval[5] = 16;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 9;
+    nini[6] = 7;
+    nfin[6] = 7;
+    nhijo1[6] = 5;
+    nsig[6] = -1;
+    nval[6] = 0;
+    naux[6] = -1;
+    nsize[6] = 0;
+    nkind[7] = 1;
+    nini[7] = 13;
+    nfin[7] = 13;
+    nhijo1[7] = 8;
+    nsig[7] = 13;
+    nval[7] = 14;
+    naux[7] = 1;
+    nsize[7] = 2;
+    nkind[8] = 4;
+    nini[8] = 0;
+    nfin[8] = 0;
+    nhijo1[8] = 12;
+    nsig[8] = -1;
+    nval[8] = 0;
+    naux[8] = -1;
+    nsize[8] = 0;
+    nkind[9] = 14;
+    nini[9] = 24;
+    nfin[9] = 24;
+    nhijo1[9] = -1;
+    nsig[9] = 10;
+    nval[9] = 24;
+    naux[9] = -1;
+    nsize[9] = 0;
+    nkind[10] = 14;
+    nini[10] = 26;
+    nfin[10] = 26;
+    nhijo1[10] = -1;
+    nsig[10] = -1;
+    nval[10] = 26;
+    naux[10] = -1;
+    nsize[10] = 0;
+    nkind[11] = 17;
+    nini[11] = 24;
+    nfin[11] = 24;
+    nhijo1[11] = 9;
+    nsig[11] = -1;
+    nval[11] = 14;
+    naux[11] = -1;
+    nsize[11] = 0;
+    nkind[12] = 9;
+    nini[12] = 23;
+    nfin[12] = 23;
+    nhijo1[12] = 11;
+    nsig[12] = -1;
+    nval[12] = 0;
+    naux[12] = -1;
+    nsize[12] = 0;
+    nkind[13] = 1;
+    nini[13] = 29;
+    nfin[13] = 29;
+    nhijo1[13] = 14;
+    nsig[13] = -1;
+    nval[13] = 30;
+    naux[13] = 3;
+    nsize[13] = 0;
+    nkind[14] = 4;
+    nini[14] = 0;
+    nfin[14] = 0;
+    nhijo1[14] = 19;
+    nsig[14] = -1;
+    nval[14] = 0;
+    naux[14] = -1;
+    nsize[14] = 0;
+    nkind[15] = 16;
+    nini[15] = 37;
+    nfin[15] = 37;
+    nhijo1[15] = 16;
+    nsig[15] = -1;
+    nval[15] = 37;
+    naux[15] = -1;
+    nsize[15] = 0;
+    nkind[16] = 12;
+    nini[16] = 39;
+    nfin[16] = 39;
+    nhijo1[16] = -1;
+    nsig[16] = 17;
+    nval[16] = 10;
+    naux[16] = -1;
+    nsize[16] = 0;
+    nkind[17] = 16;
+    nini[17] = 41;
+    nfin[17] = 41;
+    nhijo1[17] = 18;
+    nsig[17] = -1;
+    nval[17] = 41;
+    naux[17] = -1;
+    nsize[17] = 0;
+    nkind[18] = 12;
+    nini[18] = 43;
+    nfin[18] = 43;
+    nhijo1[18] = -1;
+    nsig[18] = -1;
+    nval[18] = 20;
+    naux[18] = -1;
+    nsize[18] = 0;
+    nkind[19] = 5;
+    nini[19] = 34;
+    nfin[19] = 34;
+    nhijo1[19] = 15;
+    nsig[19] = 21;
+    nval[19] = 35;
+    naux[19] = -1;
+    nsize[19] = 0;
+    nkind[20] = 14;
+    nini[20] = 48;
+    nfin[20] = 48;
+    nhijo1[20] = -1;
+    nsig[20] = -1;
+    nval[20] = 48;
+    naux[20] = -1;
+    nsize[20] = 0;
+    nkind[21] = 9;
+    nini[21] = 47;
+    nfin[21] = 47;
+    nhijo1[21] = 20;
+    nsig[21] = -1;
+    nval[21] = 0;
+    naux[21] = -1;
+    nsize[21] = 0;
+    partok[0] = 4;
+    partok[1] = 17;
+    partok[2] = 20;
+    tok_count = 51;
+    nnodos = 22;
+    return 0;
+}
+
+// ============================================================
+// SONDA 13 — EL ECO DE FOR EN EL GENERADOR.
+//
+// int main()
+// {
+//     for (int k = 0; k < 10; k = k + 1)
+//     {
+//         if (k == 3)
+//         {
+//             break;
+//         }
+//     }
+//     return k;
+// }
+//
+// La forma de saltos es la del while (sonda 11) con
+// el inicio delante y el paso detras: el inicio se
+// genera una vez, la etiqueta de la condicion, el
+// salto en falso a la de fin (que la pila guarda
+// durante el cuerpo: el break cae ahi), el paso y el
+// salto de vuelta. 24 instrucciones, piscina de 56.
+// ============================================================
+
+int inicia_ir13()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 109;
+    fuente[5] = 97;
+    fuente[6] = 105;
+    fuente[7] = 110;
+    fuente[8] = 40;
+    fuente[9] = 41;
+    fuente[10] = 10;
+    fuente[11] = 123;
+    fuente[12] = 10;
+    fuente[13] = 32;
+    fuente[14] = 32;
+    fuente[15] = 32;
+    fuente[16] = 32;
+    fuente[17] = 102;
+    fuente[18] = 111;
+    fuente[19] = 114;
+    fuente[20] = 32;
+    fuente[21] = 40;
+    fuente[22] = 105;
+    fuente[23] = 110;
+    fuente[24] = 116;
+    fuente[25] = 32;
+    fuente[26] = 107;
+    fuente[27] = 32;
+    fuente[28] = 61;
+    fuente[29] = 32;
+    fuente[30] = 48;
+    fuente[31] = 59;
+    fuente[32] = 32;
+    fuente[33] = 107;
+    fuente[34] = 32;
+    fuente[35] = 60;
+    fuente[36] = 32;
+    fuente[37] = 49;
+    fuente[38] = 48;
+    fuente[39] = 59;
+    fuente[40] = 32;
+    fuente[41] = 107;
+    fuente[42] = 32;
+    fuente[43] = 61;
+    fuente[44] = 32;
+    fuente[45] = 107;
+    fuente[46] = 32;
+    fuente[47] = 43;
+    fuente[48] = 32;
+    fuente[49] = 49;
+    fuente[50] = 41;
+    fuente[51] = 10;
+    fuente[52] = 32;
+    fuente[53] = 32;
+    fuente[54] = 32;
+    fuente[55] = 32;
+    fuente[56] = 123;
+    fuente[57] = 10;
+    fuente[58] = 32;
+    fuente[59] = 32;
+    fuente[60] = 32;
+    fuente[61] = 32;
+    fuente[62] = 32;
+    fuente[63] = 32;
+    fuente[64] = 32;
+    fuente[65] = 32;
+    fuente[66] = 105;
+    fuente[67] = 102;
+    fuente[68] = 32;
+    fuente[69] = 40;
+    fuente[70] = 107;
+    fuente[71] = 32;
+    fuente[72] = 61;
+    fuente[73] = 61;
+    fuente[74] = 32;
+    fuente[75] = 51;
+    fuente[76] = 41;
+    fuente[77] = 10;
+    fuente[78] = 32;
+    fuente[79] = 32;
+    fuente[80] = 32;
+    fuente[81] = 32;
+    fuente[82] = 32;
+    fuente[83] = 32;
+    fuente[84] = 32;
+    fuente[85] = 32;
+    fuente[86] = 123;
+    fuente[87] = 10;
+    fuente[88] = 32;
+    fuente[89] = 32;
+    fuente[90] = 32;
+    fuente[91] = 32;
+    fuente[92] = 32;
+    fuente[93] = 32;
+    fuente[94] = 32;
+    fuente[95] = 32;
+    fuente[96] = 32;
+    fuente[97] = 32;
+    fuente[98] = 32;
+    fuente[99] = 32;
+    fuente[100] = 98;
+    fuente[101] = 114;
+    fuente[102] = 101;
+    fuente[103] = 97;
+    fuente[104] = 107;
+    fuente[105] = 59;
+    fuente[106] = 10;
+    fuente[107] = 32;
+    fuente[108] = 32;
+    fuente[109] = 32;
+    fuente[110] = 32;
+    fuente[111] = 32;
+    fuente[112] = 32;
+    fuente[113] = 32;
+    fuente[114] = 32;
+    fuente[115] = 125;
+    fuente[116] = 10;
+    fuente[117] = 32;
+    fuente[118] = 32;
+    fuente[119] = 32;
+    fuente[120] = 32;
+    fuente[121] = 125;
+    fuente[122] = 10;
+    fuente[123] = 32;
+    fuente[124] = 32;
+    fuente[125] = 32;
+    fuente[126] = 32;
+    fuente[127] = 114;
+    fuente[128] = 101;
+    fuente[129] = 116;
+    fuente[130] = 117;
+    fuente[131] = 114;
+    fuente[132] = 110;
+    fuente[133] = 32;
+    fuente[134] = 107;
+    fuente[135] = 59;
+    fuente[136] = 10;
+    fuente[137] = 125;
+    fuente[138] = 10;
+    tok_tipo[0] = 4;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 3;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 4;
+    tok_largo[1] = 4;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 29;
+    tok_inicio[2] = 8;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 30;
+    tok_inicio[3] = 9;
+    tok_largo[3] = 1;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 33;
+    tok_inicio[4] = 11;
+    tok_largo[4] = 1;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 41;
+    tok_inicio[5] = 17;
+    tok_largo[5] = 3;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 29;
+    tok_inicio[6] = 21;
+    tok_largo[6] = 1;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 4;
+    tok_inicio[7] = 22;
+    tok_largo[7] = 3;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 1;
+    tok_inicio[8] = 26;
+    tok_largo[8] = 1;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 13;
+    tok_inicio[9] = 28;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 2;
+    tok_inicio[10] = 30;
+    tok_largo[10] = 1;
+    tok_valor[10] = 0;
+    tok_tipo[11] = 36;
+    tok_inicio[11] = 31;
+    tok_largo[11] = 1;
+    tok_valor[11] = 0;
+    tok_tipo[12] = 1;
+    tok_inicio[12] = 33;
+    tok_largo[12] = 1;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 22;
+    tok_inicio[13] = 35;
+    tok_largo[13] = 1;
+    tok_valor[13] = 0;
+    tok_tipo[14] = 2;
+    tok_inicio[14] = 37;
+    tok_largo[14] = 2;
+    tok_valor[14] = 10;
+    tok_tipo[15] = 36;
+    tok_inicio[15] = 39;
+    tok_largo[15] = 1;
+    tok_valor[15] = 0;
+    tok_tipo[16] = 1;
+    tok_inicio[16] = 41;
+    tok_largo[16] = 1;
+    tok_valor[16] = 0;
+    tok_tipo[17] = 13;
+    tok_inicio[17] = 43;
+    tok_largo[17] = 1;
+    tok_valor[17] = 0;
+    tok_tipo[18] = 1;
+    tok_inicio[18] = 45;
+    tok_largo[18] = 1;
+    tok_valor[18] = 0;
+    tok_tipo[19] = 14;
+    tok_inicio[19] = 47;
+    tok_largo[19] = 1;
+    tok_valor[19] = 0;
+    tok_tipo[20] = 2;
+    tok_inicio[20] = 49;
+    tok_largo[20] = 1;
+    tok_valor[20] = 1;
+    tok_tipo[21] = 30;
+    tok_inicio[21] = 50;
+    tok_largo[21] = 1;
+    tok_valor[21] = 0;
+    tok_tipo[22] = 33;
+    tok_inicio[22] = 56;
+    tok_largo[22] = 1;
+    tok_valor[22] = 0;
+    tok_tipo[23] = 10;
+    tok_inicio[23] = 66;
+    tok_largo[23] = 2;
+    tok_valor[23] = 0;
+    tok_tipo[24] = 29;
+    tok_inicio[24] = 69;
+    tok_largo[24] = 1;
+    tok_valor[24] = 0;
+    tok_tipo[25] = 1;
+    tok_inicio[25] = 70;
+    tok_largo[25] = 1;
+    tok_valor[25] = 0;
+    tok_tipo[26] = 20;
+    tok_inicio[26] = 72;
+    tok_largo[26] = 2;
+    tok_valor[26] = 0;
+    tok_tipo[27] = 2;
+    tok_inicio[27] = 75;
+    tok_largo[27] = 1;
+    tok_valor[27] = 3;
+    tok_tipo[28] = 30;
+    tok_inicio[28] = 76;
+    tok_largo[28] = 1;
+    tok_valor[28] = 0;
+    tok_tipo[29] = 33;
+    tok_inicio[29] = 86;
+    tok_largo[29] = 1;
+    tok_valor[29] = 0;
+    tok_tipo[30] = 40;
+    tok_inicio[30] = 100;
+    tok_largo[30] = 5;
+    tok_valor[30] = 0;
+    tok_tipo[31] = 36;
+    tok_inicio[31] = 105;
+    tok_largo[31] = 1;
+    tok_valor[31] = 0;
+    tok_tipo[32] = 34;
+    tok_inicio[32] = 115;
+    tok_largo[32] = 1;
+    tok_valor[32] = 0;
+    tok_tipo[33] = 34;
+    tok_inicio[33] = 121;
+    tok_largo[33] = 1;
+    tok_valor[33] = 0;
+    tok_tipo[34] = 8;
+    tok_inicio[34] = 127;
+    tok_largo[34] = 6;
+    tok_valor[34] = 0;
+    tok_tipo[35] = 1;
+    tok_inicio[35] = 134;
+    tok_largo[35] = 1;
+    tok_valor[35] = 0;
+    tok_tipo[36] = 36;
+    tok_inicio[36] = 135;
+    tok_largo[36] = 1;
+    tok_valor[36] = 0;
+    tok_tipo[37] = 34;
+    tok_inicio[37] = 137;
+    tok_largo[37] = 1;
+    tok_valor[37] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 38;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 1;
+    nini[1] = 0;
+    nfin[1] = 0;
+    nhijo1[1] = 2;
+    nsig[1] = -1;
+    nval[1] = 1;
+    naux[1] = 0;
+    nsize[1] = 0;
+    nkind[2] = 4;
+    nini[2] = 0;
+    nfin[2] = 0;
+    nhijo1[2] = 12;
+    nsig[2] = -1;
+    nval[2] = 0;
+    naux[2] = -1;
+    nsize[2] = 0;
+    nkind[3] = 12;
+    nini[3] = 10;
+    nfin[3] = 10;
+    nhijo1[3] = -1;
+    nsig[3] = -1;
+    nval[3] = 0;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 5;
+    nini[4] = 7;
+    nfin[4] = 7;
+    nhijo1[4] = 3;
+    nsig[4] = 7;
+    nval[4] = 8;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 14;
+    nini[5] = 12;
+    nfin[5] = 12;
+    nhijo1[5] = -1;
+    nsig[5] = 6;
+    nval[5] = 12;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 12;
+    nini[6] = 14;
+    nfin[6] = 14;
+    nhijo1[6] = -1;
+    nsig[6] = -1;
+    nval[6] = 10;
+    naux[6] = -1;
+    nsize[6] = 0;
+    nkind[7] = 17;
+    nini[7] = 12;
+    nfin[7] = 12;
+    nhijo1[7] = 5;
+    nsig[7] = 11;
+    nval[7] = 22;
+    naux[7] = -1;
+    nsize[7] = 0;
+    nkind[8] = 14;
+    nini[8] = 18;
+    nfin[8] = 18;
+    nhijo1[8] = -1;
+    nsig[8] = 9;
+    nval[8] = 18;
+    naux[8] = -1;
+    nsize[8] = 0;
+    nkind[9] = 12;
+    nini[9] = 20;
+    nfin[9] = 20;
+    nhijo1[9] = -1;
+    nsig[9] = -1;
+    nval[9] = 1;
+    naux[9] = -1;
+    nsize[9] = 0;
+    nkind[10] = 17;
+    nini[10] = 18;
+    nfin[10] = 18;
+    nhijo1[10] = 8;
+    nsig[10] = -1;
+    nval[10] = 14;
+    naux[10] = -1;
+    nsize[10] = 0;
+    nkind[11] = 6;
+    nini[11] = 16;
+    nfin[11] = 16;
+    nhijo1[11] = -1;
+    nsig[11] = 13;
+    nval[11] = 16;
+    naux[11] = 10;
+    nsize[11] = 0;
+    nkind[12] = 20;
+    nini[12] = 5;
+    nfin[12] = 34;
+    nhijo1[12] = 4;
+    nsig[12] = 21;
+    nval[12] = 0;
+    naux[12] = -1;
+    nsize[12] = 0;
+    nkind[13] = 4;
+    nini[13] = 0;
+    nfin[13] = 0;
+    nhijo1[13] = 17;
+    nsig[13] = -1;
+    nval[13] = 0;
+    naux[13] = -1;
+    nsize[13] = 0;
+    nkind[14] = 14;
+    nini[14] = 25;
+    nfin[14] = 25;
+    nhijo1[14] = -1;
+    nsig[14] = 15;
+    nval[14] = 25;
+    naux[14] = -1;
+    nsize[14] = 0;
+    nkind[15] = 12;
+    nini[15] = 27;
+    nfin[15] = 27;
+    nhijo1[15] = -1;
+    nsig[15] = -1;
+    nval[15] = 3;
+    naux[15] = -1;
+    nsize[15] = 0;
+    nkind[16] = 17;
+    nini[16] = 25;
+    nfin[16] = 25;
+    nhijo1[16] = 14;
+    nsig[16] = 18;
+    nval[16] = 20;
+    naux[16] = -1;
+    nsize[16] = 0;
+    nkind[17] = 7;
+    nini[17] = 23;
+    nfin[17] = 23;
+    nhijo1[17] = 16;
+    nsig[17] = -1;
+    nval[17] = 0;
+    naux[17] = -1;
+    nsize[17] = 0;
+    nkind[18] = 4;
+    nini[18] = 0;
+    nfin[18] = 0;
+    nhijo1[18] = 19;
+    nsig[18] = -1;
+    nval[18] = 0;
+    naux[18] = -1;
+    nsize[18] = 0;
+    nkind[19] = 19;
+    nini[19] = 30;
+    nfin[19] = 30;
+    nhijo1[19] = -1;
+    nsig[19] = -1;
+    nval[19] = 0;
+    naux[19] = -1;
+    nsize[19] = 0;
+    nkind[20] = 14;
+    nini[20] = 35;
+    nfin[20] = 35;
+    nhijo1[20] = -1;
+    nsig[20] = -1;
+    nval[20] = 35;
+    naux[20] = -1;
+    nsize[20] = 0;
+    nkind[21] = 9;
+    nini[21] = 34;
+    nfin[21] = 34;
+    nhijo1[21] = 20;
+    nsig[21] = -1;
+    nval[21] = 0;
+    naux[21] = -1;
+    nsize[21] = 0;
+    tok_count = 38;
+    nnodos = 22;
+    return 0;
+}
+
 int main()
 {
     int a1 = inicia_ir1();
@@ -6297,6 +7464,14 @@ int main()
     int a11 = inicia_ir11();
     int g11 = genera();
     int i11 = imprime_ir();
+
+    int a12 = inicia_ir12();
+    int g12 = genera();
+    int i12 = imprime_ir();
+
+    int a13 = inicia_ir13();
+    int g13 = genera();
+    int i13 = imprime_ir();
 
     return 0;
 }
