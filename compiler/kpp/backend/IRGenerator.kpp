@@ -122,8 +122,12 @@ enum IROpcode
 // auxiliary) son referencias a UNA piscina de texto
 // propia del generador (pool[], caracteres): una
 // referencia es un solo entero, ini * 128 + largo,
-// con el texto en pool[ini .. ini + largo). La
-// piscina es escribible y es del generador, porque
+// con el texto en pool[ini .. ini + largo). Toda
+// referencia se empaqueta por empaqueta_ref: si el
+// texto llega a 128 caracteres, errores_ir suma 1
+// y la referencia sale 0 (texto vacio), nunca
+// corrupta. La piscina es escribible y es del
+// generador, porque
 // los textos del IR son sinteticos — x@0, p.campo,
 // %12, L4, la lista "a, b" de parametros, la pareja
 // "%0, %1" de una binaria — y no viven en fuente[].
@@ -259,6 +263,7 @@ int contvar;
 int nvar;
 int nivel;
 int netiq;
+int errores_ir;
 // El eco de la Ampliacion 1: 1 si la funcion que
 // se esta generando es void.
 int fun_es_void;
@@ -333,11 +338,30 @@ int agrega_numero(int n)
     return 0;
 }
 
+int empaqueta_ref(int ini)
+{
+    int largo = pool_len - ini;
+    if (largo >= 128)
+    {
+        errores_ir = errores_ir + 1;
+        return 0;
+    }
+    return ini * 128 + largo;
+}
+
 int ref_token(int tok)
 {
+    int tok_largo[256];
+    int largo_tok = tok_largo[tok];
+    if (largo_tok >= 128)
+    {
+        errores_ir = errores_ir + 1;
+        return 0;
+    }
     int ini = pool_len;
     int a = agrega_token(tok);
-    return ini * 128 + (pool_len - ini);
+    int r = empaqueta_ref(ini);
+    return r;
 }
 
 int ref_temp()
@@ -346,7 +370,8 @@ int ref_temp()
     int a = agrega_car(37);
     int b = agrega_numero(ntemp);
     ntemp = ntemp + 1;
-    return ini * 128 + (pool_len - ini);
+    int r = empaqueta_ref(ini);
+    return r;
 }
 
 // ============================================================
@@ -544,7 +569,8 @@ int une_refs(int a, int b)
     int c1 = agrega_car(44);
     int c2 = agrega_car(32);
     int y = agrega_ref(b);
-    return ini * 128 + (pool_len - ini);
+    int r = empaqueta_ref(ini);
+    return r;
 }
 
 int op_binaria(int op)
@@ -895,7 +921,7 @@ int genera_expresion(int e)
                 int tj = temps[base + j];
                 int aj = agrega_ref(tj);
             }
-            unidos = ini_u * 128 + (pool_len - ini_u);
+            unidos = empaqueta_ref(ini_u);
         }
         temps_tope = base;
         int t8 = ref_temp();
@@ -912,7 +938,8 @@ int ref_etiqueta()
     int a = agrega_car(76);
     int b = agrega_numero(netiq);
     netiq = netiq + 1;
-    return ini * 128 + (pool_len - ini);
+    int r = empaqueta_ref(ini);
+    return r;
 }
 
 // ============================================================
@@ -956,7 +983,8 @@ int resuelve_campo(int tok, int campo)
     int a = agrega_token(tok);
     int b = agrega_car(46);
     int c = agrega_token(campo);
-    return ini * 128 + (pool_len - ini);
+    int r = empaqueta_ref(ini);
+    return r;
 }
 
 // ============================================================
@@ -1001,7 +1029,7 @@ void genera_sentencia(int s)
         int a1 = agrega_token(nt);
         int a2 = agrega_car(64);
         int a3 = agrega_numero(contvar);
-        int mangled = ini_m * 128 + (pool_len - ini_m);
+        int mangled = empaqueta_ref(ini_m);
         int largo_m = pool_len - ini_m;
         contvar = contvar + 1;
         int tam = nsize[s];
@@ -1021,7 +1049,7 @@ void genera_sentencia(int s)
                 int b1 = agrega_tramo(ini_m, largo_m);
                 int b2 = agrega_car(46);
                 int b3 = agrega_token(ct);
-                int fmang = ini_f * 128 + (pool_len - ini_f);
+                int fmang = empaqueta_ref(ini_f);
                 registra_var(nt, ct, fmang, 0);
                 int e2 = emite_ir(IROpcode::Declare, fmang, 0, 0, 0, 0);
             }
@@ -1287,7 +1315,7 @@ void genera_funcion(int f)
             int pt = partok[inicio + j];
             int a = agrega_token(pt);
         }
-        params = ini_p * 128 + (pool_len - ini_p);
+        params = empaqueta_ref(ini_p);
     }
     int e1 = emite_ir(IROpcode::FunctionBegin, nombre, params, 0, 0, 0);
     int cuerpo = nhijo1[f];
@@ -1319,6 +1347,7 @@ void genera()
     pool_len = 0;
     nvar = 0;
     nivel = 0;
+    errores_ir = 0;
     int d = nhijo1[0];
     while (d >= 0)
     {
@@ -1556,6 +1585,10 @@ void imprime_ir()
     {
         int ch = pool[i];
         print_int(ch);
+    }
+    if (errores_ir > 0)
+    {
+        print_int(errores_ir);
     }
 }
 
@@ -7379,6 +7412,321 @@ void inicia_ir13()
     nnodos = 22;
 }
 
+// ============================================================
+// SONDA 14 — LA GUARDA DE LA REFERENCIA (FASE 2, G-1).
+//
+// int main() { print("AAAA..."); return 0; }
+//
+// El literal de la fuente mide 130 caracteres. Sin
+// la guarda, su referencia ini*128+largo se
+// corrompia en silencio; con ella, ref_token acusa
+// en errores_ir y la referencia del StringConst
+// sale 0 (texto vacio), nunca corrupta. La corriente
+// es FUNCTION_BEGIN, STRING_CONST, PRINT, RETURN,
+// FUNCTION_END; la piscina es "main%0" (6) e
+// imprime_ir cierra la sonda volcando errores_ir
+// = 1.
+// ============================================================
+
+void inicia_ir14()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    fuente[0] = 105;
+    fuente[1] = 110;
+    fuente[2] = 116;
+    fuente[3] = 32;
+    fuente[4] = 109;
+    fuente[5] = 97;
+    fuente[6] = 105;
+    fuente[7] = 110;
+    fuente[8] = 40;
+    fuente[9] = 41;
+    fuente[10] = 32;
+    fuente[11] = 123;
+    fuente[12] = 32;
+    fuente[13] = 112;
+    fuente[14] = 114;
+    fuente[15] = 105;
+    fuente[16] = 110;
+    fuente[17] = 116;
+    fuente[18] = 40;
+    fuente[19] = 34;
+    fuente[20] = 65;
+    fuente[21] = 65;
+    fuente[22] = 65;
+    fuente[23] = 65;
+    fuente[24] = 65;
+    fuente[25] = 65;
+    fuente[26] = 65;
+    fuente[27] = 65;
+    fuente[28] = 65;
+    fuente[29] = 65;
+    fuente[30] = 65;
+    fuente[31] = 65;
+    fuente[32] = 65;
+    fuente[33] = 65;
+    fuente[34] = 65;
+    fuente[35] = 65;
+    fuente[36] = 65;
+    fuente[37] = 65;
+    fuente[38] = 65;
+    fuente[39] = 65;
+    fuente[40] = 65;
+    fuente[41] = 65;
+    fuente[42] = 65;
+    fuente[43] = 65;
+    fuente[44] = 65;
+    fuente[45] = 65;
+    fuente[46] = 65;
+    fuente[47] = 65;
+    fuente[48] = 65;
+    fuente[49] = 65;
+    fuente[50] = 65;
+    fuente[51] = 65;
+    fuente[52] = 65;
+    fuente[53] = 65;
+    fuente[54] = 65;
+    fuente[55] = 65;
+    fuente[56] = 65;
+    fuente[57] = 65;
+    fuente[58] = 65;
+    fuente[59] = 65;
+    fuente[60] = 65;
+    fuente[61] = 65;
+    fuente[62] = 65;
+    fuente[63] = 65;
+    fuente[64] = 65;
+    fuente[65] = 65;
+    fuente[66] = 65;
+    fuente[67] = 65;
+    fuente[68] = 65;
+    fuente[69] = 65;
+    fuente[70] = 65;
+    fuente[71] = 65;
+    fuente[72] = 65;
+    fuente[73] = 65;
+    fuente[74] = 65;
+    fuente[75] = 65;
+    fuente[76] = 65;
+    fuente[77] = 65;
+    fuente[78] = 65;
+    fuente[79] = 65;
+    fuente[80] = 65;
+    fuente[81] = 65;
+    fuente[82] = 65;
+    fuente[83] = 65;
+    fuente[84] = 65;
+    fuente[85] = 65;
+    fuente[86] = 65;
+    fuente[87] = 65;
+    fuente[88] = 65;
+    fuente[89] = 65;
+    fuente[90] = 65;
+    fuente[91] = 65;
+    fuente[92] = 65;
+    fuente[93] = 65;
+    fuente[94] = 65;
+    fuente[95] = 65;
+    fuente[96] = 65;
+    fuente[97] = 65;
+    fuente[98] = 65;
+    fuente[99] = 65;
+    fuente[100] = 65;
+    fuente[101] = 65;
+    fuente[102] = 65;
+    fuente[103] = 65;
+    fuente[104] = 65;
+    fuente[105] = 65;
+    fuente[106] = 65;
+    fuente[107] = 65;
+    fuente[108] = 65;
+    fuente[109] = 65;
+    fuente[110] = 65;
+    fuente[111] = 65;
+    fuente[112] = 65;
+    fuente[113] = 65;
+    fuente[114] = 65;
+    fuente[115] = 65;
+    fuente[116] = 65;
+    fuente[117] = 65;
+    fuente[118] = 65;
+    fuente[119] = 65;
+    fuente[120] = 65;
+    fuente[121] = 65;
+    fuente[122] = 65;
+    fuente[123] = 65;
+    fuente[124] = 65;
+    fuente[125] = 65;
+    fuente[126] = 65;
+    fuente[127] = 65;
+    fuente[128] = 65;
+    fuente[129] = 65;
+    fuente[130] = 65;
+    fuente[131] = 65;
+    fuente[132] = 65;
+    fuente[133] = 65;
+    fuente[134] = 65;
+    fuente[135] = 65;
+    fuente[136] = 65;
+    fuente[137] = 65;
+    fuente[138] = 65;
+    fuente[139] = 65;
+    fuente[140] = 65;
+    fuente[141] = 65;
+    fuente[142] = 65;
+    fuente[143] = 65;
+    fuente[144] = 65;
+    fuente[145] = 65;
+    fuente[146] = 65;
+    fuente[147] = 65;
+    fuente[148] = 65;
+    fuente[149] = 65;
+    fuente[150] = 34;
+    fuente[151] = 41;
+    fuente[152] = 59;
+    fuente[153] = 32;
+    fuente[154] = 114;
+    fuente[155] = 101;
+    fuente[156] = 116;
+    fuente[157] = 117;
+    fuente[158] = 114;
+    fuente[159] = 110;
+    fuente[160] = 32;
+    fuente[161] = 48;
+    fuente[162] = 59;
+    fuente[163] = 32;
+    fuente[164] = 125;
+    tok_tipo[0] = 4;
+    tok_inicio[0] = 0;
+    tok_largo[0] = 3;
+    tok_valor[0] = 0;
+    tok_tipo[1] = 1;
+    tok_inicio[1] = 4;
+    tok_largo[1] = 4;
+    tok_valor[1] = 0;
+    tok_tipo[2] = 29;
+    tok_inicio[2] = 8;
+    tok_largo[2] = 1;
+    tok_valor[2] = 0;
+    tok_tipo[3] = 30;
+    tok_inicio[3] = 9;
+    tok_largo[3] = 1;
+    tok_valor[3] = 0;
+    tok_tipo[4] = 33;
+    tok_inicio[4] = 11;
+    tok_largo[4] = 1;
+    tok_valor[4] = 0;
+    tok_tipo[5] = 9;
+    tok_inicio[5] = 13;
+    tok_largo[5] = 5;
+    tok_valor[5] = 0;
+    tok_tipo[6] = 29;
+    tok_inicio[6] = 18;
+    tok_largo[6] = 1;
+    tok_valor[6] = 0;
+    tok_tipo[7] = 3;
+    tok_inicio[7] = 20;
+    tok_largo[7] = 130;
+    tok_valor[7] = 0;
+    tok_tipo[8] = 30;
+    tok_inicio[8] = 151;
+    tok_largo[8] = 1;
+    tok_valor[8] = 0;
+    tok_tipo[9] = 36;
+    tok_inicio[9] = 152;
+    tok_largo[9] = 1;
+    tok_valor[9] = 0;
+    tok_tipo[10] = 8;
+    tok_inicio[10] = 154;
+    tok_largo[10] = 6;
+    tok_valor[10] = 0;
+    tok_tipo[11] = 2;
+    tok_inicio[11] = 161;
+    tok_largo[11] = 1;
+    tok_valor[11] = 0;
+    tok_tipo[12] = 36;
+    tok_inicio[12] = 162;
+    tok_largo[12] = 1;
+    tok_valor[12] = 0;
+    tok_tipo[13] = 34;
+    tok_inicio[13] = 164;
+    tok_largo[13] = 2;
+    tok_valor[13] = 0;
+    nkind[0] = 0;
+    nini[0] = 0;
+    nfin[0] = 14;
+    nhijo1[0] = 1;
+    nsig[0] = -1;
+    nval[0] = 0;
+    naux[0] = -1;
+    nsize[0] = 0;
+    nkind[1] = 1;
+    nini[1] = 0;
+    nfin[1] = 0;
+    nhijo1[1] = 2;
+    nsig[1] = -1;
+    nval[1] = 1;
+    naux[1] = 0;
+    nsize[1] = 0;
+    nkind[2] = 4;
+    nini[2] = 0;
+    nfin[2] = 0;
+    nhijo1[2] = 4;
+    nsig[2] = -1;
+    nval[2] = 0;
+    naux[2] = -1;
+    nsize[2] = 0;
+    nkind[3] = 13;
+    nini[3] = 7;
+    nfin[3] = 7;
+    nhijo1[3] = -1;
+    nsig[3] = -1;
+    nval[3] = 7;
+    naux[3] = -1;
+    nsize[3] = 0;
+    nkind[4] = 10;
+    nini[4] = 5;
+    nfin[4] = 5;
+    nhijo1[4] = 3;
+    nsig[4] = 6;
+    nval[4] = 0;
+    naux[4] = -1;
+    nsize[4] = 0;
+    nkind[5] = 12;
+    nini[5] = 11;
+    nfin[5] = 11;
+    nhijo1[5] = -1;
+    nsig[5] = -1;
+    nval[5] = 0;
+    naux[5] = -1;
+    nsize[5] = 0;
+    nkind[6] = 9;
+    nini[6] = 10;
+    nfin[6] = 10;
+    nhijo1[6] = 5;
+    nsig[6] = -1;
+    nval[6] = 0;
+    naux[6] = -1;
+    nsize[6] = 0;
+    tok_count = 14;
+    nnodos = 7;
+}
+
 int main()
 {
     inicia_ir1();
@@ -7430,6 +7778,10 @@ int main()
     imprime_ir();
 
     inicia_ir13();
+    genera();
+    imprime_ir();
+
+    inicia_ir14();
     genera();
     imprime_ir();
 
