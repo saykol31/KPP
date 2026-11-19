@@ -143,6 +143,22 @@ const char* tokenTypeName(TokenType type)
             return "!";
 
         // ========================================================
+        // BITS Y DESPLAZAMIENTOS
+        // ========================================================
+
+        case TokenType::BitwiseAnd:
+            return "&";
+
+        case TokenType::BitwiseOr:
+            return "|";
+
+        case TokenType::ShiftLeft:
+            return "<<";
+
+        case TokenType::ShiftRight:
+            return ">>";
+
+        // ========================================================
         // PARENTHESES / BLOCKS
         // ========================================================
 
@@ -458,6 +474,56 @@ Token Lexer::number()
     const int startColumn = column;
 
     std::string text;
+
+    // --------------------------------------------------------
+    // Literal hexadecimal: 0x...
+    //
+    // Ampliación 4: el valor se calcula aquí, en el lexing
+    // (contrato de tokens), y el Number nace con su texto
+    // ya en decimal, como cualquier otro número: aguas
+    // abajo nadie distingue un literal hex de uno decimal.
+    // --------------------------------------------------------
+
+    if (peek() == '0' &&
+        (source[position + 1] == 'x' ||
+         source[position + 1] == 'X'))
+    {
+        advance(); // '0'
+        advance(); // 'x'
+
+        long long value = 0;
+        bool anyDigit = false;
+
+        while (std::isxdigit(
+            static_cast<unsigned char>(peek())))
+        {
+            const char digit = advance();
+            anyDigit = true;
+
+            if (digit >= '0' && digit <= '9')
+                value = value * 16 + (digit - '0');
+            else if (digit >= 'a' && digit <= 'f')
+                value = value * 16 + (digit - 'a' + 10);
+            else
+                value = value * 16 + (digit - 'A' + 10);
+        }
+
+        if (!anyDigit)
+        {
+            throw std::runtime_error(
+                "K++: se esperaba al menos un dígito "
+                "hexadecimal después de '0x'");
+        }
+
+        text = std::to_string(value);
+
+        return {
+            TokenType::Number,
+            text,
+            startLine,
+            startColumn
+        };
+    }
 
     while (
         std::isdigit(
@@ -814,6 +880,7 @@ Lexer::tokenize()
         // ====================================================
         // <
         // <=
+        // <<
         // ====================================================
 
         if (c == '<')
@@ -827,6 +894,17 @@ Lexer::tokenize()
                 tokens.push_back({
                     TokenType::LessEqual,
                     "<=",
+                    tokenLine,
+                    tokenColumn
+                });
+            }
+            else if (peek() == '<')
+            {
+                advance();
+
+                tokens.push_back({
+                    TokenType::ShiftLeft,
+                    "<<",
                     tokenLine,
                     tokenColumn
                 });
@@ -848,6 +926,7 @@ Lexer::tokenize()
         // ====================================================
         // >
         // >=
+        // >>
         // ====================================================
 
         if (c == '>')
@@ -861,6 +940,17 @@ Lexer::tokenize()
                 tokens.push_back({
                     TokenType::GreaterEqual,
                     ">=",
+                    tokenLine,
+                    tokenColumn
+                });
+            }
+            else if (peek() == '>')
+            {
+                advance();
+
+                tokens.push_back({
+                    TokenType::ShiftRight,
+                    ">>",
                     tokenLine,
                     tokenColumn
                 });
@@ -881,6 +971,7 @@ Lexer::tokenize()
 
         // ====================================================
         // &&
+        // &
         // ====================================================
 
         if (c == '&')
@@ -901,13 +992,21 @@ Lexer::tokenize()
                 continue;
             }
 
-            throw std::runtime_error(
-                "K++: se esperaba '&' después de '&'");
+            // Ampliación 4: el & solitario es el AND de bits.
+            tokens.push_back({
+                TokenType::BitwiseAnd,
+                "&",
+                tokenLine,
+                tokenColumn
+            });
+
+            continue;
         }
 
 
         // ====================================================
         // ||
+        // |
         // ====================================================
 
         if (c == '|')
@@ -928,8 +1027,15 @@ Lexer::tokenize()
                 continue;
             }
 
-            throw std::runtime_error(
-                "K++: se esperaba '|' después de '|'");
+            // Ampliación 4: el | solitario es el OR de bits.
+            tokens.push_back({
+                TokenType::BitwiseOr,
+                "|",
+                tokenLine,
+                tokenColumn
+            });
+
+            continue;
         }
 
 

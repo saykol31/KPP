@@ -29,6 +29,7 @@ public:
 
     void emitMovEaxEbpRelative(std::int32_t displacement);
     void emitMovEbxEbpRelative(std::int32_t displacement);
+    void emitMovEcxEbpRelative(std::int32_t displacement);
     void emitMovEbpRelativeEax(std::int32_t displacement);
     void emitMovEbpRelativeEbx(std::int32_t displacement);
 
@@ -84,6 +85,10 @@ public:
     void emitAddEaxEbx();
     void emitAndEaxEbx();
     void emitOrEaxEbx();
+    void emitShlEaxCl();
+    void emitSarEaxCl();
+    void emitShlEaxImm8(std::uint8_t count);
+    void emitSarEaxImm8(std::uint8_t count);
     void emitSubEaxEbx();
     void emitMulEaxEbx();
     void emitCdq();

@@ -1974,6 +1974,22 @@ void SemanticAnalyzer::analyzeExpression(
         }
 
         // ----------------------------------------------------
+        // Bits y desplazamientos
+        //
+        // Ampliación 4: operadores de enteros, como la
+        // aritmética; el resultado es entero. Sin código
+        // de error nuevo.
+        // ----------------------------------------------------
+
+        if (binary->op == "&" ||
+            binary->op == "|" ||
+            binary->op == "<<" ||
+            binary->op == ">>")
+        {
+            return;
+        }
+
+        // ----------------------------------------------------
         // NOT lógico
         //
         // El parser representa:

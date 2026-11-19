@@ -252,6 +252,22 @@ const char* irOpcodeName(IROpcode opcode)
 
         case IROpcode::JumpIfNotZero:
             return "JUMP_IF_NOT_ZERO";
+
+        // ====================================================
+        // BITS Y DESPLAZAMIENTOS
+        // ====================================================
+
+        case IROpcode::BitwiseAnd:
+            return "BIT_AND";
+
+        case IROpcode::BitwiseOr:
+            return "BIT_OR";
+
+        case IROpcode::ShiftLeft:
+            return "SHIFT_LEFT";
+
+        case IROpcode::ShiftRight:
+            return "SHIFT_RIGHT";
     }
 
     return "UNKNOWN";
@@ -1963,6 +1979,62 @@ std::string IRGenerator::generateExpression(
         {
             function.instructions.push_back({
                 IROpcode::LogicalOr,
+                "",
+                left + ", " + right,
+                result,
+                0
+            });
+
+            return result;
+        }
+
+        // ====================================================
+        // BITS Y DESPLAZAMIENTOS
+        // ====================================================
+
+        if (binary->op == "&")
+        {
+            function.instructions.push_back({
+                IROpcode::BitwiseAnd,
+                "",
+                left + ", " + right,
+                result,
+                0
+            });
+
+            return result;
+        }
+
+        if (binary->op == "|")
+        {
+            function.instructions.push_back({
+                IROpcode::BitwiseOr,
+                "",
+                left + ", " + right,
+                result,
+                0
+            });
+
+            return result;
+        }
+
+        if (binary->op == "<<")
+        {
+            function.instructions.push_back({
+                IROpcode::ShiftLeft,
+                "",
+                left + ", " + right,
+                result,
+                0
+            });
+
+            return result;
+        }
+
+        if (binary->op == ">>")
+        {
+            function.instructions.push_back({
+                IROpcode::ShiftRight,
                 "",
                 left + ", " + right,
                 result,

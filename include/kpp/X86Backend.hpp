@@ -127,6 +127,15 @@ private:
         TemporaryLocation
     > temporaries;
 
+    // Valor constante de los temporales que nacen de un
+    // CONST, mientras el temporal vive. Lo consulta el
+    // desplazamiento para elegir su forma inmediata
+    // (Ampliación 4).
+    std::unordered_map<
+        std::string,
+        int
+    > temporaryConstants;
+
     std::unordered_map<
         std::string,
         VariableLocation
@@ -215,6 +224,7 @@ private:
     // Emisión de accesos a temporales derramados en el marco EBP.
     std::size_t emitMovEaxFramePlaceholder();
     std::size_t emitMovEbxFramePlaceholder();
+    std::size_t emitMovEcxFramePlaceholder();
 
     void generateFunction(
         const IRFunction& function);

@@ -97,6 +97,24 @@ void X86Emitter::emitMovEbxEbpRelative(
     emitByte(static_cast<std::uint8_t>((value >> 24) & 0xFF));
 }
 
+void X86Emitter::emitMovEcxEbpRelative(
+    std::int32_t displacement)
+{
+    // MOV ECX, [EBP+disp32]
+    // 8B 8D disp32
+
+    emitByte(0x8B);
+    emitByte(0x8D);
+
+    const std::uint32_t value =
+        static_cast<std::uint32_t>(displacement);
+
+    emitByte(static_cast<std::uint8_t>(value & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 8) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 16) & 0xFF));
+    emitByte(static_cast<std::uint8_t>((value >> 24) & 0xFF));
+}
+
 void X86Emitter::emitMovEbpRelativeEax(
     std::int32_t displacement)
 {
@@ -635,6 +653,56 @@ void X86Emitter::emitOrEaxEbx()
 {
     machineCode.push_back(0x09);
     machineCode.push_back(0xD8);
+}
+
+
+// ============================================================
+// SHL EAX, CL
+// D3 E0
+// ============================================================
+
+void X86Emitter::emitShlEaxCl()
+{
+    machineCode.push_back(0xD3);
+    machineCode.push_back(0xE0);
+}
+
+
+// ============================================================
+// SAR EAX, CL
+// D3 F8
+// ============================================================
+
+void X86Emitter::emitSarEaxCl()
+{
+    machineCode.push_back(0xD3);
+    machineCode.push_back(0xF8);
+}
+
+
+// ============================================================
+// SHL EAX, IMM8
+// C1 E0 ib
+// ============================================================
+
+void X86Emitter::emitShlEaxImm8(std::uint8_t count)
+{
+    machineCode.push_back(0xC1);
+    machineCode.push_back(0xE0);
+    machineCode.push_back(count);
+}
+
+
+// ============================================================
+// SAR EAX, IMM8
+// C1 F8 ib
+// ============================================================
+
+void X86Emitter::emitSarEaxImm8(std::uint8_t count)
+{
+    machineCode.push_back(0xC1);
+    machineCode.push_back(0xF8);
+    machineCode.push_back(count);
 }
 
 

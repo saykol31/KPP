@@ -107,7 +107,21 @@ enum class TokenType
 
     KwVoid,
     KwBreak,
-    KwFor
+    KwFor,
+
+    // ========================================================
+    // OPERADORES DE BITS Y DESPLAZAMIENTOS
+    //
+    // Ampliación 4 (2026-11-17): todo enumerador nuevo va
+    // AL FINAL del enum, nunca en medio.
+    // BitwiseAnd = 42, BitwiseOr = 43,
+    // ShiftLeft = 44, ShiftRight = 45.
+    // ========================================================
+
+    BitwiseAnd,
+    BitwiseOr,
+    ShiftLeft,
+    ShiftRight
 };
 
 struct Token

@@ -1199,13 +1199,16 @@ Parser::parseStatement()
 //
 // 1.  ||
 // 2.  &&
-// 3.  == !=
-// 4.  < <= > >=
-// 5.  + -
-// 6.  * / %
-// 7.  ^
-// 8.  ! -
-// 9.  primarios
+// 3.  |
+// 4.  &
+// 5.  == !=
+// 6.  < <= > >=
+// 7.  << >>
+// 8.  + -
+// 9.  * / %
+// 10. ^
+// 11. ! -
+// 12. primarios
 // ============================================================
 
 std::unique_ptr<Expression>
@@ -1253,16 +1256,72 @@ std::unique_ptr<Expression>
 Parser::parseLogicalAnd()
 {
     auto expression =
-        parseEquality();
+        parseBitwiseOr();
 
     while (match(TokenType::LogicalAnd))
+    {
+        auto right =
+            parseBitwiseOr();
+
+        expression =
+            std::make_unique<BinaryExpression>(
+                "&&",
+                std::move(expression),
+                std::move(right));
+    }
+
+    return expression;
+}
+
+
+// ============================================================
+// PARSE BITWISE OR
+//
+// a | b
+// ============================================================
+
+std::unique_ptr<Expression>
+Parser::parseBitwiseOr()
+{
+    auto expression =
+        parseBitwiseAnd();
+
+    while (match(TokenType::BitwiseOr))
+    {
+        auto right =
+            parseBitwiseAnd();
+
+        expression =
+            std::make_unique<BinaryExpression>(
+                "|",
+                std::move(expression),
+                std::move(right));
+    }
+
+    return expression;
+}
+
+
+// ============================================================
+// PARSE BITWISE AND
+//
+// a & b
+// ============================================================
+
+std::unique_ptr<Expression>
+Parser::parseBitwiseAnd()
+{
+    auto expression =
+        parseEquality();
+
+    while (match(TokenType::BitwiseAnd))
     {
         auto right =
             parseEquality();
 
         expression =
             std::make_unique<BinaryExpression>(
-                "&&",
+                "&",
                 std::move(expression),
                 std::move(right));
     }
@@ -1328,7 +1387,7 @@ std::unique_ptr<Expression>
 Parser::parseComparison()
 {
     auto expression =
-        parseTerm();
+        parseShift();
 
     while (true)
     {
@@ -1349,6 +1408,50 @@ Parser::parseComparison()
         else if (match(TokenType::GreaterEqual))
         {
             op = ">=";
+        }
+        else
+        {
+            break;
+        }
+
+        auto right =
+            parseShift();
+
+        expression =
+            std::make_unique<BinaryExpression>(
+                op,
+                std::move(expression),
+                std::move(right));
+    }
+
+    return expression;
+}
+
+
+// ============================================================
+// PARSE SHIFT
+//
+// a << b
+// a >> b
+// ============================================================
+
+std::unique_ptr<Expression>
+Parser::parseShift()
+{
+    auto expression =
+        parseTerm();
+
+    while (true)
+    {
+        std::string op;
+
+        if (match(TokenType::ShiftLeft))
+        {
+            op = "<<";
+        }
+        else if (match(TokenType::ShiftRight))
+        {
+            op = ">>";
         }
         else
         {

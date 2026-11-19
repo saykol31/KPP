@@ -1,0 +1,13 @@
+int main()
+{
+    print_int(255 & 15);
+    print_int(240 | 15);
+    print_int(200 >> 3);
+    print_int(25 << 2);
+    print_int(1 << 2 + 1);
+    print_int(6 & 3 | 8);
+    int v = 3;
+    print_int(1 << v);
+    print_int(0xFF & 0x0F);
+    return 0;
+}

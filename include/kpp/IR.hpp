@@ -155,7 +155,19 @@ enum class IROpcode
     Label,
     Jump,
     JumpIfZero,
-    JumpIfNotZero
+    JumpIfNotZero,
+
+    // ========================================================
+    // BITS Y DESPLAZAMIENTOS
+    //
+    // Ampliación 4: opcodes nuevos AL FINAL, tras
+    // JumpIfNotZero, sin mover ningún valor existente.
+    // ========================================================
+
+    BitwiseAnd,             // &
+    BitwiseOr,              // |
+    ShiftLeft,              // <<
+    ShiftRight              // >>
 };
 
 // ============================================================

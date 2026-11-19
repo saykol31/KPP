@@ -1403,6 +1403,58 @@ int main(int argc, char** argv)
                     // FUNCTION END
                     // ========================================================
 
+                    // ========================================================
+                    // BITS Y DESPLAZAMIENTOS
+                    // ========================================================
+
+                    case kpp::IROpcode::BitwiseAnd:
+
+                        std::cout
+                            << "BIT_AND "
+                            << instruction.operand
+                            << " -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    case kpp::IROpcode::BitwiseOr:
+
+                        std::cout
+                            << "BIT_OR "
+                            << instruction.operand
+                            << " -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    case kpp::IROpcode::ShiftLeft:
+
+                        std::cout
+                            << "SHIFT_LEFT "
+                            << instruction.operand
+                            << " -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
+                    case kpp::IROpcode::ShiftRight:
+
+                        std::cout
+                            << "SHIFT_RIGHT "
+                            << instruction.operand
+                            << " -> "
+                            << instruction.result
+                            << '\n';
+
+                        break;
+
+
                     case kpp::IROpcode::FunctionEnd:
 
                         std::cout

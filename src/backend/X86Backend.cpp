@@ -14,6 +14,7 @@ namespace kpp {
     void X86Backend::resetTemporaries()
     {
         temporaries.clear();
+        temporaryConstants.clear();
     }
 
     void X86Backend::bindTemporaryToEax(
@@ -99,6 +100,9 @@ namespace kpp {
         const std::string& temporary)
     {
         temporaries.erase(
+            temporary);
+
+        temporaryConstants.erase(
             temporary);
     }
 
@@ -452,6 +456,21 @@ std::size_t X86Backend::emitMovEbxFramePlaceholder()
     // 8B 9D disp32
     const std::size_t patchOffset = emitter.size() + 2;
     emitter.emitMovEbxEbpRelative(0);
+    return patchOffset;
+}
+
+
+std::size_t X86Backend::emitMovEcxFramePlaceholder()
+{
+    if (!frameActive)
+    {
+        throw std::runtime_error(
+            "K++ X86Backend: reload ECX fuera de un marco activo.");
+    }
+
+    // 8B 8D disp32
+    const std::size_t patchOffset = emitter.size() + 2;
+    emitter.emitMovEcxEbpRelative(0);
     return patchOffset;
 }
 
@@ -1147,6 +1166,13 @@ X86Backend::generate(
                         instruction.result,
                         data,
                         temporarySpillPatches);
+
+                // Ampliación 4: el valor constante queda
+                // registrado mientras el temporal viva; el
+                // desplazamiento lo consulta para elegir su
+                // forma inmediata.
+                temporaryConstants[instruction.result] =
+                    instruction.value;
 
                     std::cerr
                         << "[ALLOC] "
@@ -2841,6 +2867,357 @@ X86Backend::generate(
 
                 freeTemporary(operand);
                 bindTemporaryToEax(instruction.result);
+            }
+
+
+            // ------------------------------------------------
+            // BITS: AND / OR
+            // ------------------------------------------------
+            //
+            // KPP_REBANADA4_BITS
+            //
+            // BIT_AND %left, %right -> %result
+            // BIT_OR  %left, %right -> %result
+            //
+            // La estrategia de preservación de SUB:
+            //
+            //     1. Derramar todos los temporales residentes
+            //        en registros al marco EBP.
+            //
+            //     2. Recargar el izquierdo en EAX y el
+            //        derecho en EBX.
+            //
+            //     3. Ejecutar AND/OR EAX, EBX con los valores
+            //        crudos: aquí mandan los bits, no la
+            //        normalización a 0/1 de los lógicos.
+            //
+            // Los operandos originales permanecen respaldados
+            // en memoria. El resultado queda en EAX.
+            // ------------------------------------------------
+
+            else if (instruction.opcode == IROpcode::BitwiseAnd ||
+                     instruction.opcode == IROpcode::BitwiseOr)
+            {
+                const std::size_t comma =
+                    instruction.operand.find(",");
+
+                if (comma == std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: operador de bits requiere dos operandos");
+                }
+
+                const std::string left =
+                    instruction.operand.substr(0, comma);
+
+                const std::string right =
+                    instruction.operand.substr(comma + 2);
+
+                if (!hasTemporary(left))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: operador de bits usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (!hasTemporary(right))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: operador de bits usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                if (!frameActive)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: operador de bits necesita un marco EBP activo "
+                        "para preservar temporales.");
+                }
+
+                // Derramar los temporales residentes en
+                // registros antes de tocar EAX o EBX.
+                std::vector<std::string> registerTemporaries;
+
+                for (const auto& entry : temporaries)
+                {
+                    if (entry.second.kind ==
+                        TemporaryLocation::Kind::Register)
+                    {
+                        registerTemporaries.push_back(
+                            entry.first);
+                    }
+                }
+
+                for (const auto& temporary : registerTemporaries)
+                {
+                    const auto it =
+                        temporaries.find(temporary);
+
+                    if (it == temporaries.end())
+                    {
+                        continue;
+                    }
+
+                    if (it->second.kind ==
+                        TemporaryLocation::Kind::Register)
+                    {
+                        spillTemporary(
+                            temporary,
+                            data,
+                            temporarySpillPatches);
+                    }
+                }
+
+                const auto leftIt =
+                    temporaries.find(left);
+
+                const auto rightIt =
+                    temporaries.find(right);
+
+                if (leftIt == temporaries.end() ||
+                    rightIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: operador de bits perdió un temporal "
+                        "durante la preservación.");
+                }
+
+                if (leftIt->second.kind !=
+                        TemporaryLocation::Kind::Memory ||
+                    rightIt->second.kind !=
+                        TemporaryLocation::Kind::Memory)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: operador de bits no pudo preservar "
+                        "ambos operandos en el marco.");
+                }
+
+                const std::int32_t leftOffset =
+                    leftIt->second.dataOffset;
+
+                const std::int32_t rightOffset =
+                    rightIt->second.dataOffset;
+
+                // EAX = operando izquierdo.
+                const std::size_t leftPatch =
+                    emitMovEaxFramePlaceholder();
+
+                temporaryReloadPatches.push_back({
+                    left,
+                    leftPatch,
+                    leftOffset
+                });
+
+                // EBX = operando derecho.
+                const std::size_t rightPatch =
+                    emitMovEbxFramePlaceholder();
+
+                temporaryReloadPatches.push_back({
+                    right,
+                    rightPatch,
+                    rightOffset
+                });
+
+                if (instruction.opcode == IROpcode::BitwiseAnd)
+                {
+                    emitter.emitAndEaxEbx();
+                }
+                else
+                {
+                    emitter.emitOrEaxEbx();
+                }
+
+                bindTemporaryToEax(
+                    instruction.result);
+            }
+
+
+            // ------------------------------------------------
+            // DESPLAZAMIENTOS: << / >>
+            // ------------------------------------------------
+            //
+            // KPP_REBANADA4_DESPLAZAMIENTOS
+            //
+            // SHIFT_LEFT  %left, %right -> %result
+            // SHIFT_RIGHT %left, %right -> %result
+            //
+            // La forma depende de la cuenta:
+            //
+            //     cuenta constante conocida:
+            //         SHL/SAR EAX, imm8
+            //
+            //     cuenta variable: la cuenta viaja en CL,
+            //         SHL/SAR EAX, CL, como manda el hardware.
+            //
+            // El >> de K++ es aritmético (SAR): el int de
+            // K++ es con signo, como en C. La cuenta la
+            // enmascara el hardware a 5 bits.
+            //
+            // Preservación como en SUB: operandos al marco,
+            // izquierdo a EAX, resultado en EAX. Los
+            // operandos permanecen en memoria.
+            // ------------------------------------------------
+
+            else if (instruction.opcode == IROpcode::ShiftLeft ||
+                     instruction.opcode == IROpcode::ShiftRight)
+            {
+                const std::size_t comma =
+                    instruction.operand.find(",");
+
+                if (comma == std::string::npos)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: desplazamiento requiere dos operandos");
+                }
+
+                const std::string left =
+                    instruction.operand.substr(0, comma);
+
+                const std::string right =
+                    instruction.operand.substr(comma + 2);
+
+                if (!hasTemporary(left))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: desplazamiento usa temporal izquierdo inexistente: " +
+                        left);
+                }
+
+                if (!hasTemporary(right))
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: desplazamiento usa temporal derecho inexistente: " +
+                        right);
+                }
+
+                if (!frameActive)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: desplazamiento necesita un marco EBP activo "
+                        "para preservar temporales.");
+                }
+
+                // La cuenta constante se lee ANTES de
+                // derramar: derramar no cambia ningún valor.
+                const auto constantIt =
+                    temporaryConstants.find(right);
+
+                const bool rightIsConstant =
+                    constantIt != temporaryConstants.end();
+
+                const int rightConstant =
+                    rightIsConstant ? constantIt->second : 0;
+
+                // Derramar los temporales residentes en
+                // registros antes de tocar EAX o ECX.
+                std::vector<std::string> registerTemporaries;
+
+                for (const auto& entry : temporaries)
+                {
+                    if (entry.second.kind ==
+                        TemporaryLocation::Kind::Register)
+                    {
+                        registerTemporaries.push_back(
+                            entry.first);
+                    }
+                }
+
+                for (const auto& temporary : registerTemporaries)
+                {
+                    const auto it =
+                        temporaries.find(temporary);
+
+                    if (it == temporaries.end())
+                    {
+                        continue;
+                    }
+
+                    if (it->second.kind ==
+                        TemporaryLocation::Kind::Register)
+                    {
+                        spillTemporary(
+                            temporary,
+                            data,
+                            temporarySpillPatches);
+                    }
+                }
+
+                const auto leftIt =
+                    temporaries.find(left);
+
+                const auto rightIt =
+                    temporaries.find(right);
+
+                if (leftIt == temporaries.end() ||
+                    rightIt == temporaries.end())
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: desplazamiento perdió un temporal "
+                        "durante la preservación.");
+                }
+
+                if (leftIt->second.kind !=
+                        TemporaryLocation::Kind::Memory ||
+                    rightIt->second.kind !=
+                        TemporaryLocation::Kind::Memory)
+                {
+                    throw std::runtime_error(
+                        "K++ X86Backend: desplazamiento no pudo preservar "
+                        "ambos operandos en el marco.");
+                }
+
+                const std::int32_t leftOffset =
+                    leftIt->second.dataOffset;
+
+                // EAX = operando izquierdo.
+                const std::size_t leftPatch =
+                    emitMovEaxFramePlaceholder();
+
+                temporaryReloadPatches.push_back({
+                    left,
+                    leftPatch,
+                    leftOffset
+                });
+
+                if (rightIsConstant)
+                {
+                    // La cuenta no viaja: forma inmediata.
+                    const std::uint8_t count =
+                        static_cast<std::uint8_t>(rightConstant);
+
+                    if (instruction.opcode == IROpcode::ShiftLeft)
+                    {
+                        emitter.emitShlEaxImm8(count);
+                    }
+                    else
+                    {
+                        emitter.emitSarEaxImm8(count);
+                    }
+                }
+                else
+                {
+                    // ECX = cuenta; el desplazamiento va por CL.
+                    const std::size_t rightPatch =
+                        emitMovEcxFramePlaceholder();
+
+                    temporaryReloadPatches.push_back({
+                        right,
+                        rightPatch,
+                        rightIt->second.dataOffset
+                    });
+
+                    if (instruction.opcode == IROpcode::ShiftLeft)
+                    {
+                        emitter.emitShlEaxCl();
+                    }
+                    else
+                    {
+                        emitter.emitSarEaxCl();
+                    }
+                }
+
+                bindTemporaryToEax(
+                    instruction.result);
             }
 
 
