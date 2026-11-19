@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-kpp">
+    <comment>K++ source code</comment>
+    <comment xml:lang="es">Código fuente de K++</comment>
+    <sub-class-of type="text/plain"/>
+    <icon name="text-x-kpp"/>
+    <glob pattern="*.kpp"/>
+  </mime-type>
+</mime-info>

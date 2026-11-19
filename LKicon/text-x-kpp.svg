@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Hoja de papel con la esquina doblada, como los iconos de C y C++ -->
+  <path d="M13 2 h16 l7 7 v35 a2 2 0 0 1 -2 2 H13 a2 2 0 0 1 -2 -2 V4 a2 2 0 0 1 2 -2 z"
+        fill="#fafafa" stroke="#8c8c8c" stroke-width="1.4"/>
+  <path d="M29 2 l7 7 h-5 a2 2 0 0 1 -2 -2 z"
+        fill="#e2e2e2" stroke="#8c8c8c" stroke-width="1.4"/>
+  <!-- La K roja de K++ -->
+  <g fill="none" stroke="#cc0000" stroke-width="4.2" stroke-linecap="square">
+    <path d="M18.6 15.5 v17"/>
+    <path d="M29.2 15.5 L20.4 23.8 L29.8 32.5"/>
+  </g>
+</svg>
