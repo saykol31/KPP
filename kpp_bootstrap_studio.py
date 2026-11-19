@@ -223,6 +223,727 @@ OUTPUT_BG = "#050D17"
 # APLICACIÓN
 # ============================================================
 
+# ============================================================
+# FAT32 MINIMO PARA LA IMAGEN DE KOLIBRIOS.
+#
+# Lo justo para el ciclo del Studio, sin herramientas
+# externas (adios mtools): abrir la particion FAT32 en su
+# offset dentro de la imagen, listar el directorio raiz,
+# leer un archivo por su ruta y escribirlo (crear o
+# reemplazar) asignando clusters y actualizando las FAT.
+#
+# Solo nombres 8.3, que son los que KolibriOS usa. Las
+# entradas de nombre largo (LFN) se respetan al leer: se
+# saltan y nunca se pisa una entrada ajena.
+#
+# Orden de escritura pensado para el peor caso: primero
+# los datos en clusters nuevos, despues las FAT y al final
+# la entrada del directorio. Si algo se corta a mitad, lo
+# peor que queda son clusters huerfanos, nunca un
+# directorio apuntando a basura.
+# ============================================================
+
+import struct
+import time
+
+
+# ------------------------------------------------------------
+# CKSUM POSIX (el del comando cksum de toda la vida).
+#
+# El Studio lo usa para el sufijo de 2 hex de los nombres
+# 8.3 largos (SemanticAnalyzer -> SEMANTA5). Antes se
+# llamaba al comando externo; aqui va la misma cuenta en
+# Python puro: mismo CRC, mismos nombres, en Windows y en
+# Linux.
+# ------------------------------------------------------------
+
+_CKSUM_TAB = []
+
+for _i in range(256):
+
+    _crc = _i << 24
+
+    for _ in range(8):
+
+        if _crc & 0x80000000:
+
+            _crc = ((_crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF
+
+        else:
+
+            _crc = (_crc << 1) & 0xFFFFFFFF
+
+    _CKSUM_TAB.append(_crc)
+
+
+def kolibri_cksum(datos):
+
+    crc = 0
+
+    for b in datos:
+
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _CKSUM_TAB[
+            ((crc >> 24) ^ b) & 0xFF
+        ]
+
+    n = len(datos)
+
+    while n:
+
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _CKSUM_TAB[
+            ((crc >> 24) ^ (n & 0xFF)) & 0xFF
+        ]
+
+        n >>= 8
+
+    return crc ^ 0xFFFFFFFF
+
+
+class KolibriFAT32:
+
+    EOC = 0x0FFFFFF8
+
+    def __init__(self, ruta_imagen, offset):
+
+        self.offset = offset
+
+        self.f = open(ruta_imagen, "r+b")
+
+        try:
+
+            self.f.seek(offset)
+
+            bpb = self.f.read(512)
+
+            if len(bpb) < 512:
+
+                raise ValueError("imagen demasiado corta")
+
+            self.bytes_sector = struct.unpack_from(
+                "<H", bpb, 11
+            )[0]
+
+            self.sectores_cluster = bpb[13]
+
+            reservados = struct.unpack_from(
+                "<H", bpb, 14
+            )[0]
+
+            self.num_fats = bpb[16]
+
+            total32 = struct.unpack_from(
+                "<I", bpb, 32
+            )[0]
+
+            fat32 = struct.unpack_from(
+                "<I", bpb, 36
+            )[0]
+
+            self.cluster_raiz = struct.unpack_from(
+                "<I", bpb, 44
+            )[0]
+
+            self.sector_fsinfo = struct.unpack_from(
+                "<H", bpb, 48
+            )[0]
+
+            if (
+                self.bytes_sector not in (512, 1024, 2048, 4096)
+                or self.sectores_cluster == 0
+                or self.num_fats == 0
+                or fat32 == 0
+                or total32 == 0
+            ):
+
+                raise ValueError(
+                    "la particion no parece FAT32"
+                )
+
+            self.bytes_cluster = (
+                self.bytes_sector * self.sectores_cluster
+            )
+
+            self.fat_inicio = offset + reservados * self.bytes_sector
+
+            self.fat_bytes = fat32 * self.bytes_sector
+
+            self.datos_inicio = (
+                offset
+                + (reservados + self.num_fats * fat32)
+                * self.bytes_sector
+            )
+
+            self.num_clusters = (
+                total32 - (reservados + self.num_fats * fat32)
+            ) // self.sectores_cluster
+
+        except Exception:
+
+            self.f.close()
+
+            raise
+
+    # --------------------------------------------------------
+    # GEOMETRIA
+    # --------------------------------------------------------
+
+    def _cluster_offset(self, cluster):
+
+        return (
+            self.datos_inicio
+            + (cluster - 2) * self.bytes_cluster
+        )
+
+    def _fat_leer(self, cluster):
+
+        self.f.seek(self.fat_inicio + cluster * 4)
+
+        return struct.unpack(
+            "<I", self.f.read(4)
+        )[0] & 0x0FFFFFFF
+
+    def _fat_escribir(self, cluster, valor):
+
+        for i in range(self.num_fats):
+
+            self.f.seek(
+                self.fat_inicio
+                + i * self.fat_bytes
+                + cluster * 4
+            )
+
+            self.f.write(struct.pack("<I", valor))
+
+    def _cadena(self, primero):
+
+        cadena = []
+
+        c = primero
+
+        while 2 <= c < self.EOC:
+
+            cadena.append(c)
+
+            c = self._fat_leer(c)
+
+        return cadena
+
+    def _actualizar_fsinfo(self):
+
+        # El sector FSInfo guarda un resumen (clusters
+        # libres y siguiente libre) que fsck comprueba.
+        # Se recalcula de la FAT entera: son unos cientos
+        # de KB y asi el resumen nunca miente.
+
+        if self.sector_fsinfo in (0, 0xFFFF):
+
+            return
+
+        pos = self.offset + self.sector_fsinfo * self.bytes_sector
+
+        self.f.seek(pos)
+
+        info = self.f.read(512)
+
+        if (
+            struct.unpack_from("<I", info, 0)[0] != 0x41615252
+            or struct.unpack_from("<I", info, 484)[0]
+            != 0x61417272
+        ):
+
+            return
+
+        self.f.seek(self.fat_inicio)
+
+        fat = self.f.read(self.fat_bytes)
+
+        libres = 0
+
+        siguiente = 0xFFFFFFFF
+
+        for c in range(2, 2 + self.num_clusters):
+
+            valor = struct.unpack_from(
+                "<I", fat, c * 4
+            )[0] & 0x0FFFFFFF
+
+            if valor == 0:
+
+                libres += 1
+
+                if siguiente == 0xFFFFFFFF:
+
+                    siguiente = c
+
+        self.f.seek(pos + 488)
+
+        self.f.write(struct.pack("<I", libres))
+
+        self.f.write(struct.pack("<I", siguiente))
+
+    def _liberar_cadena(self, primero):
+
+        for c in self._cadena(primero):
+
+            self._fat_escribir(c, 0)
+
+    def _asignar_cadena(self, cantidad):
+
+        if cantidad == 0:
+
+            return []
+
+        cadena = []
+
+        c = 2
+
+        tope = 2 + self.num_clusters
+
+        while len(cadena) < cantidad and c < tope:
+
+            if self._fat_leer(c) == 0:
+
+                cadena.append(c)
+
+            c += 1
+
+        if len(cadena) < cantidad:
+
+            raise ValueError(
+                "sin espacio libre en la imagen"
+            )
+
+        for i, cl in enumerate(cadena):
+
+            siguiente = (
+                cadena[i + 1]
+                if i + 1 < len(cadena)
+                else 0x0FFFFFFF
+            )
+
+            self._fat_escribir(cl, siguiente)
+
+        return cadena
+
+    # --------------------------------------------------------
+    # DIRECTORIOS
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _nombre83(componente):
+
+        if "." in componente:
+
+            nombre, ext = componente.rsplit(".", 1)
+
+        else:
+
+            nombre, ext = componente, ""
+
+        nombre = nombre.upper().ljust(8)[:8]
+
+        ext = ext.upper().ljust(3)[:3]
+
+        return nombre.encode("latin-1") + ext.encode("latin-1")
+
+    @staticmethod
+    def _visible(nombre11):
+
+        nombre = nombre11[:8].decode(
+            "latin-1"
+        ).rstrip()
+
+        ext = nombre11[8:].decode(
+            "latin-1"
+        ).rstrip()
+
+        return f"{nombre}.{ext}" if ext else nombre
+
+    @staticmethod
+    def _lfn_de(trozos):
+
+        if not trozos:
+
+            return None
+
+        trozos.sort(key=lambda t: t[0])
+
+        chars = []
+
+        for _, texto in trozos:
+
+            for ch in texto:
+
+                if ch == "\x00":
+
+                    return "".join(chars)
+
+                if ch != "\uffff":
+
+                    chars.append(ch)
+
+        return "".join(chars) or None
+
+    def _leer_dir(self, clusters):
+
+        entradas = []
+
+        lfn_pendiente = []
+
+        for cl in clusters:
+
+            self.f.seek(self._cluster_offset(cl))
+
+            datos = self.f.read(self.bytes_cluster)
+
+            for i in range(0, len(datos), 32):
+
+                e = datos[i:i + 32]
+
+                if len(e) < 32 or e[0] == 0x00:
+
+                    return entradas
+
+                if e[0] == 0xE5:
+
+                    lfn_pendiente = []
+
+                    continue
+
+                attr = e[11]
+
+                if attr == 0x0F:
+
+                    # Trozo de nombre largo (LFN): se guarda
+                    # y se pega a la entrada real que sigue.
+
+                    seq = e[0] & 0x1F
+
+                    crudos = (
+                        e[1:11] + e[14:26] + e[28:32]
+                    )
+
+                    texto = crudos.decode(
+                        "utf-16-le", errors="replace"
+                    )
+
+                    lfn_pendiente.append((seq, texto))
+
+                    continue
+
+                primero = (
+                    struct.unpack_from("<H", e, 20)[0] << 16
+                ) | struct.unpack_from("<H", e, 26)[0]
+
+                lfn = self._lfn_de(lfn_pendiente)
+
+                lfn_pendiente = []
+
+                entradas.append(
+                    {
+                        "nombre11": bytes(e[:11]),
+                        "nombre": lfn or self._visible(e[:11]),
+                        "lfn": lfn,
+                        "attr": attr,
+                        "es_dir": bool(attr & 0x10),
+                        "cluster": primero,
+                        "size": struct.unpack_from(
+                            "<I", e, 28
+                        )[0],
+                        "pos": self._cluster_offset(cl) + i,
+                        "fecha": struct.unpack_from(
+                            "<H", e, 24
+                        )[0],
+                        "hora": struct.unpack_from(
+                            "<H", e, 22
+                        )[0],
+                    }
+                )
+
+        return entradas
+
+    def _coincide(self, entrada, componente):
+
+        if entrada["nombre11"] == self._nombre83(componente):
+
+            return True
+
+        return (
+            entrada["nombre"].upper() == componente.upper()
+        )
+
+    def _dir_de_ruta(self, componentes):
+
+        clusters = self._cadena(self.cluster_raiz)
+
+        for comp in componentes:
+
+            siguiente = None
+
+            for e in self._leer_dir(clusters):
+
+                if self._coincide(e, comp) and e["es_dir"]:
+
+                    siguiente = e["cluster"]
+
+                    break
+
+            if siguiente is None:
+
+                raise FileNotFoundError(
+                    f"no existe el directorio: {comp}"
+                )
+
+            clusters = self._cadena(siguiente)
+
+        return clusters
+
+    def _buscar(self, ruta):
+
+        partes = [
+            p for p in ruta.replace("\\", "/").split("/")
+            if p
+        ]
+
+        if not partes:
+
+            raise FileNotFoundError("ruta vacia")
+
+        dir_clusters = self._dir_de_ruta(partes[:-1])
+
+        for e in self._leer_dir(dir_clusters):
+
+            if self._coincide(e, partes[-1]) and not e["es_dir"]:
+
+                return dir_clusters, e
+
+        return dir_clusters, None
+
+    # --------------------------------------------------------
+    # LECTURA
+    # --------------------------------------------------------
+
+    def listar_raiz(self):
+
+        return self._leer_dir(
+            self._cadena(self.cluster_raiz)
+        )
+
+    def existe(self, ruta):
+
+        try:
+
+            _, e = self._buscar(ruta)
+
+            return e is not None
+
+        except FileNotFoundError:
+
+            return False
+
+    def leer(self, ruta):
+
+        _, e = self._buscar(ruta)
+
+        if e is None:
+
+            raise FileNotFoundError(
+                f"no existe el archivo: {ruta}"
+            )
+
+        datos = bytearray()
+
+        for cl in self._cadena(e["cluster"]):
+
+            self.f.seek(self._cluster_offset(cl))
+
+            datos += self.f.read(self.bytes_cluster)
+
+        return bytes(datos[:e["size"]])
+
+    # --------------------------------------------------------
+    # ESCRITURA
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _fecha_hora_fat():
+
+        t = time.localtime()
+
+        hora = (
+            (t.tm_hour << 11)
+            | (t.tm_min << 5)
+            | (t.tm_sec // 2)
+        )
+
+        fecha = (
+            ((t.tm_year - 1980) << 9)
+            | (t.tm_mon << 5)
+            | t.tm_mday
+        )
+
+        return fecha, hora
+
+    def _hueco_en_dir(self, clusters):
+
+        for cl in clusters:
+
+            base = self._cluster_offset(cl)
+
+            self.f.seek(base)
+
+            datos = self.f.read(self.bytes_cluster)
+
+            for i in range(0, len(datos), 32):
+
+                if datos[i] in (0x00, 0xE5):
+
+                    return base + i
+
+        return None
+
+    def _extender_dir(self, clusters):
+
+        nuevo = self._asignar_cadena(1)
+
+        self.f.seek(self._cluster_offset(nuevo[0]))
+
+        self.f.write(bytes(self.bytes_cluster))
+
+        self._fat_escribir(clusters[-1], nuevo[0])
+
+        return nuevo[0]
+
+    def escribir(self, ruta, datos):
+
+        partes = [
+            p for p in ruta.replace("\\", "/").split("/")
+            if p
+        ]
+
+        if not partes:
+
+            raise FileNotFoundError("ruta vacia")
+
+        dir_clusters, previa = self._buscar(ruta)
+
+        # 1. Datos a clusters nuevos.
+
+        cantidad = (
+            len(datos) + self.bytes_cluster - 1
+        ) // self.bytes_cluster
+
+        cadena = self._asignar_cadena(cantidad)
+
+        for i, cl in enumerate(cadena):
+
+            trozo = datos[
+                i * self.bytes_cluster:
+                (i + 1) * self.bytes_cluster
+            ]
+
+            self.f.seek(self._cluster_offset(cl))
+
+            self.f.write(
+                trozo.ljust(self.bytes_cluster, b"\x00")
+            )
+
+        primero = cadena[0] if cadena else 0
+
+        fecha, hora = self._fecha_hora_fat()
+
+        # 2. Entrada del directorio.
+
+        if previa is not None:
+
+            pos = previa["pos"]
+
+            viejo = previa["cluster"]
+
+        else:
+
+            pos = self._hueco_en_dir(dir_clusters)
+
+            if pos is None:
+
+                cl = self._extender_dir(dir_clusters)
+
+                pos = self._cluster_offset(cl)
+
+            viejo = None
+
+        entrada = bytearray(32)
+
+        entrada[0:11] = self._nombre83(partes[-1])
+
+        entrada[11] = 0x20  # archivo
+
+        struct.pack_into("<H", entrada, 14, hora)
+
+        struct.pack_into("<H", entrada, 16, fecha)
+
+        struct.pack_into("<H", entrada, 18, fecha)
+
+        struct.pack_into(
+            "<H", entrada, 20, (primero >> 16) & 0xFFFF
+        )
+
+        struct.pack_into("<H", entrada, 22, hora)
+
+        struct.pack_into("<H", entrada, 24, fecha)
+
+        struct.pack_into(
+            "<H", entrada, 26, primero & 0xFFFF
+        )
+
+        struct.pack_into("<I", entrada, 28, len(datos))
+
+        self.f.seek(pos)
+
+        self.f.write(bytes(entrada))
+
+        # 3. La cadena vieja se libera al final.
+
+        if viejo:
+
+            self._liberar_cadena(viejo)
+
+        self._actualizar_fsinfo()
+
+        self.f.flush()
+
+        os.fsync(self.f.fileno())
+
+    def cerrar(self):
+
+        self.f.close()
+
+    def __enter__(self):
+
+        return self
+
+    def __exit__(self, *exc):
+
+        self.cerrar()
+
+        return False
+
+
+def kolibri_fecha_texto(fecha, hora):
+
+    dia = fecha & 0x1F
+
+    mes = (fecha >> 5) & 0x0F
+
+    anno = 1980 + ((fecha >> 9) & 0x7F)
+
+    hh = (hora >> 11) & 0x1F
+
+    mm = (hora >> 5) & 0x3F
+
+    return f"{anno:04d}-{mes:02d}-{dia:02d} {hh:02d}:{mm:02d}"
+
+
 class KPPBootstrapStudio(tk.Tk):
 
     def __init__(self):
@@ -3055,8 +3776,9 @@ class KPPBootstrapStudio(tk.Tk):
     #   - todo carácter fuera de [A-Z0-9_$-] se vuelve "_"
     #   - si pasa de 8 caracteres: los 6 primeros más un
     #     sufijo de 2 hex con el cksum del nombre original
-    #     (suma % 256), calculado por el mismo cksum del
-    #     sistema que usa el Bash
+    #     (suma % 256), con el cksum POSIX calculado en
+    #     Python (kolibri_cksum): el mismo valor que daba
+    #     el comando del sistema, sin depender de el
     # ========================================================
 
     def _kolibri_name(
@@ -3073,40 +3795,13 @@ class KPPBootstrapStudio(tk.Tk):
 
         if len(name) > 8:
 
-            resultado = subprocess.run(
-                ["cksum"],
-                input=nombre.encode(),
-                stdout=subprocess.PIPE,
-                check=True
-            )
-
-            suma = int(
-                resultado.stdout.split()[0]
+            suma = kolibri_cksum(
+                nombre.encode()
             )
 
             name = name[:6] + f"{suma % 256:02X}"
 
         return name
-
-    # ========================================================
-    # KOLIBRIOS - HERRAMIENTA EXTERNA
-    #
-    # mtools sin entrada interactiva: en una ventana nadie
-    # puede responder a un "overwrite?" del terminal.
-    # ========================================================
-
-    def _kolibri_run(
-        self,
-        args
-    ):
-
-        return subprocess.run(
-            args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=60
-        )
 
     # ========================================================
     # KOLIBRIOS - GUARDA DE UN SOLO ESCRITOR
@@ -3128,6 +3823,12 @@ class KPPBootstrapStudio(tk.Tk):
         ruta = str(
             KOLIBRIOS_IMAGE
         )
+
+        if os.name == "nt":
+
+            return self._qemu_con_imagen_windows(
+                ruta
+            )
 
         try:
 
@@ -3180,6 +3881,43 @@ class KPPBootstrapStudio(tk.Tk):
                     return True
 
         return False
+
+    def _qemu_con_imagen_windows(
+        self,
+        ruta
+    ):
+
+        # En Windows no hay /proc: se pregunta a CIM por la
+        # linea de comandos de cada qemu-system vivo y se
+        # busca la ruta de la imagen en ella.
+
+        try:
+
+            r = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_Process "
+                    "-Filter \"Name like 'qemu-system%'\" "
+                    "| Select-Object -ExpandProperty CommandLine"
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=15
+            )
+
+        except Exception:
+
+            return False
+
+        salida = r.stdout.decode(
+            "latin-1",
+            errors="replace"
+        ).lower()
+
+        return ruta.lower() in salida
+
 
     # ========================================================
     # KOLIBRIOS - MOVER BINARIO
@@ -3246,27 +3984,7 @@ class KPPBootstrapStudio(tk.Tk):
 
             return
 
-        for cmd in ("mcopy", "mdir", "mtype", "cksum"):
-
-            if shutil.which(cmd) is None:
-
-                self.log(
-                    f"[ERROR] Falta el comando: {cmd}",
-                    "error"
-                )
-
-                self.log(
-                    "[INFO] Instálalo con: sudo apt install mtools",
-                    "info"
-                )
-
-                return
-
         nombre = self._kolibri_name(stem)
-
-        mtools_image = f"{KOLIBRIOS_IMAGE}@@{KOLIBRIOS_OFFSET}"
-
-        tmp_bin = OUTPUT_DIR / nombre
 
         autorun_tmp = OUTPUT_DIR / f"AUTORUN_{nombre}_tmp.DAT"
 
@@ -3316,292 +4034,241 @@ class KPPBootstrapStudio(tk.Tk):
 
                 return
 
-            shutil.copyfile(
-                bin_file,
-                tmp_bin
-            )
+            datos_bin = bin_file.read_bytes()
 
-            # ------------------------------------------------
-            # 1. VERIFICAR IMAGEN
-            # ------------------------------------------------
+            try:
 
-            self.log(
-                "1. Verificando imagen...",
-                "info"
-            )
+                fat = KolibriFAT32(
+                    KOLIBRIOS_IMAGE,
+                    KOLIBRIOS_OFFSET
+                )
 
-            r = self._kolibri_run(
-                ["mdir", "-i", mtools_image, "::"]
-            )
-
-            if r.returncode != 0:
+            except (OSError, ValueError) as error:
 
                 self.log(
                     "[ERROR] No se pudo abrir la partición FAT32.",
                     "error"
                 )
 
-                detalle = r.stdout.decode(
-                    "latin-1",
-                    errors="replace"
-                ).strip()
-
-                if detalle:
-
-                    self.log(
-                        f"[DETALLE] {detalle}",
-                        "error"
-                    )
-
-                return
-
-            self.log(
-                "✔ Imagen FAT32 accesible.",
-                "ok"
-            )
-
-            # ------------------------------------------------
-            # 2. COPIAR BIN
-            # ------------------------------------------------
-
-            self.log(
-                "2. Copiando BIN a KolibriOS...",
-                "info"
-            )
-
-            r = self._kolibri_run(
-                [
-                    "mcopy",
-                    "-o",
-                    "-i", mtools_image,
-                    str(tmp_bin),
-                    f"::{nombre}"
-                ]
-            )
-
-            if r.returncode != 0:
-
                 self.log(
-                    "[ERROR] No se pudo copiar el BIN.",
+                    f"[DETALLE] {error}",
                     "error"
                 )
 
-                detalle = r.stdout.decode(
-                    "latin-1",
-                    errors="replace"
-                ).strip()
-
-                if detalle:
-
-                    self.log(
-                        f"[DETALLE] {detalle}",
-                        "error"
-                    )
-
                 return
 
-            self.log(
-                "✔ BIN incorporado.",
-                "ok"
-            )
+            with fat:
 
-            # ------------------------------------------------
-            # 3. EXTRAER AUTORUN.DAT
-            # ------------------------------------------------
-
-            self.log(
-                "3. Preparando AUTORUN.DAT...",
-                "info"
-            )
-
-            autorun_tmp.unlink(
-                missing_ok=True
-            )
-
-            r = self._kolibri_run(
-                [
-                    "mcopy",
-                    "-i", mtools_image,
-                    "::/KOLIBRIOS/SETTINGS/AUTORUN.DAT",
-                    str(autorun_tmp)
-                ]
-            )
-
-            if r.returncode != 0:
+                # ------------------------------------------------
+                # 1. VERIFICAR IMAGEN
+                # ------------------------------------------------
 
                 self.log(
-                    "[ERROR] No se pudo extraer AUTORUN.DAT.",
-                    "error"
-                )
-
-                detalle = r.stdout.decode(
-                    "latin-1",
-                    errors="replace"
-                ).strip()
-
-                if detalle:
-
-                    self.log(
-                        f"[DETALLE] {detalle}",
-                        "error"
-                    )
-
-                return
-
-            self.log(
-                "✔ AUTORUN.DAT extraído.",
-                "ok"
-            )
-
-            # ------------------------------------------------
-            # 4. REGISTRAR EN AUTORUN
-            # ------------------------------------------------
-
-            self.log(
-                "4. Configurando AUTORUN...",
-                "info"
-            )
-
-            texto = autorun_tmp.read_bytes().decode(
-                "latin-1"
-            )
-
-            texto = texto.replace(
-                "\r\n",
-                "\n"
-            ).replace(
-                "\r",
-                "\n"
-            )
-
-            linea = f'/SYS/{nombre} "" 100'
-
-            lineas = texto.split("\n")
-
-            if linea in lineas:
-
-                self.log(
-                    "✔ El programa ya estaba registrado en AUTORUN.",
-                    "ok"
-                )
-
-                self.log(
-                    "  No se agregó una entrada duplicada.",
-                    "ok"
-                )
-
-            else:
-
-                if "### Mini Entorno ASM ###" not in lineas:
-
-                    texto += "\n### Mini Entorno ASM ###\n"
-
-                texto += linea + "\n"
-
-                self.log(
-                    "✔ AUTORUN configurado.",
-                    "ok"
-                )
-
-            autorun_tmp.write_bytes(
-                texto.encode("latin-1")
-            )
-
-            # ------------------------------------------------
-            # 5. ESCRIBIR AUTORUN.DAT
-            # ------------------------------------------------
-
-            self.log(
-                "5. Escribiendo AUTORUN.DAT en la imagen...",
-                "info"
-            )
-
-            r = self._kolibri_run(
-                [
-                    "mcopy",
-                    "-o",
-                    str(autorun_tmp),
-                    "-i", mtools_image,
-                    "::/KOLIBRIOS/SETTINGS/AUTORUN.DAT"
-                ]
-            )
-
-            if r.returncode != 0:
-
-                self.log(
-                    "[ERROR] No se pudo escribir AUTORUN.DAT.",
-                    "error"
-                )
-
-                detalle = r.stdout.decode(
-                    "latin-1",
-                    errors="replace"
-                ).strip()
-
-                if detalle:
-
-                    self.log(
-                        f"[DETALLE] {detalle}",
-                        "error"
-                    )
-
-                return
-
-            self.log(
-                "✔ AUTORUN.DAT actualizado.",
-                "ok"
-            )
-
-            autorun_tmp.unlink(
-                missing_ok=True
-            )
-
-            # ------------------------------------------------
-            # 6. VERIFICAR
-            # ------------------------------------------------
-
-            self.log(
-                "6. Verificando imagen...",
-                "info"
-            )
-
-            self.log(
-                "Contenido de la raíz:",
-                "info"
-            )
-
-            r = self._kolibri_run(
-                ["mdir", "-i", mtools_image, "::"]
-            )
-
-            for linea_dir in r.stdout.decode("latin-1").splitlines():
-
-                self.log(
-                    linea_dir,
+                    "1. Verificando imagen...",
                     "info"
                 )
 
-            self.log(
-                "Últimas líneas de AUTORUN.DAT:",
-                "info"
-            )
-
-            r = self._kolibri_run(
-                [
-                    "mtype",
-                    "-i", mtools_image,
-                    "::/KOLIBRIOS/SETTINGS/AUTORUN.DAT"
-                ]
-            )
-
-            ultimas = r.stdout.decode("latin-1").splitlines()[-8:]
-
-            for linea_autorun in ultimas:
+                fat.listar_raiz()
 
                 self.log(
-                    linea_autorun,
+                    "✔ Imagen FAT32 accesible.",
+                    "ok"
+                )
+
+                # ------------------------------------------------
+                # 2. COPIAR BIN
+                # ------------------------------------------------
+
+                self.log(
+                    "2. Copiando BIN a KolibriOS...",
                     "info"
                 )
+
+                fat.escribir(
+                    f"/{nombre}",
+                    datos_bin
+                )
+
+                if fat.leer(f"/{nombre}") != datos_bin:
+
+                    self.log(
+                        "[ERROR] El BIN no se verificó al releerlo.",
+                        "error"
+                    )
+
+                    return
+
+                self.log(
+                    "✔ BIN incorporado.",
+                    "ok"
+                )
+
+                # ------------------------------------------------
+                # 3. EXTRAER AUTORUN.DAT
+                # ------------------------------------------------
+
+                self.log(
+                    "3. Preparando AUTORUN.DAT...",
+                    "info"
+                )
+
+                autorun_tmp.unlink(
+                    missing_ok=True
+                )
+
+                try:
+
+                    datos_autorun = fat.leer(
+                        "/KOLIBRIOS/SETTINGS/AUTORUN.DAT"
+                    )
+
+                except FileNotFoundError:
+
+                    self.log(
+                        "[ERROR] No se pudo extraer AUTORUN.DAT.",
+                        "error"
+                    )
+
+                    return
+
+                autorun_tmp.write_bytes(
+                    datos_autorun
+                )
+
+                self.log(
+                    "✔ AUTORUN.DAT extraído.",
+                    "ok"
+                )
+
+                # ------------------------------------------------
+                # 4. REGISTRAR EN AUTORUN
+                # ------------------------------------------------
+
+                self.log(
+                    "4. Configurando AUTORUN...",
+                    "info"
+                )
+
+                texto = autorun_tmp.read_bytes().decode(
+                    "latin-1"
+                )
+
+                texto = texto.replace(
+                    "\r\n",
+                    "\n"
+                ).replace(
+                    "\r",
+                    "\n"
+                )
+
+                linea = f'/SYS/{nombre} "" 100'
+
+                lineas = texto.split("\n")
+
+                if linea in lineas:
+
+                    self.log(
+                        "✔ El programa ya estaba registrado en AUTORUN.",
+                        "ok"
+                    )
+
+                    self.log(
+                        "  No se agregó una entrada duplicada.",
+                        "ok"
+                    )
+
+                else:
+
+                    if "### Mini Entorno ASM ###" not in lineas:
+
+                        texto += "\n### Mini Entorno ASM ###\n"
+
+                    texto += linea + "\n"
+
+                    self.log(
+                        "✔ AUTORUN configurado.",
+                        "ok"
+                    )
+
+                autorun_tmp.write_bytes(
+                    texto.encode("latin-1")
+                )
+
+                # ------------------------------------------------
+                # 5. ESCRIBIR AUTORUN.DAT
+                # ------------------------------------------------
+
+                self.log(
+                    "5. Escribiendo AUTORUN.DAT en la imagen...",
+                    "info"
+                )
+
+                fat.escribir(
+                    "/KOLIBRIOS/SETTINGS/AUTORUN.DAT",
+                    autorun_tmp.read_bytes()
+                )
+
+                self.log(
+                    "✔ AUTORUN.DAT actualizado.",
+                    "ok"
+                )
+
+                autorun_tmp.unlink(
+                    missing_ok=True
+                )
+
+                # ------------------------------------------------
+                # 6. VERIFICAR
+                # ------------------------------------------------
+
+                self.log(
+                    "6. Verificando imagen...",
+                    "info"
+                )
+
+                self.log(
+                    "Contenido de la raíz:",
+                    "info"
+                )
+
+                for entrada in fat.listar_raiz():
+
+                    if entrada["es_dir"]:
+
+                        detalle = "<DIR>"
+
+                    else:
+
+                        detalle = str(
+                            entrada["size"]
+                        )
+
+                    self.log(
+                        f"{entrada['nombre']:<12} {detalle:>10}  "
+                        + kolibri_fecha_texto(
+                            entrada["fecha"],
+                            entrada["hora"]
+                        ),
+                        "info"
+                    )
+
+                self.log(
+                    "Últimas líneas de AUTORUN.DAT:",
+                    "info"
+                )
+
+                ultimas = fat.leer(
+                    "/KOLIBRIOS/SETTINGS/AUTORUN.DAT"
+                ).decode(
+                    "latin-1"
+                ).splitlines()[-8:]
+
+                for linea_autorun in ultimas:
+
+                    self.log(
+                        linea_autorun,
+                        "info"
+                    )
 
             self.status_label.configure(
                 text="KOLIBRIOS OK",
@@ -3642,13 +4309,10 @@ class KPPBootstrapStudio(tk.Tk):
 
         finally:
 
-            tmp_bin.unlink(
-                missing_ok=True
-            )
-
             autorun_tmp.unlink(
                 missing_ok=True
             )
+
 
     # ========================================================
     # KOLIBRIOS - EJECUTAR (QEMU)
@@ -3683,10 +4347,19 @@ class KPPBootstrapStudio(tk.Tk):
                 "error"
             )
 
-            self.log(
-                "[INFO] Instálalo con: sudo apt install qemu-system-x86",
-                "info"
-            )
+            if os.name == "nt":
+
+                self.log(
+                    "[INFO] Instala QEMU para Windows desde qemu.org y revisa que qemu-system-i386.exe esté en el PATH.",
+                    "info"
+                )
+
+            else:
+
+                self.log(
+                    "[INFO] Instálalo con: sudo apt install qemu-system-x86",
+                    "info"
+                )
 
             return
 
@@ -3715,25 +4388,28 @@ class KPPBootstrapStudio(tk.Tk):
         # MOVER BINARIO -> EJECUTAR.
         # ------------------------------------------------
 
-        if self.current_file is not None and shutil.which(
-            "mdir"
-        ) is not None:
+        if self.current_file is not None:
 
             nombre = self._kolibri_name(
                 self.current_file.stem
             )
 
-            mtools_image = f"{KOLIBRIOS_IMAGE}@@{KOLIBRIOS_OFFSET}"
+            try:
 
-            r = self._kolibri_run(
-                [
-                    "mdir",
-                    "-i", mtools_image,
-                    f"::{nombre}"
-                ]
-            )
+                with KolibriFAT32(
+                    KOLIBRIOS_IMAGE,
+                    KOLIBRIOS_OFFSET
+                ) as fat:
 
-            if r.returncode != 0:
+                    dentro = fat.existe(
+                        f"/{nombre}"
+                    )
+
+            except (OSError, ValueError):
+
+                dentro = False
+
+            if not dentro:
 
                 self.log(
                     f"[ERROR] {nombre} todavía no está dentro de la imagen.",
@@ -3752,22 +4428,47 @@ class KPPBootstrapStudio(tk.Tk):
 
                 return
 
-        comando = [
-            "qemu-system-i386",
-            "-enable-kvm",
-            "-cpu", "host",
-            "-m", KOLIBRIOS_QEMU_MEM,
-            "-drive", f"file={KOLIBRIOS_IMAGE},format=raw,if=ide",
-            "-boot", "c",
-            "-display", "gtk"
-        ]
+        if os.name == "nt":
+
+            # Windows: sin KVM. Emulacion TCG con el CPU
+            # por defecto; para KolibriOS basta y sobra.
+            # Sin -display: el QEMU de Windows abre su
+            # ventana nativa.
+
+            comando = [
+                "qemu-system-i386",
+                "-m", KOLIBRIOS_QEMU_MEM,
+                "-drive", f"file={KOLIBRIOS_IMAGE},format=raw,if=ide",
+                "-boot", "c"
+            ]
+
+        else:
+
+            comando = [
+                "qemu-system-i386",
+                "-enable-kvm",
+                "-cpu", "host",
+                "-m", KOLIBRIOS_QEMU_MEM,
+                "-drive", f"file={KOLIBRIOS_IMAGE},format=raw,if=ide",
+                "-boot", "c",
+                "-display", "gtk"
+            ]
 
         try:
 
-            proceso = subprocess.Popen(
-                comando,
-                start_new_session=True
-            )
+            if os.name == "nt":
+
+                proceso = subprocess.Popen(
+                    comando,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+
+            else:
+
+                proceso = subprocess.Popen(
+                    comando,
+                    start_new_session=True
+                )
 
         except OSError as error:
 
