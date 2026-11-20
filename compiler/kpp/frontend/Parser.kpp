@@ -190,7 +190,11 @@ enum TokenType
     // AMPLIACIONES (al final, nunca en medio)
     KwVoid,
     KwBreak,
-    KwFor
+    KwFor,
+    BitwiseAnd,
+    BitwiseOr,
+    ShiftLeft,
+    ShiftRight
 };
 
 // Tabla de clases de nodo: copia IDENTICA del enum de
@@ -806,13 +810,16 @@ int alcanzables()
 //
 // 1.  ||
 // 2.  &&
-// 3.  == !=
-// 4.  < <= > >=
-// 5.  + -
-// 6.  * / %
-// 7.  ^
-// 8.  ! -
-// 9.  primarios
+// 3.  |
+// 4.  &
+// 5.  == !=
+// 6.  < <= > >=
+// 7.  << >>
+// 8.  + -
+// 9.  * / %
+// 10. ^
+// 11. ! -
+// 12. primarios
 // ============================================================
 
 int parse_expresion()
@@ -846,11 +853,11 @@ int parse_or()
 
 int parse_and()
 {
-    int izq = parse_igualdad();
+    int izq = parse_bor();
     while (es(TokenType::LogicalAnd) == 1)
     {
         consume();
-        int der = parse_igualdad();
+        int der = parse_bor();
         izq = emite_bin(TokenType::LogicalAnd, izq, der);
     }
     return izq;
@@ -862,6 +869,44 @@ int parse_and()
 // a == b
 // a != b
 // ============================================================
+
+// ============================================================
+// PARSE BITS OR.
+//
+// a | b — el nivel del | en la cadena (Ampliacion
+// 4): entre el && y el &, como en C.
+// ============================================================
+
+int parse_bor()
+{
+    int izq = parse_band();
+    while (es(TokenType::BitwiseOr) == 1)
+    {
+        consume();
+        int der = parse_band();
+        izq = emite_bin(TokenType::BitwiseOr, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE BITS AND.
+//
+// a & b — el nivel del & en la cadena (Ampliacion
+// 4): entre el | y el ==, como en C.
+// ============================================================
+
+int parse_band()
+{
+    int izq = parse_igualdad();
+    while (es(TokenType::BitwiseAnd) == 1)
+    {
+        consume();
+        int der = parse_igualdad();
+        izq = emite_bin(TokenType::BitwiseAnd, izq, der);
+    }
+    return izq;
+}
 
 int parse_igualdad()
 {
@@ -899,7 +944,7 @@ int parse_igualdad()
 
 int parse_comparacion()
 {
-    int izq = parse_termino();
+    int izq = parse_desplaza();
     while (1)
     {
         int op = 0;
@@ -924,7 +969,7 @@ int parse_comparacion()
             break;
         }
         consume();
-        int der = parse_termino();
+        int der = parse_desplaza();
         izq = emite_bin(op, izq, der);
     }
     return izq;
@@ -936,6 +981,43 @@ int parse_comparacion()
 // a + b
 // a - b
 // ============================================================
+
+// ============================================================
+// PARSE DESPLAZAMIENTOS.
+//
+// a << b
+// a >> b
+//
+// El nivel de los desplazamientos (Ampliacion 4):
+// entre la comparacion y el termino. La suma ata
+// mas que el desplazamiento, como en C: 1 << 2 + 1
+// es 1 << 3.
+// ============================================================
+
+int parse_desplaza()
+{
+    int izq = parse_termino();
+    while (1)
+    {
+        int op = 0;
+        if (es(TokenType::ShiftLeft) == 1)
+        {
+            op = TokenType::ShiftLeft;
+        }
+        if (es(TokenType::ShiftRight) == 1)
+        {
+            op = TokenType::ShiftRight;
+        }
+        if (op == 0)
+        {
+            break;
+        }
+        consume();
+        int der = parse_termino();
+        izq = emite_bin(op, izq, der);
+    }
+    return izq;
+}
 
 int parse_termino()
 {
@@ -2547,12 +2629,40 @@ void escanea()
         }
         else if (c >= 48 && c <= 57)
         {
+            // El prefijo 0x (Ampliacion 4): el literal
+            // hexadecimal nace como un Number mas, con
+            // su valor calculado en el lexing. La guarda
+            // de fin de fuente va en un if aparte, como
+            // en el resto de la pieza, y la base viaja
+            // en d: 10 decimal, 16 hexadecimal.
+            d = 10;
+            if (c == 48)
+            {
+                if (pos + 1 < total)
+                {
+                    if (fuente[pos + 1] == 120 || fuente[pos + 1] == 88)
+                    {
+                        d = 16;
+                        pos = pos + 2;
+                    }
+                }
+            }
             while (pos < total)
             {
                 c = fuente[pos];
                 if (c >= 48 && c <= 57)
                 {
-                    valor = valor * 10 + (c - 48);
+                    valor = valor * d + (c - 48);
+                    pos = pos + 1;
+                }
+                else if (d == 16 && c >= 97 && c <= 102)
+                {
+                    valor = valor * 16 + (c - 87);
+                    pos = pos + 1;
+                }
+                else if (d == 16 && c >= 65 && c <= 70)
+                {
+                    valor = valor * 16 + (c - 55);
                     pos = pos + 1;
                 }
                 else
@@ -2563,6 +2673,17 @@ void escanea()
             largo = pos - inicio;
             tipo = 2;
             hay_token = 1;
+            if (d == 16)
+            {
+                if (largo == 2)
+                {
+                    // Un 0x sin un solo digito detras:
+                    // error, como en Stage 0, y el
+                    // token no nace.
+                    errores = errores + 1;
+                    hay_token = 0;
+                }
+            }
         }
         else if (c == 34)
         {
@@ -2710,7 +2831,14 @@ void escanea()
             }
             else if (c == 60)
             {
-                if (d == 61)
+                if (d == 60)
+                {
+                    tipo = 44;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else if (d == 61)
                 {
                     tipo = 23;
                     largo = 2;
@@ -2726,7 +2854,14 @@ void escanea()
             }
             else if (c == 62)
             {
-                if (d == 61)
+                if (d == 62)
+                {
+                    tipo = 45;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else if (d == 61)
                 {
                     tipo = 25;
                     largo = 2;
@@ -2751,7 +2886,8 @@ void escanea()
                 }
                 else
                 {
-                    errores = errores + 1;
+                    tipo = 42;
+                    hay_token = 1;
                     pos = pos + 1;
                 }
             }
@@ -2766,7 +2902,8 @@ void escanea()
                 }
                 else
                 {
-                    errores = errores + 1;
+                    tipo = 43;
+                    hay_token = 1;
                     pos = pos + 1;
                 }
             }
@@ -3437,6 +3574,25 @@ void carga_fuente15()
     total = 173;
 }
 
+int carga_fuente16()
+{
+    int fuente[1024];
+    fuente[0] = 105;  fuente[1] = 110;  fuente[2] = 116;  fuente[3] = 32;  fuente[4] = 109;  fuente[5] = 97;  fuente[6] = 105;  fuente[7] = 110;
+    fuente[8] = 40;  fuente[9] = 41;  fuente[10] = 10;  fuente[11] = 123;  fuente[12] = 10;  fuente[13] = 32;  fuente[14] = 32;  fuente[15] = 32;
+    fuente[16] = 32;  fuente[17] = 105;  fuente[18] = 110;  fuente[19] = 116;  fuente[20] = 32;  fuente[21] = 97;  fuente[22] = 32;  fuente[23] = 61;
+    fuente[24] = 32;  fuente[25] = 48;  fuente[26] = 120;  fuente[27] = 50;  fuente[28] = 65;  fuente[29] = 59;  fuente[30] = 10;  fuente[31] = 32;
+    fuente[32] = 32;  fuente[33] = 32;  fuente[34] = 32;  fuente[35] = 105;  fuente[36] = 110;  fuente[37] = 116;  fuente[38] = 32;  fuente[39] = 98;
+    fuente[40] = 32;  fuente[41] = 61;  fuente[42] = 32;  fuente[43] = 97;  fuente[44] = 32;  fuente[45] = 38;  fuente[46] = 32;  fuente[47] = 49;
+    fuente[48] = 53;  fuente[49] = 32;  fuente[50] = 124;  fuente[51] = 32;  fuente[52] = 97;  fuente[53] = 32;  fuente[54] = 60;  fuente[55] = 60;
+    fuente[56] = 32;  fuente[57] = 50;  fuente[58] = 59;  fuente[59] = 10;  fuente[60] = 32;  fuente[61] = 32;  fuente[62] = 32;  fuente[63] = 32;
+    fuente[64] = 105;  fuente[65] = 110;  fuente[66] = 116;  fuente[67] = 32;  fuente[68] = 99;  fuente[69] = 32;  fuente[70] = 61;  fuente[71] = 32;
+    fuente[72] = 98;  fuente[73] = 32;  fuente[74] = 62;  fuente[75] = 62;  fuente[76] = 32;  fuente[77] = 51;  fuente[78] = 59;  fuente[79] = 10;
+    fuente[80] = 32;  fuente[81] = 32;  fuente[82] = 32;  fuente[83] = 32;  fuente[84] = 114;  fuente[85] = 101;  fuente[86] = 116;  fuente[87] = 117;
+    fuente[88] = 114;  fuente[89] = 110;  fuente[90] = 32;  fuente[91] = 99;  fuente[92] = 59;  fuente[93] = 10;  fuente[94] = 125;  fuente[95] = 10;
+    total = 96;
+    return 0;
+}
+
 void reinicia()
 {
     pos = 0;
@@ -3683,6 +3839,22 @@ int main()
     print_int(cuenta(NodeKind::ForStatement));
     print_int(cuenta(NodeKind::BreakStatement));
     print_int(cuenta(NodeKind::IfStatement));
+    print_int(fin_programa());
+    print_int(bloques_abiertos());
+    print_int(alcanzables());
+
+    reinicia();
+    carga_fuente16();
+    escanea();
+    int p16 = parse_programa();
+    print_int(nfun);
+    print_int(nsent);
+    print_int(errores);
+    print_int(pos);
+    print_int(nnodos);
+    print_int(cuenta(NodeKind::BinaryExpression));
+    print_int(cuenta(NodeKind::VariableDeclaration));
+    print_int(cuenta(NodeKind::ReturnStatement));
     print_int(fin_programa());
     print_int(bloques_abiertos());
     print_int(alcanzables());
