@@ -18,8 +18,913 @@
 // Dato que cierra una historia: el emitter SI tiene emitJneRel32 y
 // su Placeholder — la maquina sabe escribir el salto not-zero.
 // El JumpIfNotZero aplazado vive en el backend, no en esta pieza.
+// Rebanada E-1 (2026-11-20): la emision directa completa, los
+// 68 metodos que Stage 0 define y que escriben bytes cerrados.
+// Dos declaraciones del .hpp quedan fuera porque Stage 0 nunca
+// las definio ni las llamo: emitMovEdxEaxMem32 y
+// emitMovEdxEbxMem32. La familia de placeholders y parches es
+// la rebanada E-2. El estado: el arreglo codigo[256]
+// compartido por nombre y los escalares compartidos ncod y
+// errores_emit.
+// Rebanada E-2 (2026-11-20): la familia de placeholders y
+// parches, los 16 metodos que quedaban: emitImm32Placeholder
+// y emitRel32Placeholder, los 12 placeholders con nombre y
+// patch32 / patchRel32. Cada placeholder escribe su hueco de
+// 4 bytes en cero y devuelve el offset del hueco; patch32 lo
+// rellena carril bajo primero y patchRel32 escribe el
+// desplazamiento destino - (offset + 4), como Stage 0. Donde
+// Stage 0 lanza fuera de rango, aqui la guarda acusa en
+// errores_emit y no escribe, la misma ley que emitByte.
+
+// ============================================================
+// ESTADO COMPARTIDO.
+//
+// El unico estado del emitter: el arreglo codigo[256],
+// compartido por nombre como en las demas piezas, y los
+// escalares compartidos ncod (cuenta de bytes) y
+// errores_emit (la guarda acusa aqui y nunca escribe fuera).
+// ============================================================
+
+int ncod;
+int errores_emit;
+
+// ============================================================
+// REINICIA EL EMITTER.
+// ============================================================
+
+void reinicia_emit()
+{
+    int codigo[256];
+    int i;
+    i = 0;
+    while (i < 256)
+    {
+        codigo[i] = 0;
+        i = i + 1;
+    }
+    ncod = 0;
+    errores_emit = 0;
+}
+
+// ============================================================
+// EMITE UN BYTE.
+//
+// La guarda de la norma de capacidades: a 256 acusa en
+// errores_emit y no escribe fuera. El byte se guarda
+// enmascarado a 0..255, como el uint8_t de Stage 0.
+// ============================================================
+
+void emitByte(int b)
+{
+    int codigo[256];
+    if (ncod < 256)
+    {
+        codigo[ncod] = b & 255;
+        ncod = ncod + 1;
+    }
+    else
+    {
+        errores_emit = errores_emit + 1;
+    }
+}
+
+// ============================================================
+// EMITE UN VALOR DE 32 BITS, CARRIL BAJO PRIMERO.
+//
+// Es el patron que Stage 0 repite en cada metodo con
+// inmediato o desplazamiento. Con el >> aritmetico de K++
+// y la mascara de emitByte, cada carril sale exacto tambien
+// con valores negativos.
+// ============================================================
+
+void emite32(int v)
+{
+    emitByte(v);
+    emitByte(v >> 8);
+    emitByte(v >> 16);
+    emitByte(v >> 24);
+}
+
+// ============================================================
+// MARCOS DE PILA EBP.
+// ============================================================
+
+void emitPushEbp()
+{
+    emitByte(0x55);
+}
+
+void emitMovEbpEsp()
+{
+    emitByte(0x89);
+    emitByte(0xE5);
+}
+
+void emitMovEspEbp()
+{
+    emitByte(0x89);
+    emitByte(0xEC);
+}
+
+void emitPopEbp()
+{
+    emitByte(0x5D);
+}
+
+// ============================================================
+// MOVIMIENTOS CON [EBP+DESPLAZAMIENTO].
+// ============================================================
+
+void emitMovEaxEbpRelative(int d)
+{
+    emitByte(0x8B);
+    emitByte(0x85);
+    emite32(d);
+}
+
+void emitMovEbxEbpRelative(int d)
+{
+    emitByte(0x8B);
+    emitByte(0x9D);
+    emite32(d);
+}
+
+void emitMovEcxEbpRelative(int d)
+{
+    emitByte(0x8B);
+    emitByte(0x8D);
+    emite32(d);
+}
+
+void emitMovEbpRelativeEax(int d)
+{
+    emitByte(0x89);
+    emitByte(0x85);
+    emite32(d);
+}
+
+void emitMovEbpRelativeEbx(int d)
+{
+    emitByte(0x89);
+    emitByte(0x9D);
+    emite32(d);
+}
+
+// ============================================================
+// COMPARACION EAX CONTRA EBX Y SUS SETCC.
+// ============================================================
+
+void emitCmpEaxEbx()
+{
+    emitByte(0x39);
+    emitByte(0xD8);
+}
+
+void emitSeteAl()
+{
+    emitByte(0x0F);
+    emitByte(0x94);
+    emitByte(0xC0);
+}
+
+void emitSetneAl()
+{
+    emitByte(0x0F);
+    emitByte(0x95);
+    emitByte(0xC0);
+}
+
+void emitSetlAl()
+{
+    emitByte(0x0F);
+    emitByte(0x9C);
+    emitByte(0xC0);
+}
+
+void emitSetleAl()
+{
+    emitByte(0x0F);
+    emitByte(0x9E);
+    emitByte(0xC0);
+}
+
+void emitSetgAl()
+{
+    emitByte(0x0F);
+    emitByte(0x9F);
+    emitByte(0xC0);
+}
+
+void emitSetgeAl()
+{
+    emitByte(0x0F);
+    emitByte(0x9D);
+    emitByte(0xC0);
+}
+
+void emitMovzxEaxAl()
+{
+    emitByte(0x0F);
+    emitByte(0xB6);
+    emitByte(0xC0);
+}
+
+// ============================================================
+// MOVIMIENTOS CON MEMORIA ABSOLUTA E INMEDIATOS.
+// ============================================================
+
+void emitMovEaxImm32(int v)
+{
+    emitByte(0xB8);
+    emite32(v);
+}
+
+void emitMovMemImm32(int dir, int v)
+{
+    emitByte(0xC7);
+    emitByte(0x05);
+    emite32(dir);
+    emite32(v);
+}
+
+void emitMovMemEax32(int dir)
+{
+    emitByte(0x89);
+    emitByte(0x05);
+    emite32(dir);
+}
+
+void emitMovMemEbx32(int dir)
+{
+    emitByte(0x89);
+    emitByte(0x1D);
+    emite32(dir);
+}
+
+// ============================================================
+// MOVIMIENTOS INDEXADOS POR EDX.
+// ============================================================
+
+void emitMovEaxEdxMem32()
+{
+    emitByte(0x8B);
+    emitByte(0x02);
+}
+
+void emitMovEbxEdxMem32()
+{
+    emitByte(0x8B);
+    emitByte(0x1A);
+}
+
+void emitMovMemEdxEax32()
+{
+    emitByte(0x89);
+    emitByte(0x02);
+}
+
+void emitMovMemEdxEbx32()
+{
+    emitByte(0x89);
+    emitByte(0x1A);
+}
+
+// ============================================================
+// MOV REGISTRO, INMEDIATO (EL OPCODE LO TRAE EL QUE LLAMA).
+// ============================================================
+
+void emitMovRegImm32(int opcode, int v)
+{
+    emitByte(opcode);
+    emite32(v);
+}
+
+// ============================================================
+// ARITMETICA EAX CON EBX.
+// ============================================================
+
+void emitAddEaxEbx()
+{
+    emitByte(0x01);
+    emitByte(0xD8);
+}
+
+void emitAndEaxEbx()
+{
+    emitByte(0x21);
+    emitByte(0xD8);
+}
+
+void emitOrEaxEbx()
+{
+    emitByte(0x09);
+    emitByte(0xD8);
+}
+
+void emitShlEaxCl()
+{
+    emitByte(0xD3);
+    emitByte(0xE0);
+}
+
+void emitSarEaxCl()
+{
+    emitByte(0xD3);
+    emitByte(0xF8);
+}
+
+void emitShlEaxImm8(int n)
+{
+    emitByte(0xC1);
+    emitByte(0xE0);
+    emitByte(n);
+}
+
+void emitSarEaxImm8(int n)
+{
+    emitByte(0xC1);
+    emitByte(0xF8);
+    emitByte(n);
+}
+
+void emitSubEaxEbx()
+{
+    emitByte(0x29);
+    emitByte(0xD8);
+}
+
+void emitMulEaxEbx()
+{
+    emitByte(0x0F);
+    emitByte(0xAF);
+    emitByte(0xC3);
+}
+
+void emitCdq()
+{
+    emitByte(0x99);
+}
+
+void emitIdivEbx()
+{
+    emitByte(0xF7);
+    emitByte(0xFB);
+}
+
+void emitMovEaxEdx()
+{
+    emitByte(0x89);
+    emitByte(0xD0);
+}
+
+// ============================================================
+// MOVIMIENTOS ENTRE REGISTROS.
+// ============================================================
+
+void emitMovEaxEbx()
+{
+    emitByte(0x89);
+    emitByte(0xD8);
+}
+
+void emitMovEbxEax()
+{
+    emitByte(0x89);
+    emitByte(0xC3);
+}
+
+void emitMovEbxEbp()
+{
+    emitByte(0x89);
+    emitByte(0xEB);
+}
+
+void emitMovEdxEax()
+{
+    emitByte(0x89);
+    emitByte(0xC2);
+}
+
+void emitMovEdxEbx()
+{
+    emitByte(0x89);
+    emitByte(0xDA);
+}
+
+// ============================================================
+// SUMAS CON INMEDIATO.
+// ============================================================
+
+void emitAddEbpImm32(int v)
+{
+    emitByte(0x81);
+    emitByte(0xC5);
+    emite32(v);
+}
+
+void emitAddEaxImm32(int v)
+{
+    emitByte(0x81);
+    emitByte(0xC0);
+    emite32(v);
+}
+
+// ============================================================
+// EL RINCON DE LA CONVERSION DE ENTEROS.
+// ============================================================
+
+void emitXorEdxEdx()
+{
+    emitByte(0x31);
+    emitByte(0xD2);
+}
+
+void emitMovEcxImm32(int v)
+{
+    emitByte(0xB9);
+    emite32(v);
+}
+
+void emitDivEcx()
+{
+    emitByte(0xF7);
+    emitByte(0xF1);
+}
+
+void emitAddDlImm8(int v)
+{
+    emitByte(0x80);
+    emitByte(0xC2);
+    emitByte(v);
+}
+
+void emitDecEdi()
+{
+    emitByte(0x4F);
+}
+
+void emitMovEdiMem8Dl()
+{
+    emitByte(0x88);
+    emitByte(0x17);
+}
+
+void emitMovEdiImm32(int v)
+{
+    emitByte(0xBF);
+    emite32(v);
+}
+
+// ============================================================
+// PILA Y BYTE A BYTE POR EDI.
+// ============================================================
+
+void emitPushEax()
+{
+    emitByte(0x50);
+}
+
+void emitPushEbx()
+{
+    emitByte(0x53);
+}
+
+void emitAddEspImm32(int v)
+{
+    emitByte(0x81);
+    emitByte(0xC4);
+    emite32(v);
+}
+
+void emitPopEax()
+{
+    emitByte(0x58);
+}
+
+void emitPopEbx()
+{
+    emitByte(0x5B);
+}
+
+void emitMovEdxEdi()
+{
+    emitByte(0x89);
+    emitByte(0xFA);
+}
+
+void emitMovEdiMem8Imm8(int v)
+{
+    emitByte(0xC6);
+    emitByte(0x07);
+    emitByte(v);
+}
+
+// ============================================================
+// INTERRUPCION Y RETORNO.
+// ============================================================
+
+void emitInt(int n)
+{
+    emitByte(0xCD);
+    emitByte(n);
+}
+
+void emitRet()
+{
+    emitByte(0xC3);
+}
+
+// ============================================================
+// SALTOS RELATIVOS DIRECTOS.
+// ============================================================
+
+void emitJmpRel32(int d)
+{
+    emitByte(0xE9);
+    emite32(d);
+}
+
+void emitJeRel32(int d)
+{
+    emitByte(0x0F);
+    emitByte(0x84);
+    emite32(d);
+}
+
+void emitJneRel32(int d)
+{
+    emitByte(0x0F);
+    emitByte(0x85);
+    emite32(d);
+}
+
+// ============================================================
+// COMPARACION Y AND CON INMEDIATO.
+// ============================================================
+
+void emitCmpEaxImm32(int v)
+{
+    emitByte(0x3D);
+    emite32(v);
+}
+
+void emitAndEaxImm32(int v)
+{
+    emitByte(0x25);
+    emite32(v);
+}
+
+void emitCmpAhImm8(int v)
+{
+    emitByte(0x80);
+    emitByte(0xFC);
+    emitByte(v);
+}
+
+// ============================================================
+// HUECOS DE 32 BITS: LOS PLACEHOLDERS BASE.
+//
+// Escriben cuatro bytes en cero y devuelven el offset del
+// hueco, la posicion donde el parche escribira despues.
+// emitRel32Placeholder es el mismo hueco con otro nombre:
+// en Stage 0 uno llama al otro, y aqui igual.
+// ============================================================
+
+int emitImm32Placeholder()
+{
+    int pos;
+    pos = ncod;
+    emitByte(0);
+    emitByte(0);
+    emitByte(0);
+    emitByte(0);
+    return pos;
+}
+
+int emitRel32Placeholder()
+{
+    return emitImm32Placeholder();
+}
+
+// ============================================================
+// PLACEHOLDERS CON NOMBRE: MARCO Y MEMORIA ABSOLUTA.
+//
+// Cada uno escribe su opcode y deja el hueco de la direccion
+// o del desplazamiento detras; devuelven el offset del
+// hueco, no el de la instruccion. El de guardar un inmediato
+// trae dos campos: devuelve el de la direccion y el valor
+// ya sale escrito tras el hueco, como en Stage 0.
+// ============================================================
+
+int emitSubEspImm32Placeholder()
+{
+    emitByte(0x81);
+    emitByte(0xEC);
+    return emitImm32Placeholder();
+}
+
+int emitMovMemImm32Placeholder(int v)
+{
+    int pos;
+    emitByte(0xC7);
+    emitByte(0x05);
+    pos = emitImm32Placeholder();
+    emite32(v);
+    return pos;
+}
+
+int emitMovEaxMem32Placeholder()
+{
+    emitByte(0xA1);
+    return emitImm32Placeholder();
+}
+
+int emitMovEbxMem32Placeholder()
+{
+    emitByte(0x8B);
+    emitByte(0x1D);
+    return emitImm32Placeholder();
+}
+
+int emitMovMemEax32Placeholder()
+{
+    emitByte(0x89);
+    emitByte(0x05);
+    return emitImm32Placeholder();
+}
+
+int emitMovMemEbx32Placeholder()
+{
+    emitByte(0x89);
+    emitByte(0x1D);
+    return emitImm32Placeholder();
+}
+
+int emitLeaEdxEaxScaled4Placeholder()
+{
+    emitByte(0x8D);
+    emitByte(0x14);
+    emitByte(0x85);
+    return emitImm32Placeholder();
+}
+
+int emitLeaEdxEbxScaled4Placeholder()
+{
+    emitByte(0x8D);
+    emitByte(0x14);
+    emitByte(0x9D);
+    return emitImm32Placeholder();
+}
+
+// ============================================================
+// PLACEHOLDERS CON NOMBRE: SALTOS RELATIVOS.
+//
+// El hueco guarda el rel32; el destino se fija despues con
+// patchRel32 sobre el offset devuelto.
+// ============================================================
+
+int emitJmpRel32Placeholder()
+{
+    emitByte(0xE9);
+    return emitRel32Placeholder();
+}
+
+int emitJeRel32Placeholder()
+{
+    emitByte(0x0F);
+    emitByte(0x84);
+    return emitRel32Placeholder();
+}
+
+int emitJbeRel32Placeholder()
+{
+    emitByte(0x0F);
+    emitByte(0x86);
+    return emitRel32Placeholder();
+}
+
+int emitJneRel32Placeholder()
+{
+    emitByte(0x0F);
+    emitByte(0x85);
+    return emitRel32Placeholder();
+}
+
+// ============================================================
+// PARCHES: RELLENAR LOS HUECOS.
+//
+// patch32 escribe el valor carril bajo primero sobre el
+// hueco. Su guarda es la de la casa: Stage 0 lanza
+// out_of_range si offset + 4 pasa del codigo emitido; aqui
+// la guarda acusa en errores_emit y no escribe fuera.
+// patchRel32 calcula el desplazamiento desde la instruccion
+// que sigue al rel32, destino - (offset + 4), y lo escribe
+// con patch32: la misma guarda lo cubre, una sola acusacion.
+// ============================================================
+
+void patch32(int pos, int v)
+{
+    int codigo[256];
+    int bien;
+    bien = 0;
+    if (pos >= 0)
+    {
+        if (pos + 4 <= ncod)
+        {
+            bien = 1;
+        }
+    }
+    if (bien == 1)
+    {
+        codigo[pos] = v & 255;
+        codigo[pos + 1] = (v >> 8) & 255;
+        codigo[pos + 2] = (v >> 16) & 255;
+        codigo[pos + 3] = (v >> 24) & 255;
+    }
+    else
+    {
+        errores_emit = errores_emit + 1;
+    }
+}
+
+void patchRel32(int pos, int destino)
+{
+    int desp;
+    desp = destino - (pos + 4);
+    patch32(pos, desp);
+}
+
+// ============================================================
+// IMPRIME EL CODIGO EMITIDO.
+//
+// La cuenta, cada byte en decimal y la cuenta de la guarda:
+// la lectura de campo se coteja byte a byte contra el
+// oraculo de Stage 0 (216 bytes, guarda en cero).
+// ============================================================
+
+void imprime_emit()
+{
+    int codigo[256];
+    int i;
+    print_int(ncod);
+    i = 0;
+    while (i < ncod)
+    {
+        print_int(codigo[i]);
+        i = i + 1;
+    }
+    print_int(errores_emit);
+}
+
+// ============================================================
+// SONDA DEL EMITTER 1: LA EMISION DIRECTA COMPLETA.
+//
+// Ejercita los 68 metodos con la misma secuencia y los
+// mismos argumentos que el oraculo C++ de Stage 0; la
+// salida esperada son los 216 bytes de ese oraculo.
+// ============================================================
+
+void sonda_emitter1()
+{
+    reinicia_emit();
+    emitByte(170);
+    emitPushEbp();
+    emitMovEbpEsp();
+    emitMovEspEbp();
+    emitPopEbp();
+    emitMovEaxEbpRelative(-4);
+    emitMovEbxEbpRelative(8);
+    emitMovEcxEbpRelative(-12);
+    emitMovEbpRelativeEax(16);
+    emitMovEbpRelativeEbx(-8);
+    emitCmpEaxEbx();
+    emitSeteAl();
+    emitSetneAl();
+    emitSetlAl();
+    emitSetleAl();
+    emitSetgAl();
+    emitSetgeAl();
+    emitMovzxEaxAl();
+    emitMovEaxImm32(305419896);
+    emitMovMemImm32(4096, -1);
+    emitMovMemEax32(8192);
+    emitMovMemEbx32(8196);
+    emitMovEaxEdxMem32();
+    emitMovEbxEdxMem32();
+    emitMovMemEdxEax32();
+    emitMovMemEdxEbx32();
+    emitMovRegImm32(187, 195948557);
+    emitAddEaxEbx();
+    emitAndEaxEbx();
+    emitOrEaxEbx();
+    emitShlEaxCl();
+    emitSarEaxCl();
+    emitShlEaxImm8(3);
+    emitSarEaxImm8(5);
+    emitSubEaxEbx();
+    emitMulEaxEbx();
+    emitCdq();
+    emitIdivEbx();
+    emitMovEaxEdx();
+    emitMovEaxEbx();
+    emitMovEbxEax();
+    emitMovEbxEbp();
+    emitMovEdxEax();
+    emitMovEdxEbx();
+    emitAddEbpImm32(256);
+    emitAddEaxImm32(-16);
+    emitXorEdxEdx();
+    emitMovEcxImm32(1000000000);
+    emitDivEcx();
+    emitAddDlImm8(48);
+    emitDecEdi();
+    emitMovEdiMem8Dl();
+    emitMovEdiImm32(12288);
+    emitPushEax();
+    emitPushEbx();
+    emitAddEspImm32(-32);
+    emitPopEax();
+    emitPopEbx();
+    emitMovEdxEdi();
+    emitMovEdiMem8Imm8(65);
+    emitInt(64);
+    emitRet();
+    emitJmpRel32(-5);
+    emitJeRel32(4660);
+    emitJneRel32(-256);
+    emitCmpEaxImm32(2147483647);
+    emitAndEaxImm32(-16711936);
+    emitCmpAhImm8(63);
+    imprime_emit();
+}
+
+// ============================================================
+// SONDA DEL EMITTER 2: PLACEHOLDERS Y PARCHES.
+//
+// Emite los 14 placeholders capturando cada offset, mete un
+// byte intermedio de la familia directa y cierra con un
+// ret; despues parchea cada hueco: patch32 con valores
+// positivos y negativos y patchRel32 hacia adelante (al
+// final y al ret) y hacia atras (al principio y al jmp).
+// La salida esperada son los 86 bytes del oraculo extendido
+// de Stage 0, con la guarda en cero. La sonda reinicia el
+// emitter, asi que la corriente de la sonda 1 queda intacta
+// byte a byte.
+// ============================================================
+
+void sonda_emitter2()
+{
+    int p_sub;
+    int p_eax;
+    int p_ebx;
+    int p_sto;
+    int p_msa;
+    int p_msb;
+    int p_lea;
+    int p_leb;
+    int p_jmp;
+    int p_je;
+    int p_jbe;
+    int p_jne;
+    int p_imm;
+    int p_rel;
+    reinicia_emit();
+    p_sub = emitSubEspImm32Placeholder();
+    p_eax = emitMovEaxMem32Placeholder();
+    p_ebx = emitMovEbxMem32Placeholder();
+    p_sto = emitMovMemImm32Placeholder(-1);
+    p_msa = emitMovMemEax32Placeholder();
+    p_msb = emitMovMemEbx32Placeholder();
+    p_lea = emitLeaEdxEaxScaled4Placeholder();
+    p_leb = emitLeaEdxEbxScaled4Placeholder();
+    emitPushEbp();
+    p_jmp = emitJmpRel32Placeholder();
+    p_je = emitJeRel32Placeholder();
+    p_jbe = emitJbeRel32Placeholder();
+    p_jne = emitJneRel32Placeholder();
+    p_imm = emitImm32Placeholder();
+    p_rel = emitRel32Placeholder();
+    emitRet();
+    patch32(p_sub, 48);
+    patch32(p_eax, 8192);
+    patch32(p_ebx, 305419896);
+    patch32(p_sto, 12288);
+    patch32(p_msa, 8196);
+    patch32(p_msb, -16);
+    patch32(p_lea, 4096);
+    patch32(p_leb, -4);
+    patch32(p_imm, -1000000);
+    patchRel32(p_jmp, 86);
+    patchRel32(p_je, 0);
+    patchRel32(p_jbe, 85);
+    patchRel32(p_jne, 54);
+    patchRel32(p_rel, 0);
+    imprime_emit();
+}
 
 int main()
 {
+    sonda_emitter1();
+    sonda_emitter2();
     return 0;
 }
