@@ -1,0 +1,1214 @@
+// Arena.kpp — Stage 1, runtime, la biblioteca de memoria.
+// La arena de KC: memoria dinamica estilo FASM como
+// biblioteca sobre el K++ actual, sin Ampliacion del
+// lenguaje (fallo de Esequiel del 2026-11-20). Nada de
+// tipos nuevos ni punteros: subrutinas, enteros y arreglos
+// declarados, como las demas piezas. El diseno completo
+// vive en el mapa de la arena (arena_kc_mapa.md); esta
+// pieza es su rebanada M-0: la biblioteca sola, probada
+// por su propia sonda antes de que nadie dependa de ella.
+// La via es la V2 definitiva: cada region es un arreglo
+// estatico declarado y el Provider es una capa interna
+// que no llama a nadie — no hay nativas nuevas y Stage 0
+// no se toca. Las regiones con vidas que no se solapan
+// comparten bloque fisico: Source muere al cerrar el
+// frontend y Output nace en el backend (bloque A);
+// Frontend muere tras generar el IR y Backend nace
+// despues (bloque B); Compiler vive de SA a Writers y
+// tiene bloque propio (bloque C).
+// Los literales de declaracion de esta sonda son de
+// sonda. En produccion, segun la simulacion de
+// autohospedaje, los bloques se declaran asi:
+//   bloque A: 1000000 celdas (Source 1000000, Output lo
+//             hereda; el buffer de codigo pide 1000000)
+//   bloque B: 802300 celdas (Frontend; Backend hereda y
+//             le sobra: sus listas suman ~177000)
+//   bloque C: 463700 celdas (Compiler)
+// Las reservas que el driver pide a arena_create en
+// produccion son esos mismos tamanos de bloque. La
+// contabilidad de estructuras se queda en 128: es su
+// valor de produccion (el compilador entero necesita del
+// orden de 70) y es la unica tabla fija de la biblioteca
+// — una tabla de diseno, no de datos del programa.
+// Los literales de nacimiento de StringPool (4 celdas) y
+// ByteBuffer (8 celdas) son el punto de ajuste si un dia
+// conviene nacer mas grandes: el crecimiento geometrico
+// los hace inocuos.
+// Principios, los del mapa: handles por offset estables
+// que jamas se mueven (crecer es bloque nuevo al final de
+// la arena y copia, o extension en el sitio si el bloque
+// es el ultimo asignado); liberacion por region al cerrar
+// la fase; registrar es crecer o acusar en errores_arena.
+
+// ============================================================
+// ESTADO COMPARTIDO.
+//
+// Los contadores de la biblioteca y los handles de las
+// cinco regiones, compartidos por nombre como en las
+// demas piezas. El driver guarda en region_source ..
+// region_output el handle de cada region al crearla.
+// errores_arena es la guarda comun: suma 1 por cada
+// operacion que la biblioteca no pudo cumplir, y ninguna
+// operacion fallida escribe fuera ni a medias.
+// ============================================================
+
+int errores_arena;
+int nest;
+int prov_nacq;
+int region_source;
+int region_frontend;
+int region_compiler;
+int region_backend;
+int region_output;
+
+// ============================================================
+// INICIA LA BIBLIOTECA.
+//
+// Pone a cero la contabilidad y los tres bloques, y
+// escribe el plan de solape: la region 1 (Source) vive
+// en el bloque 0 (A), la 2 (Frontend) en el 1 (B), la 3
+// (Compiler) en el 2 (C), la 4 (Backend) en el 1 (B, su
+// segunda vida) y la 5 (Output) en el 0 (A, su segunda
+// vida). Los tamanos de bloque de la sonda: A y B con
+// 1024 celdas, C con 512.
+// ============================================================
+
+void inicia_arena()
+{
+    int bloque_a[1024];
+    int bloque_b[1024];
+    int bloque_c[512];
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int i;
+    i = 0;
+    while (i < 1024)
+    {
+        bloque_a[i] = 0;
+        bloque_b[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 512)
+    {
+        bloque_c[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 6)
+    {
+        reg_bloque[i] = 0;
+        reg_reserva[i] = 0;
+        reg_usado[i] = 0;
+        reg_viva[i] = 0;
+        plan_bloque[i] = 0;
+        i = i + 1;
+    }
+    plan_bloque[1] = 0;
+    plan_bloque[2] = 1;
+    plan_bloque[3] = 2;
+    plan_bloque[4] = 1;
+    plan_bloque[5] = 0;
+    tam_bloque[0] = 1024;
+    tam_bloque[1] = 1024;
+    tam_bloque[2] = 512;
+    i = 0;
+    while (i < 3)
+    {
+        bloque_dueno[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 129)
+    {
+        est_region[i] = 0;
+        est_base[i] = 0;
+        est_cuenta[i] = 0;
+        est_cap[i] = 0;
+        est_tipo[i] = 0;
+        est_viva[i] = 0;
+        i = i + 1;
+    }
+    errores_arena = 0;
+    nest = 0;
+    prov_nacq = 0;
+    region_source = 0;
+    region_frontend = 0;
+    region_compiler = 0;
+    region_backend = 0;
+    region_output = 0;
+}
+
+// ============================================================
+// MEMORY PROVIDER.
+//
+// La puerta entre la biblioteca y la memoria fisica.
+// En V2 son subrutinas ordinarias: memory_acquire entrega
+// el bloque fisico que el plan de solape asigna a la
+// siguiente region por nacer (las regiones nacen en
+// orden: Source, Frontend, Compiler, Backend, Output) y
+// devuelve bloque + 1, o 0 si el bloque no alcanza o
+// sigue ocupado por su vida anterior. Nunca un bloque
+// invalido, nunca un valor a medias. memory_release
+// devuelve el bloque; memory_available da el tamano del
+// bloque libre mayor, en celdas.
+// ============================================================
+
+int memory_available()
+{
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int m;
+    int b;
+    m = 0;
+    b = 0;
+    while (b < 3)
+    {
+        if (bloque_dueno[b] == 0)
+        {
+            if (tam_bloque[b] > m)
+            {
+                m = tam_bloque[b];
+            }
+        }
+        b = b + 1;
+    }
+    return m;
+}
+
+int memory_acquire(int size)
+{
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int n;
+    int blk;
+    n = prov_nacq + 1;
+    if (n > 5)
+    {
+        return 0;
+    }
+    blk = plan_bloque[n];
+    if (size > tam_bloque[blk])
+    {
+        return 0;
+    }
+    if (bloque_dueno[blk] != 0)
+    {
+        return 0;
+    }
+    bloque_dueno[blk] = n;
+    prov_nacq = n;
+    return blk + 1;
+}
+
+void memory_release(int block)
+{
+    int bloque_dueno[3];
+    bloque_dueno[block - 1] = 0;
+}
+
+// ============================================================
+// MEMORY MANAGER.
+//
+// arena_create reserva el bloque inicial de la region y
+// devuelve su handle (0 = fallo, acusado en
+// errores_arena). El handle de la region es su numero de
+// nacimiento: 1 Source, 2 Frontend, 3 Compiler,
+// 4 Backend, 5 Output.
+// arena_alloc entrega un offset dentro de la region: el
+// espacio se entrega por avance (bump) con la alineacion
+// pedida en celdas; si no cabe en lo reservado, acusa y
+// devuelve -1 sin tocar nada. Ningun offset ya entregado
+// cambia jamas de significado.
+// arena_reset devuelve la region a vacia sin liberarla:
+// es la liberacion por fase, y de paso invalida las
+// estructuras que vivian en ella. arena_destroy la
+// libera del todo: el bloque vuelve al Provider y la
+// region muerta acusa si la llaman (la disciplina del
+// mapa contra handles de regiones muertas).
+// ============================================================
+
+int region_activa(int arena)
+{
+    int reg_viva[6];
+    int r;
+    r = 0;
+    if (arena >= 1)
+    {
+        if (arena <= 5)
+        {
+            if (reg_viva[arena] == 1)
+            {
+                r = 1;
+            }
+        }
+    }
+    return r;
+}
+
+int arena_create(int initial_size)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int b;
+    int r;
+    if (initial_size < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    b = memory_acquire(initial_size);
+    if (b == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    r = prov_nacq;
+    reg_bloque[r] = b - 1;
+    reg_reserva[r] = initial_size;
+    reg_usado[r] = 0;
+    reg_viva[r] = 1;
+    return r;
+}
+
+int arena_alloc(int arena, int size, int alignment)
+{
+    int reg_reserva[6];
+    int reg_usado[6];
+    int off;
+    int resto;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (size < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (alignment < 1)
+    {
+        alignment = 1;
+    }
+    off = reg_usado[arena];
+    resto = off - (off / alignment) * alignment;
+    if (resto != 0)
+    {
+        off = off + (alignment - resto);
+    }
+    if (off + size > reg_reserva[arena])
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    reg_usado[arena] = off + size;
+    return off;
+}
+
+void invalida_estructuras(int arena)
+{
+    int est_region[129];
+    int est_viva[129];
+    int e;
+    e = 1;
+    while (e <= nest)
+    {
+        if (est_region[e] == arena)
+        {
+            est_viva[e] = 0;
+        }
+        e = e + 1;
+    }
+}
+
+void arena_reset(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+}
+
+void arena_destroy(int arena)
+{
+    int reg_bloque[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+    reg_viva[arena] = 0;
+    memory_release(reg_bloque[arena] + 1);
+}
+
+int arena_get_used(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_usado[arena];
+}
+
+int arena_get_reserved(int arena)
+{
+    int reg_reserva[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_reserva[arena];
+}
+
+// ============================================================
+// ACCESO A CELDAS.
+//
+// La capa de acceso interna de la via V2: cada bloque es
+// un arreglo declarado y estas dos subrutinas son las
+// unicas que lo indexan por numero de bloque. Si un dia
+// se migra a la via V1, este es el interior que se
+// reescribe por peek/poke; la API publica no se entera.
+// ============================================================
+
+int celda_get(int bloque, int off)
+{
+    int bloque_a[1024];
+    int bloque_b[1024];
+    int bloque_c[512];
+    int r;
+    r = 0;
+    if (bloque == 0)
+    {
+        r = bloque_a[off];
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            r = bloque_b[off];
+        }
+        else
+        {
+            r = bloque_c[off];
+        }
+    }
+    return r;
+}
+
+void celda_set(int bloque, int off, int v)
+{
+    int bloque_a[1024];
+    int bloque_b[1024];
+    int bloque_c[512];
+    if (bloque == 0)
+    {
+        bloque_a[off] = v;
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            bloque_b[off] = v;
+        }
+        else
+        {
+            bloque_c[off] = v;
+        }
+    }
+}
+
+// ============================================================
+// LA CONTABILIDAD DE ESTRUCTURAS.
+//
+// DynamicArray, StringPool y ByteBuffer comparten la
+// misma contabilidad: por estructura, su region, la base
+// (offset de su bloque actual en la region), la cuenta,
+// la capacidad, el tipo (1 DynamicArray, 2 StringPool,
+// 3 ByteBuffer) y si vive. Los arreglos van indexados por
+// el handle de la estructura (1..128); el 0 es el fallo.
+// est_crece es el crecimiento geometrico x2, el mismo
+// para las tres clases: extension en el sitio si el
+// bloque de la estructura es el ultimo asignado de su
+// arena; si no, bloque nuevo al doble y copia, y el
+// bloque viejo queda como hueco hasta el reset de la
+// fase. La base puede cambiar al crecer con copia; los
+// handles de los datos no, porque un dato se referencia
+// por su indice dentro de la estructura, no por su
+// offset en la arena.
+// est_agrega es la unica puerta de registro: agrega al
+// final y devuelve el indice del elemento, o -1 si la
+// arena no pudo crecer (error ya acusado, una sola vez
+// por operacion fallida).
+// ============================================================
+
+int est_crea(int arena, int tipo, int capini)
+{
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int off;
+    int e;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (capini < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (nest >= 128)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(arena, capini, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    nest = nest + 1;
+    e = nest;
+    est_region[e] = arena;
+    est_base[e] = off;
+    est_cuenta[e] = 0;
+    est_cap[e] = capini;
+    est_tipo[e] = tipo;
+    est_viva[e] = 1;
+    return e;
+}
+
+int est_valida(int e, int tipo)
+{
+    int est_tipo[129];
+    int est_viva[129];
+    int r;
+    r = 0;
+    if (e >= 1)
+    {
+        if (e <= nest)
+        {
+            if (est_viva[e] == 1)
+            {
+                if (tipo == 0)
+                {
+                    r = 1;
+                }
+                else
+                {
+                    if (est_tipo[e] == tipo)
+                    {
+                        r = 1;
+                    }
+                }
+            }
+        }
+    }
+    return r;
+}
+
+int est_crece(int e)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int region;
+    int base;
+    int cap;
+    int nuevacap;
+    int off;
+    int blk;
+    int i;
+    region = est_region[e];
+    base = est_base[e];
+    cap = est_cap[e];
+    nuevacap = cap * 2;
+    if (base + cap == reg_usado[region])
+    {
+        if (reg_usado[region] + (nuevacap - cap) <= reg_reserva[region])
+        {
+            reg_usado[region] = reg_usado[region] + (nuevacap - cap);
+            est_cap[e] = nuevacap;
+            return 1;
+        }
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(region, nuevacap, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    blk = reg_bloque[region];
+    i = 0;
+    while (i < est_cuenta[e])
+    {
+        celda_set(blk, off + i, celda_get(blk, base + i));
+        i = i + 1;
+    }
+    est_base[e] = off;
+    est_cap[e] = nuevacap;
+    return 1;
+}
+
+int est_agrega(int e, int v)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int idx;
+    if (est_valida(e, 0) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (est_cuenta[e] == est_cap[e])
+    {
+        if (est_crece(e) == 0)
+        {
+            return -1;
+        }
+    }
+    idx = est_cuenta[e];
+    celda_set(reg_bloque[est_region[e]], est_base[e] + idx, v);
+    est_cuenta[e] = idx + 1;
+    return idx;
+}
+
+// ============================================================
+// DYNAMICARRAY.
+//
+// da_create nace con la capacidad inicial pedida (en
+// elementos) y devuelve el handle del arreglo (0 = fallo
+// acusado). da_add agrega al final creciendo como manda
+// est_crece y devuelve el indice del elemento o -1.
+// da_get / da_set leen y escriben por indice, con el
+// intervalo validado antes de tocar memoria: fuera de la
+// cuenta, acusan y no tocan nada. da_count, da_capacity
+// y da_base consultan la contabilidad (valen para las
+// tres clases de estructura); handle invalido da -1.
+// ============================================================
+
+int da_create(int arena, int initial_capacity)
+{
+    return est_crea(arena, 1, initial_capacity);
+}
+
+int da_add(int arr, int value)
+{
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(arr, value);
+}
+
+int da_get(int arr, int index)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[arr]], est_base[arr] + index);
+}
+
+void da_set(int arr, int index, int value)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[arr]], est_base[arr] + index, value);
+}
+
+int da_count(int arr)
+{
+    int est_cuenta[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[arr];
+}
+
+int da_capacity(int arr)
+{
+    int est_cap[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cap[arr];
+}
+
+int da_base(int arr)
+{
+    int est_base[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_base[arr];
+}
+
+// ============================================================
+// STRINGPOOL.
+//
+// La piscina dinamica: un buffer de caracteres que crece
+// en la region pedida. string_pool_add_char agrega un
+// caracter (guardado como byte, 0..255) y devuelve su
+// offset dentro de la piscina: ese offset es el ini de
+// las referencias. El formato de la referencia no
+// cambia: ini * 128 + largo, el de la piscina de hoy;
+// string_pool_len desempaqueta el largo y
+// string_pool_get_char lee el caracter ini + i. Los
+// handles son offsets: estables hasta la muerte de la
+// region, crezca lo que crezca la piscina.
+// ============================================================
+
+int string_pool_create(int arena)
+{
+    return est_crea(arena, 2, 4);
+}
+
+int string_pool_add_char(int pool, int ch)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(pool, ch & 255);
+}
+
+int string_pool_get_char(int pool, int ini, int i)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int idx;
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    idx = ini + i;
+    if (idx < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (idx >= est_cuenta[pool])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[pool]], est_base[pool] + idx);
+}
+
+int string_pool_len(int pool, int ref)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return ref - (ref / 128) * 128;
+}
+
+// ============================================================
+// BYTEBUFFER.
+//
+// El buffer de bytes que crece: el codigo del Emitter y
+// la imagen de los Writers. Una celda por byte, como
+// hoy, y cada byte guardado en 0..255.
+// bytebuffer_append agrega un byte al final y devuelve
+// su offset — la semantica de los placeholders del
+// Emitter, que ya devuelven el offset de su hueco.
+// bytebuffer_patch escribe en un offset ya entregado y
+// dentro de la cuenta: es el patch32 / patchRel32 de hoy
+// sin guarda de 256. bytebuffer_write copia count bytes
+// desde otro ByteBuffer (desde su src_offset) y los
+// agrega al final de este: lo que los Writers hacen al
+// ensamblar cabecera + codigo + datos; el intervalo de
+// origen se valida entero antes de copiar, asi que una
+// copia invalida acusa y no escribe nada.
+// bytebuffer_get lee un byte por offset, validado.
+// ============================================================
+
+int bytebuffer_create(int arena)
+{
+    return est_crea(arena, 3, 8);
+}
+
+int bytebuffer_append(int bb, int byte)
+{
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(bb, byte & 255);
+}
+
+void bytebuffer_patch(int bb, int offset, int byte)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[bb]], est_base[bb] + offset, byte & 255);
+}
+
+void bytebuffer_write(int bb, int src, int src_offset, int count)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int blk;
+    int i;
+    int v;
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (est_valida(src, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (count < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset + count > est_cuenta[src])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    blk = reg_bloque[est_region[src]];
+    i = 0;
+    while (i < count)
+    {
+        v = celda_get(blk, est_base[src] + src_offset + i);
+        if (est_agrega(bb, v) < 0)
+        {
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+int bytebuffer_get(int bb, int offset)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[bb]], est_base[bb] + offset);
+}
+
+int bytebuffer_get_size(int bb)
+{
+    int est_cuenta[129];
+    if (est_valida(bb, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[bb];
+}
+
+// ============================================================
+// SONDA DE LA ARENA (M-0).
+//
+// Recorre la vida entera de una compilacion en miniatura
+// y vuelca la corriente numerica que el puerto Python
+// independiente calcula desde el mapa. En orden:
+//   Fase 0: la memoria disponible al arrancar y la
+//     guarda en cero.
+//   Fase 1: Source nace con reserva 256; tres alloc
+//     sucesivos devuelven offsets crecientes (el tercero
+//     pide alineacion 4 y salta de 150 a 152) y
+//     arena_get_used avanza tras cada uno.
+//   Fase 2: Frontend nace; un DynamicArray crece dos
+//     veces con copia (su base se mueve 0 -> 6 -> 18 y
+//     no pierde un elemento) y otro se extiende en el
+//     sitio por ser el ultimo bloque (su base no se
+//     mueve: 34 -> 34). da_set y da_get cierran la fase.
+//   Fase 3: Compiler nace; el StringPool guarda "KC",
+//     crece dos veces y la referencia ini * 128 + largo
+//     sigue leyendo lo mismo: los handles son estables.
+//     Una segunda cadena ("V2") nace tras los
+//     crecimientos y se lee por su referencia.
+//   Fase 4: Frontend muere y Backend nace sobre el mismo
+//     bloque B: su primer alloc vuelve al offset 0.
+//     arena_reset lo deja en 0 y el siguiente alloc
+//     reutiliza el offset 0.
+//   Fase 5: Source muere y Output nace sobre el bloque
+//     A; el ByteBuffer emite tres bytes, deja un hueco de
+//     cuatro, copia dos bytes de otro ByteBuffer (y al
+//     crecer con copia su base se mueve a 16), parchea
+//     el hueco y se lee entero.
+//   Fase 6: la guarda. Compiler se llena hasta su tope
+//     (256) y un alloc mas devuelve -1: errores_arena
+//     cierra en 1 y lo usado queda en su tope.
+// ============================================================
+
+void sonda_arena()
+{
+    int rs;
+    int rf;
+    int rc;
+    int rb;
+    int ro;
+    int a1;
+    int a2;
+    int a3;
+    int pool;
+    int bb;
+    int bb2;
+    int ini;
+    int ref;
+    int ini2;
+    int ref2;
+    int t;
+    t = memory_available();
+    print_int(t);
+    print_int(errores_arena);
+    rs = arena_create(256);
+    region_source = rs;
+    print_int(rs);
+    t = arena_get_reserved(rs);
+    print_int(t);
+    t = arena_alloc(rs, 100, 1);
+    print_int(t);
+    t = arena_get_used(rs);
+    print_int(t);
+    t = arena_alloc(rs, 50, 1);
+    print_int(t);
+    t = arena_get_used(rs);
+    print_int(t);
+    t = arena_alloc(rs, 10, 4);
+    print_int(t);
+    t = arena_get_used(rs);
+    print_int(t);
+    rf = arena_create(512);
+    region_frontend = rf;
+    print_int(rf);
+    a1 = da_create(rf, 4);
+    print_int(a1);
+    t = da_add(a1, 101);
+    print_int(t);
+    t = da_add(a1, 102);
+    print_int(t);
+    t = da_add(a1, 103);
+    print_int(t);
+    t = da_add(a1, 104);
+    print_int(t);
+    a2 = da_create(rf, 2);
+    print_int(a2);
+    t = da_add(a1, 105);
+    print_int(t);
+    t = da_base(a1);
+    print_int(t);
+    t = da_capacity(a1);
+    print_int(t);
+    t = da_add(a1, 106);
+    print_int(t);
+    t = da_add(a1, 107);
+    print_int(t);
+    t = da_add(a1, 108);
+    print_int(t);
+    t = da_add(a2, 201);
+    print_int(t);
+    t = da_add(a2, 202);
+    print_int(t);
+    t = da_add(a2, 203);
+    print_int(t);
+    t = da_base(a2);
+    print_int(t);
+    t = da_add(a1, 109);
+    print_int(t);
+    t = da_count(a1);
+    print_int(t);
+    t = da_capacity(a1);
+    print_int(t);
+    t = da_base(a1);
+    print_int(t);
+    t = da_get(a1, 0);
+    print_int(t);
+    t = da_get(a1, 1);
+    print_int(t);
+    t = da_get(a1, 2);
+    print_int(t);
+    t = da_get(a1, 3);
+    print_int(t);
+    t = da_get(a1, 4);
+    print_int(t);
+    t = da_get(a1, 5);
+    print_int(t);
+    t = da_get(a1, 6);
+    print_int(t);
+    t = da_get(a1, 7);
+    print_int(t);
+    t = da_get(a1, 8);
+    print_int(t);
+    a3 = da_create(rf, 2);
+    print_int(a3);
+    t = da_base(a3);
+    print_int(t);
+    t = da_add(a3, 301);
+    print_int(t);
+    t = da_add(a3, 302);
+    print_int(t);
+    t = da_add(a3, 303);
+    print_int(t);
+    t = da_base(a3);
+    print_int(t);
+    t = da_capacity(a3);
+    print_int(t);
+    t = da_count(a3);
+    print_int(t);
+    t = da_get(a3, 0);
+    print_int(t);
+    t = da_get(a3, 1);
+    print_int(t);
+    t = da_get(a3, 2);
+    print_int(t);
+    da_set(a1, 0, 999);
+    t = da_get(a1, 0);
+    print_int(t);
+    t = arena_get_used(rf);
+    print_int(t);
+    rc = arena_create(256);
+    region_compiler = rc;
+    print_int(rc);
+    pool = string_pool_create(rc);
+    print_int(pool);
+    ini = string_pool_add_char(pool, 75);
+    print_int(ini);
+    t = string_pool_add_char(pool, 67);
+    print_int(t);
+    ref = ini * 128 + 2;
+    print_int(ref);
+    t = string_pool_add_char(pool, 65);
+    print_int(t);
+    t = string_pool_add_char(pool, 82);
+    print_int(t);
+    t = string_pool_add_char(pool, 69);
+    print_int(t);
+    t = string_pool_add_char(pool, 78);
+    print_int(t);
+    t = string_pool_add_char(pool, 65);
+    print_int(t);
+    t = string_pool_add_char(pool, 33);
+    print_int(t);
+    t = string_pool_add_char(pool, 88);
+    print_int(t);
+    t = string_pool_get_char(pool, 0, 0);
+    print_int(t);
+    t = string_pool_get_char(pool, 0, 1);
+    print_int(t);
+    t = string_pool_len(pool, ref);
+    print_int(t);
+    ini2 = string_pool_add_char(pool, 86);
+    print_int(ini2);
+    t = string_pool_add_char(pool, 50);
+    print_int(t);
+    ref2 = ini2 * 128 + 2;
+    print_int(ref2);
+    t = string_pool_get_char(pool, 9, 0);
+    print_int(t);
+    t = string_pool_get_char(pool, 9, 1);
+    print_int(t);
+    t = arena_get_used(rc);
+    print_int(t);
+    arena_destroy(rf);
+    t = memory_available();
+    print_int(t);
+    rb = arena_create(512);
+    region_backend = rb;
+    print_int(rb);
+    t = arena_alloc(rb, 8, 1);
+    print_int(t);
+    t = arena_get_used(rb);
+    print_int(t);
+    arena_reset(rb);
+    t = arena_get_used(rb);
+    print_int(t);
+    t = arena_alloc(rb, 8, 1);
+    print_int(t);
+    arena_destroy(rs);
+    ro = arena_create(512);
+    region_output = ro;
+    print_int(ro);
+    bb = bytebuffer_create(ro);
+    print_int(bb);
+    t = bytebuffer_append(bb, 85);
+    print_int(t);
+    t = bytebuffer_append(bb, 137);
+    print_int(t);
+    t = bytebuffer_append(bb, 229);
+    print_int(t);
+    t = bytebuffer_append(bb, 0);
+    print_int(t);
+    t = bytebuffer_append(bb, 0);
+    print_int(t);
+    t = bytebuffer_append(bb, 0);
+    print_int(t);
+    t = bytebuffer_append(bb, 0);
+    print_int(t);
+    bb2 = bytebuffer_create(ro);
+    print_int(bb2);
+    t = bytebuffer_append(bb2, 144);
+    print_int(t);
+    t = bytebuffer_append(bb2, 144);
+    print_int(t);
+    bytebuffer_write(bb, bb2, 0, 2);
+    t = bytebuffer_get_size(bb);
+    print_int(t);
+    t = da_base(bb);
+    print_int(t);
+    bytebuffer_patch(bb, 3, 120);
+    bytebuffer_patch(bb, 4, 86);
+    bytebuffer_patch(bb, 5, 52);
+    bytebuffer_patch(bb, 6, 18);
+    t = bytebuffer_get(bb, 0);
+    print_int(t);
+    t = bytebuffer_get(bb, 1);
+    print_int(t);
+    t = bytebuffer_get(bb, 2);
+    print_int(t);
+    t = bytebuffer_get(bb, 3);
+    print_int(t);
+    t = bytebuffer_get(bb, 4);
+    print_int(t);
+    t = bytebuffer_get(bb, 5);
+    print_int(t);
+    t = bytebuffer_get(bb, 6);
+    print_int(t);
+    t = bytebuffer_get(bb, 7);
+    print_int(t);
+    t = bytebuffer_get(bb, 8);
+    print_int(t);
+    t = arena_get_used(rc);
+    print_int(t);
+    t = arena_alloc(rc, 240, 1);
+    print_int(t);
+    t = arena_alloc(rc, 1, 1);
+    print_int(t);
+    t = arena_get_used(rc);
+    print_int(t);
+    print_int(errores_arena);
+}
+
+int main()
+{
+    inicia_arena();
+    sonda_arena();
+    return 0;
+}
