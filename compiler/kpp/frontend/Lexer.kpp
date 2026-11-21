@@ -31,6 +31,923 @@
 // por token), y al final tok_count y errores. Aceptacion:
 // 27 tokens, 0 errores con FUENTE.KPP, tok_valor 42 en los
 // tokens 8 y 14, y los mismos numeros en tu KolibriOS.
+// Migracion M-3 (2026-11-21): el texto fuente vive en
+// un ByteBuffer de SourceArena — se lee de FUENTE.KPP
+// en un bloque de lectura de 1024 celdas (en
+// produccion, bloques de hasta 65536: el MaxBytes del
+// contrato de file_read) y el buffer crece al
+// volcarlo — y la tabla de tokens en los cuatro
+// DynamicArray de FrontendArena, nacidos a 256: la
+// vieja guarda es hoy capacidad de nacimiento y la
+// tabla crece. La sonda conserva intacta la corriente
+// sellada y gana dos movimientos: el crecimiento mas
+// alla de 256 y la acusacion con reserva diminuta.
+
+// ============================================================
+// LA BIBLIOTECA ARENA, INCORPORADA.
+//
+// K++ no tiene includes: un archivo es un programa, y
+// las piezas se componen por copia identica, como los
+// enum que emisor y consumidor se reparten. Lo que
+// sigue es la biblioteca de M-0 (compiler/kpp/runtime/
+// Arena.kpp, sellada en campo 108/108) sin su sonda ni
+// su main, con tres ajustes de dimension para esta
+// pieza, declarados: el bloque B se declara a 8192
+// celdas (la reserva de FrontendArena que la sonda de
+// crecimiento de esta pieza pide; en la biblioteca de
+// M-0 era de 1024, dimension de su sonda), el bucle de
+// cero de inicia_arena se parte en dos al dejar A y B
+// de medir lo mismo, y el comentario de tamanos de
+// inicia_arena dice los de esta pieza. Nada mas
+// cambia: ni una firma, ni una mecanica.
+// ============================================================
+
+// ============================================================
+// ESTADO COMPARTIDO.
+//
+// Los contadores de la biblioteca y los handles de las
+// cinco regiones, compartidos por nombre como en las
+// demas piezas. El driver guarda en region_source ..
+// region_output el handle de cada region al crearla.
+// errores_arena es la guarda comun: suma 1 por cada
+// operacion que la biblioteca no pudo cumplir, y ninguna
+// operacion fallida escribe fuera ni a medias.
+// ============================================================
+
+int errores_arena;
+int nest;
+int prov_nacq;
+int region_source;
+int region_frontend;
+int region_compiler;
+int region_backend;
+int region_output;
+
+// ============================================================
+// INICIA LA BIBLIOTECA.
+//
+// Pone a cero la contabilidad y los tres bloques, y
+// escribe el plan de solape: la region 1 (Source) vive
+// en el bloque 0 (A), la 2 (Frontend) en el 1 (B), la 3
+// (Compiler) en el 2 (C), la 4 (Backend) en el 1 (B, su
+// segunda vida) y la 5 (Output) en el 0 (A, su segunda
+// vida). Los tamanos de bloque de esta pieza: A con
+// 1024 celdas, B con 8192, C con 512.
+// ============================================================
+
+void inicia_arena()
+{
+    int bloque_a[1024];
+    int bloque_b[8192];
+    int bloque_c[512];
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int i;
+    i = 0;
+    while (i < 1024)
+    {
+        bloque_a[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 8192)
+    {
+        bloque_b[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 512)
+    {
+        bloque_c[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 6)
+    {
+        reg_bloque[i] = 0;
+        reg_reserva[i] = 0;
+        reg_usado[i] = 0;
+        reg_viva[i] = 0;
+        plan_bloque[i] = 0;
+        i = i + 1;
+    }
+    plan_bloque[1] = 0;
+    plan_bloque[2] = 1;
+    plan_bloque[3] = 2;
+    plan_bloque[4] = 1;
+    plan_bloque[5] = 0;
+    tam_bloque[0] = 1024;
+    tam_bloque[1] = 8192;
+    tam_bloque[2] = 512;
+    i = 0;
+    while (i < 3)
+    {
+        bloque_dueno[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 129)
+    {
+        est_region[i] = 0;
+        est_base[i] = 0;
+        est_cuenta[i] = 0;
+        est_cap[i] = 0;
+        est_tipo[i] = 0;
+        est_viva[i] = 0;
+        i = i + 1;
+    }
+    errores_arena = 0;
+    nest = 0;
+    prov_nacq = 0;
+    region_source = 0;
+    region_frontend = 0;
+    region_compiler = 0;
+    region_backend = 0;
+    region_output = 0;
+}
+
+// ============================================================
+// MEMORY PROVIDER.
+//
+// La puerta entre la biblioteca y la memoria fisica.
+// En V2 son subrutinas ordinarias: memory_acquire entrega
+// el bloque fisico que el plan de solape asigna a la
+// siguiente region por nacer (las regiones nacen en
+// orden: Source, Frontend, Compiler, Backend, Output) y
+// devuelve bloque + 1, o 0 si el bloque no alcanza o
+// sigue ocupado por su vida anterior. Nunca un bloque
+// invalido, nunca un valor a medias. memory_release
+// devuelve el bloque; memory_available da el tamano del
+// bloque libre mayor, en celdas.
+// ============================================================
+
+int memory_available()
+{
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int m;
+    int b;
+    m = 0;
+    b = 0;
+    while (b < 3)
+    {
+        if (bloque_dueno[b] == 0)
+        {
+            if (tam_bloque[b] > m)
+            {
+                m = tam_bloque[b];
+            }
+        }
+        b = b + 1;
+    }
+    return m;
+}
+
+int memory_acquire(int size)
+{
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int n;
+    int blk;
+    n = prov_nacq + 1;
+    if (n > 5)
+    {
+        return 0;
+    }
+    blk = plan_bloque[n];
+    if (size > tam_bloque[blk])
+    {
+        return 0;
+    }
+    if (bloque_dueno[blk] != 0)
+    {
+        return 0;
+    }
+    bloque_dueno[blk] = n;
+    prov_nacq = n;
+    return blk + 1;
+}
+
+void memory_release(int block)
+{
+    int bloque_dueno[3];
+    bloque_dueno[block - 1] = 0;
+}
+
+// ============================================================
+// MEMORY MANAGER.
+//
+// arena_create reserva el bloque inicial de la region y
+// devuelve su handle (0 = fallo, acusado en
+// errores_arena). El handle de la region es su numero de
+// nacimiento: 1 Source, 2 Frontend, 3 Compiler,
+// 4 Backend, 5 Output.
+// arena_alloc entrega un offset dentro de la region: el
+// espacio se entrega por avance (bump) con la alineacion
+// pedida en celdas; si no cabe en lo reservado, acusa y
+// devuelve -1 sin tocar nada. Ningun offset ya entregado
+// cambia jamas de significado.
+// arena_reset devuelve la region a vacia sin liberarla:
+// es la liberacion por fase, y de paso invalida las
+// estructuras que vivian en ella. arena_destroy la
+// libera del todo: el bloque vuelve al Provider y la
+// region muerta acusa si la llaman (la disciplina del
+// mapa contra handles de regiones muertas).
+// ============================================================
+
+int region_activa(int arena)
+{
+    int reg_viva[6];
+    int r;
+    r = 0;
+    if (arena >= 1)
+    {
+        if (arena <= 5)
+        {
+            if (reg_viva[arena] == 1)
+            {
+                r = 1;
+            }
+        }
+    }
+    return r;
+}
+
+int arena_create(int initial_size)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int b;
+    int r;
+    if (initial_size < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    b = memory_acquire(initial_size);
+    if (b == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    r = prov_nacq;
+    reg_bloque[r] = b - 1;
+    reg_reserva[r] = initial_size;
+    reg_usado[r] = 0;
+    reg_viva[r] = 1;
+    return r;
+}
+
+int arena_alloc(int arena, int size, int alignment)
+{
+    int reg_reserva[6];
+    int reg_usado[6];
+    int off;
+    int resto;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (size < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (alignment < 1)
+    {
+        alignment = 1;
+    }
+    off = reg_usado[arena];
+    resto = off - (off / alignment) * alignment;
+    if (resto != 0)
+    {
+        off = off + (alignment - resto);
+    }
+    if (off + size > reg_reserva[arena])
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    reg_usado[arena] = off + size;
+    return off;
+}
+
+void invalida_estructuras(int arena)
+{
+    int est_region[129];
+    int est_viva[129];
+    int e;
+    e = 1;
+    while (e <= nest)
+    {
+        if (est_region[e] == arena)
+        {
+            est_viva[e] = 0;
+        }
+        e = e + 1;
+    }
+}
+
+void arena_reset(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+}
+
+void arena_destroy(int arena)
+{
+    int reg_bloque[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+    reg_viva[arena] = 0;
+    memory_release(reg_bloque[arena] + 1);
+}
+
+int arena_get_used(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_usado[arena];
+}
+
+int arena_get_reserved(int arena)
+{
+    int reg_reserva[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_reserva[arena];
+}
+
+// ============================================================
+// ACCESO A CELDAS.
+//
+// La capa de acceso interna de la via V2: cada bloque es
+// un arreglo declarado y estas dos subrutinas son las
+// unicas que lo indexan por numero de bloque. Si un dia
+// se migra a la via V1, este es el interior que se
+// reescribe por peek/poke; la API publica no se entera.
+// ============================================================
+
+int celda_get(int bloque, int off)
+{
+    int bloque_a[1024];
+    int bloque_b[8192];
+    int bloque_c[512];
+    int r;
+    r = 0;
+    if (bloque == 0)
+    {
+        r = bloque_a[off];
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            r = bloque_b[off];
+        }
+        else
+        {
+            r = bloque_c[off];
+        }
+    }
+    return r;
+}
+
+void celda_set(int bloque, int off, int v)
+{
+    int bloque_a[1024];
+    int bloque_b[8192];
+    int bloque_c[512];
+    if (bloque == 0)
+    {
+        bloque_a[off] = v;
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            bloque_b[off] = v;
+        }
+        else
+        {
+            bloque_c[off] = v;
+        }
+    }
+}
+
+// ============================================================
+// LA CONTABILIDAD DE ESTRUCTURAS.
+//
+// DynamicArray, StringPool y ByteBuffer comparten la
+// misma contabilidad: por estructura, su region, la base
+// (offset de su bloque actual en la region), la cuenta,
+// la capacidad, el tipo (1 DynamicArray, 2 StringPool,
+// 3 ByteBuffer) y si vive. Los arreglos van indexados por
+// el handle de la estructura (1..128); el 0 es el fallo.
+// est_crece es el crecimiento geometrico x2, el mismo
+// para las tres clases: extension en el sitio si el
+// bloque de la estructura es el ultimo asignado de su
+// arena; si no, bloque nuevo al doble y copia, y el
+// bloque viejo queda como hueco hasta el reset de la
+// fase. La base puede cambiar al crecer con copia; los
+// handles de los datos no, porque un dato se referencia
+// por su indice dentro de la estructura, no por su
+// offset en la arena.
+// est_agrega es la unica puerta de registro: agrega al
+// final y devuelve el indice del elemento, o -1 si la
+// arena no pudo crecer (error ya acusado, una sola vez
+// por operacion fallida).
+// ============================================================
+
+int est_crea(int arena, int tipo, int capini)
+{
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int off;
+    int e;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (capini < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (nest >= 128)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(arena, capini, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    nest = nest + 1;
+    e = nest;
+    est_region[e] = arena;
+    est_base[e] = off;
+    est_cuenta[e] = 0;
+    est_cap[e] = capini;
+    est_tipo[e] = tipo;
+    est_viva[e] = 1;
+    return e;
+}
+
+int est_valida(int e, int tipo)
+{
+    int est_tipo[129];
+    int est_viva[129];
+    int r;
+    r = 0;
+    if (e >= 1)
+    {
+        if (e <= nest)
+        {
+            if (est_viva[e] == 1)
+            {
+                if (tipo == 0)
+                {
+                    r = 1;
+                }
+                else
+                {
+                    if (est_tipo[e] == tipo)
+                    {
+                        r = 1;
+                    }
+                }
+            }
+        }
+    }
+    return r;
+}
+
+int est_crece(int e)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int region;
+    int base;
+    int cap;
+    int nuevacap;
+    int off;
+    int blk;
+    int i;
+    region = est_region[e];
+    base = est_base[e];
+    cap = est_cap[e];
+    nuevacap = cap * 2;
+    if (base + cap == reg_usado[region])
+    {
+        if (reg_usado[region] + (nuevacap - cap) <= reg_reserva[region])
+        {
+            reg_usado[region] = reg_usado[region] + (nuevacap - cap);
+            est_cap[e] = nuevacap;
+            return 1;
+        }
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(region, nuevacap, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    blk = reg_bloque[region];
+    i = 0;
+    while (i < est_cuenta[e])
+    {
+        celda_set(blk, off + i, celda_get(blk, base + i));
+        i = i + 1;
+    }
+    est_base[e] = off;
+    est_cap[e] = nuevacap;
+    return 1;
+}
+
+int est_agrega(int e, int v)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int idx;
+    if (est_valida(e, 0) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (est_cuenta[e] == est_cap[e])
+    {
+        if (est_crece(e) == 0)
+        {
+            return -1;
+        }
+    }
+    idx = est_cuenta[e];
+    celda_set(reg_bloque[est_region[e]], est_base[e] + idx, v);
+    est_cuenta[e] = idx + 1;
+    return idx;
+}
+
+// ============================================================
+// DYNAMICARRAY.
+//
+// da_create nace con la capacidad inicial pedida (en
+// elementos) y devuelve el handle del arreglo (0 = fallo
+// acusado). da_add agrega al final creciendo como manda
+// est_crece y devuelve el indice del elemento o -1.
+// da_get / da_set leen y escriben por indice, con el
+// intervalo validado antes de tocar memoria: fuera de la
+// cuenta, acusan y no tocan nada. da_count, da_capacity
+// y da_base consultan la contabilidad (valen para las
+// tres clases de estructura); handle invalido da -1.
+// ============================================================
+
+int da_create(int arena, int initial_capacity)
+{
+    return est_crea(arena, 1, initial_capacity);
+}
+
+int da_add(int arr, int value)
+{
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(arr, value);
+}
+
+int da_get(int arr, int index)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[arr]], est_base[arr] + index);
+}
+
+void da_set(int arr, int index, int value)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[arr]], est_base[arr] + index, value);
+}
+
+int da_count(int arr)
+{
+    int est_cuenta[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[arr];
+}
+
+int da_capacity(int arr)
+{
+    int est_cap[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cap[arr];
+}
+
+int da_base(int arr)
+{
+    int est_base[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_base[arr];
+}
+
+// ============================================================
+// STRINGPOOL.
+//
+// La piscina dinamica: un buffer de caracteres que crece
+// en la region pedida. string_pool_add_char agrega un
+// caracter (guardado como byte, 0..255) y devuelve su
+// offset dentro de la piscina: ese offset es el ini de
+// las referencias. El formato de la referencia no
+// cambia: ini * 128 + largo, el de la piscina de hoy;
+// string_pool_len desempaqueta el largo y
+// string_pool_get_char lee el caracter ini + i. Los
+// handles son offsets: estables hasta la muerte de la
+// region, crezca lo que crezca la piscina.
+// ============================================================
+
+int string_pool_create(int arena)
+{
+    return est_crea(arena, 2, 4);
+}
+
+int string_pool_add_char(int pool, int ch)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(pool, ch & 255);
+}
+
+int string_pool_get_char(int pool, int ini, int i)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int idx;
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    idx = ini + i;
+    if (idx < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (idx >= est_cuenta[pool])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[pool]], est_base[pool] + idx);
+}
+
+int string_pool_len(int pool, int ref)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return ref - (ref / 128) * 128;
+}
+
+// ============================================================
+// BYTEBUFFER.
+//
+// El buffer de bytes que crece: el codigo del Emitter y
+// la imagen de los Writers. Una celda por byte, como
+// hoy, y cada byte guardado en 0..255.
+// bytebuffer_append agrega un byte al final y devuelve
+// su offset — la semantica de los placeholders del
+// Emitter, que ya devuelven el offset de su hueco.
+// bytebuffer_patch escribe en un offset ya entregado y
+// dentro de la cuenta: es el patch32 / patchRel32 de hoy
+// sin guarda de 256. bytebuffer_write copia count bytes
+// desde otro ByteBuffer (desde su src_offset) y los
+// agrega al final de este: lo que los Writers hacen al
+// ensamblar cabecera + codigo + datos; el intervalo de
+// origen se valida entero antes de copiar, asi que una
+// copia invalida acusa y no escribe nada.
+// bytebuffer_get lee un byte por offset, validado.
+// ============================================================
+
+int bytebuffer_create(int arena)
+{
+    return est_crea(arena, 3, 8);
+}
+
+int bytebuffer_append(int bb, int byte)
+{
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(bb, byte & 255);
+}
+
+void bytebuffer_patch(int bb, int offset, int byte)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[bb]], est_base[bb] + offset, byte & 255);
+}
+
+void bytebuffer_write(int bb, int src, int src_offset, int count)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int blk;
+    int i;
+    int v;
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (est_valida(src, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (count < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset + count > est_cuenta[src])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    blk = reg_bloque[est_region[src]];
+    i = 0;
+    while (i < count)
+    {
+        v = celda_get(blk, est_base[src] + src_offset + i);
+        if (est_agrega(bb, v) < 0)
+        {
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+int bytebuffer_get(int bb, int offset)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[bb]], est_base[bb] + offset);
+}
+
+int bytebuffer_get_size(int bb)
+{
+    int est_cuenta[129];
+    if (est_valida(bb, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[bb];
+}
 
 // ============================================================
 // ESTADO COMPARTIDO (DATA) — el contrato de arrays:
@@ -46,13 +963,77 @@ int tok_count;
 int errores;
 
 // ============================================================
+// HANDLES DE LA ARENA (M-3).
+//
+// bfuente es el ByteBuffer de SourceArena donde vive
+// el texto fuente; dt_tipo, dt_inicio, dt_largo y
+// dt_valor son los cuatro DynamicArray de
+// FrontendArena donde vive la tabla de tokens. Los
+// crea reinicia_lexer y los consume escanea: el mismo
+// papel que antes hacian los arreglos fuente[1024] y
+// tok_*[256], con la disciplina de la arena: registrar
+// es crecer o acusar.
+// ============================================================
+
+int bfuente;
+int dt_tipo;
+int dt_inicio;
+int dt_largo;
+int dt_valor;
+
+// ============================================================
+// INICIA EL LEXER.
+//
+// El papel del driver en miniatura, como en las demas
+// piezas migradas: inicia la biblioteca y hace nacer
+// las dos regiones de la fase del lexer en el orden
+// del plan de solape: Source sobre el bloque A con la
+// reserva entera del bloque (1024) y Frontend sobre
+// el bloque B con la reserva entera del bloque
+// (8192). Compiler, Backend y Output nacen en sus
+// fases, en las piezas que las gobiernan. No imprime
+// nada: la corriente de la sonda queda intacta.
+// ============================================================
+
+void inicia_lexer()
+{
+    inicia_arena();
+    region_source = arena_create(1024);
+    region_frontend = arena_create(8192);
+}
+
+// ============================================================
+// REINICIA EL LEXER.
+//
+// Crea las estructuras de la fase y deja el contador
+// de la pieza en cero, como reinicia_emit en M-2: el
+// ByteBuffer del fuente en SourceArena y los cuatro
+// DynamicArray de tokens en FrontendArena, nacidos a
+// 256 — la vieja guarda como capacidad de nacimiento,
+// ya no como techo: al registrar el token 257 la
+// estructura crece.
+// ============================================================
+
+void reinicia_lexer()
+{
+    bfuente = bytebuffer_create(region_source);
+    dt_tipo = da_create(region_frontend, 256);
+    dt_inicio = da_create(region_frontend, 256);
+    dt_largo = da_create(region_frontend, 256);
+    dt_valor = da_create(region_frontend, 256);
+    errores = 0;
+}
+
+// ============================================================
 // ESCANEA — EL LEXER COMO SUBRUTINA (el contrato
 // compartido, rebanada 14).
 //
-// Lee fuente[0..total) y registra cada token en la
-// tabla compartida: tok_tipo, tok_inicio, tok_largo
-// y tok_valor — el valor numerico ya calculado para
-// los Number, acumulado digito a digito al escanear.
+// Lee el ByteBuffer del fuente (bfuente, offsets
+// 0..total) y registra cada token en la tabla
+// compartida: los DynamicArray dt_tipo, dt_inicio,
+// dt_largo y dt_valor de FrontendArena — el valor
+// numerico ya calculado para los Number, acumulado
+// digito a digito al escanear.
 // Los errores lexicos se suman al errores compartido
 // (escanea no lo pone a cero: en el programa acoplado
 // cada corrida lo reinicia antes).
@@ -66,11 +1047,6 @@ int errores;
 // ============================================================
 void escanea()
 {
-    int fuente[1024];
-    int tok_tipo[256];
-    int tok_inicio[256];
-    int tok_largo[256];
-    int tok_valor[256];
     int inicio = 0;
     int largo = 0;
     int tipo = 0;
@@ -82,7 +1058,7 @@ void escanea()
     tok_count = 0;
     while (pos < total)
     {
-        c = fuente[pos];
+        c = bytebuffer_get(bfuente, pos);
         hay_token = 0;
         tipo = 0;
         inicio = pos;
@@ -98,14 +1074,14 @@ void escanea()
             d = 0;
             if (pos + 1 < total)
             {
-                d = fuente[pos + 1];
+                d = bytebuffer_get(bfuente, pos + 1);
             }
             if (d == 47)
             {
                 pos = pos + 2;
                 while (pos < total)
                 {
-                    c = fuente[pos];
+                    c = bytebuffer_get(bfuente, pos);
                     if (c == 10)
                     {
                         break;
@@ -124,7 +1100,7 @@ void escanea()
         {
             while (pos < total)
             {
-                c = fuente[pos];
+                c = bytebuffer_get(bfuente, pos);
                 if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95)
                 {
                     pos = pos + 1;
@@ -138,9 +1114,9 @@ void escanea()
             tipo = 1;
             if (largo == 2)
             {
-                if (fuente[inicio] == 105)
+                if (bytebuffer_get(bfuente, inicio) == 105)
                 {
-                    if (fuente[inicio + 1] == 102)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 102)
                     {
                         tipo = 10;
                     }
@@ -148,21 +1124,21 @@ void escanea()
             }
             if (largo == 3)
             {
-                if (fuente[inicio] == 105)
+                if (bytebuffer_get(bfuente, inicio) == 105)
                 {
-                    if (fuente[inicio + 1] == 110)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 110)
                     {
-                        if (fuente[inicio + 2] == 116)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 116)
                         {
                             tipo = 4;
                         }
                     }
                 }
-                if (fuente[inicio] == 102)
+                if (bytebuffer_get(bfuente, inicio) == 102)
                 {
-                    if (fuente[inicio + 1] == 111)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 111)
                     {
-                        if (fuente[inicio + 2] == 114)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 114)
                         {
                             tipo = 41;
                         }
@@ -171,36 +1147,36 @@ void escanea()
             }
             if (largo == 4)
             {
-                if (fuente[inicio] == 101)
+                if (bytebuffer_get(bfuente, inicio) == 101)
                 {
-                    if (fuente[inicio + 1] == 110)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 110)
                     {
-                        if (fuente[inicio + 2] == 117)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 117)
                         {
-                            if (fuente[inicio + 3] == 109)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 109)
                             {
                                 tipo = 7;
                             }
                         }
                     }
-                    if (fuente[inicio + 1] == 108)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 108)
                     {
-                        if (fuente[inicio + 2] == 115)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 115)
                         {
-                            if (fuente[inicio + 3] == 101)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 101)
                             {
                                 tipo = 11;
                             }
                         }
                     }
                 }
-                if (fuente[inicio] == 118)
+                if (bytebuffer_get(bfuente, inicio) == 118)
                 {
-                    if (fuente[inicio + 1] == 111)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 111)
                     {
-                        if (fuente[inicio + 2] == 105)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 105)
                         {
-                            if (fuente[inicio + 3] == 100)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 100)
                             {
                                 tipo = 39;
                             }
@@ -210,15 +1186,15 @@ void escanea()
             }
             if (largo == 5)
             {
-                if (fuente[inicio] == 112)
+                if (bytebuffer_get(bfuente, inicio) == 112)
                 {
-                    if (fuente[inicio + 1] == 114)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 114)
                     {
-                        if (fuente[inicio + 2] == 105)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 105)
                         {
-                            if (fuente[inicio + 3] == 110)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 110)
                             {
-                                if (fuente[inicio + 4] == 116)
+                                if (bytebuffer_get(bfuente, inicio + 4) == 116)
                                 {
                                     tipo = 9;
                                 }
@@ -226,15 +1202,15 @@ void escanea()
                         }
                     }
                 }
-                if (fuente[inicio] == 119)
+                if (bytebuffer_get(bfuente, inicio) == 119)
                 {
-                    if (fuente[inicio + 1] == 104)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 104)
                     {
-                        if (fuente[inicio + 2] == 105)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 105)
                         {
-                            if (fuente[inicio + 3] == 108)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 108)
                             {
-                                if (fuente[inicio + 4] == 101)
+                                if (bytebuffer_get(bfuente, inicio + 4) == 101)
                                 {
                                     tipo = 12;
                                 }
@@ -242,15 +1218,15 @@ void escanea()
                         }
                     }
                 }
-                if (fuente[inicio] == 98)
+                if (bytebuffer_get(bfuente, inicio) == 98)
                 {
-                    if (fuente[inicio + 1] == 114)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 114)
                     {
-                        if (fuente[inicio + 2] == 101)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 101)
                         {
-                            if (fuente[inicio + 3] == 97)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 97)
                             {
-                                if (fuente[inicio + 4] == 107)
+                                if (bytebuffer_get(bfuente, inicio + 4) == 107)
                                 {
                                     tipo = 40;
                                 }
@@ -261,30 +1237,30 @@ void escanea()
             }
             if (largo == 6)
             {
-                if (fuente[inicio] == 115)
+                if (bytebuffer_get(bfuente, inicio) == 115)
                 {
-                    if (fuente[inicio + 1] == 116)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 116)
                     {
-                        if (fuente[inicio + 2] == 114)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 114)
                         {
-                            if (fuente[inicio + 3] == 105)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 105)
                             {
-                                if (fuente[inicio + 4] == 110)
+                                if (bytebuffer_get(bfuente, inicio + 4) == 110)
                                 {
-                                    if (fuente[inicio + 5] == 103)
+                                    if (bytebuffer_get(bfuente, inicio + 5) == 103)
                                     {
                                         tipo = 5;
                                     }
                                 }
                             }
                         }
-                        if (fuente[inicio + 2] == 114)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 114)
                         {
-                            if (fuente[inicio + 3] == 117)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 117)
                             {
-                                if (fuente[inicio + 4] == 99)
+                                if (bytebuffer_get(bfuente, inicio + 4) == 99)
                                 {
-                                    if (fuente[inicio + 5] == 116)
+                                    if (bytebuffer_get(bfuente, inicio + 5) == 116)
                                     {
                                         tipo = 6;
                                     }
@@ -293,17 +1269,17 @@ void escanea()
                         }
                     }
                 }
-                if (fuente[inicio] == 114)
+                if (bytebuffer_get(bfuente, inicio) == 114)
                 {
-                    if (fuente[inicio + 1] == 101)
+                    if (bytebuffer_get(bfuente, inicio + 1) == 101)
                     {
-                        if (fuente[inicio + 2] == 116)
+                        if (bytebuffer_get(bfuente, inicio + 2) == 116)
                         {
-                            if (fuente[inicio + 3] == 117)
+                            if (bytebuffer_get(bfuente, inicio + 3) == 117)
                             {
-                                if (fuente[inicio + 4] == 114)
+                                if (bytebuffer_get(bfuente, inicio + 4) == 114)
                                 {
-                                    if (fuente[inicio + 5] == 110)
+                                    if (bytebuffer_get(bfuente, inicio + 5) == 110)
                                     {
                                         tipo = 8;
                                     }
@@ -328,7 +1304,7 @@ void escanea()
             {
                 if (pos + 1 < total)
                 {
-                    if (fuente[pos + 1] == 120 || fuente[pos + 1] == 88)
+                    if (bytebuffer_get(bfuente, pos + 1) == 120 || bytebuffer_get(bfuente, pos + 1) == 88)
                     {
                         d = 16;
                         pos = pos + 2;
@@ -337,7 +1313,7 @@ void escanea()
             }
             while (pos < total)
             {
-                c = fuente[pos];
+                c = bytebuffer_get(bfuente, pos);
                 if (c >= 48 && c <= 57)
                 {
                     valor = valor * d + (c - 48);
@@ -379,7 +1355,7 @@ void escanea()
             inicio = pos;
             while (pos < total)
             {
-                c = fuente[pos];
+                c = bytebuffer_get(bfuente, pos);
                 if (c == 34)
                 {
                     break;
@@ -399,7 +1375,7 @@ void escanea()
             d = 0;
             if (pos + 1 < total)
             {
-                d = fuente[pos + 1];
+                d = bytebuffer_get(bfuente, pos + 1);
             }
             if (c == 43)
             {
@@ -619,39 +1595,74 @@ void escanea()
 
         if (hay_token == 1)
         {
-            if (tok_count < 256)
+            if (da_add(dt_tipo, tipo) < 0)
             {
-                tok_tipo[tok_count] = tipo;
-                tok_inicio[tok_count] = inicio;
-                tok_largo[tok_count] = largo;
-                tok_valor[tok_count] = valor;
-                tok_count = tok_count + 1;
+                errores = errores + 1;
             }
             else
             {
-                errores = errores + 1;
+                da_add(dt_inicio, inicio);
+                da_add(dt_largo, largo);
+                da_add(dt_valor, valor);
+                tok_count = tok_count + 1;
             }
         }
     }
     pos = 0;
 }
 
+// ============================================================
+// SONDA DE LA PIEZA (M-3).
+//
+// Tres movimientos, una sola corriente:
+//   1. El de siempre: lee FUENTE.KPP en un bloque, lo
+//      vuelca al ByteBuffer de SourceArena, escanea e
+//      imprime la tabla — la corriente sellada, valor
+//      a valor (27 tokens, 0 errores).
+//   2. Crecimiento: una fuente sintetica de 599
+//      tokens (300 numeros y 299 signos +, generada
+//      en el propio ByteBuffer) hace crecer los
+//      cuatro DynamicArray dos veces (256 -> 512 ->
+//      1024) y la sonda imprime cuentas, capacidad,
+//      tamanos y usados de las dos regiones e
+//      integridad en los indices 0, 256 y 598, con
+//      los dos contadores de error en cero.
+//   3. Acusacion: mundo nuevo con FrontendArena de
+//      reserva 1024 — los cuatro nacimientos
+//      (4 x 256) caben justos y el primer crecimiento
+//      no —; la misma fuente sintetica registra 256
+//      tokens y los 343 restantes acusan por partida
+//      doble (errores de la pieza y errores_arena).
+// ============================================================
+
 int main()
 {
-    int fuente[1024];
-    int tok_tipo[256];
-    int tok_inicio[256];
-    int tok_largo[256];
-    int tok_valor[256];
+    int bloque_lectura[1024];
     int i = 0;
+    int n = 0;
 
-    total = file_read("FUENTE.KPP", fuente);
+    inicia_lexer();
+    reinicia_lexer();
 
-    if (total < 0)
+    n = file_read("FUENTE.KPP", bloque_lectura);
+
+    if (n < 0)
     {
-        print_int(total);
+        print_int(n);
         return 1;
     }
+
+    i = 0;
+    while (i < n)
+    {
+        if (bytebuffer_append(bfuente, bloque_lectura[i]) < 0)
+        {
+            errores = errores + 1;
+            break;
+        }
+        i = i + 1;
+    }
+    total = bytebuffer_get_size(bfuente);
 
     print("TOKENS");
 
@@ -659,13 +1670,74 @@ int main()
 
     for (i = 0; i < tok_count; i = i + 1)
     {
-        print_int(tok_tipo[i]);
-        print_int(tok_inicio[i]);
-        print_int(tok_largo[i]);
-        print_int(tok_valor[i]);
+        print_int(da_get(dt_tipo, i));
+        print_int(da_get(dt_inicio, i));
+        print_int(da_get(dt_largo, i));
+        print_int(da_get(dt_valor, i));
     }
     print_int(tok_count);
     print_int(errores);
+
+    inicia_lexer();
+    reinicia_lexer();
+
+    i = 0;
+    while (i < 300)
+    {
+        bytebuffer_append(bfuente, 49);
+        if (i < 299)
+        {
+            bytebuffer_append(bfuente, 43);
+        }
+        i = i + 1;
+    }
+    total = bytebuffer_get_size(bfuente);
+
+    escanea();
+
+    print_int(tok_count);
+    print_int(da_count(dt_tipo));
+    print_int(da_count(dt_valor));
+    print_int(da_capacity(dt_tipo));
+    print_int(bytebuffer_get_size(bfuente));
+    print_int(arena_get_used(region_source));
+    print_int(arena_get_used(region_frontend));
+    print_int(da_get(dt_tipo, 0));
+    print_int(da_get(dt_inicio, 0));
+    print_int(da_get(dt_valor, 0));
+    print_int(da_get(dt_tipo, 256));
+    print_int(da_get(dt_inicio, 256));
+    print_int(da_get(dt_valor, 256));
+    print_int(da_get(dt_tipo, 598));
+    print_int(da_get(dt_inicio, 598));
+    print_int(da_get(dt_valor, 598));
+    print_int(errores);
+    print_int(errores_arena);
+
+    inicia_arena();
+    region_source = arena_create(1024);
+    region_frontend = arena_create(1024);
+    reinicia_lexer();
+
+    i = 0;
+    while (i < 300)
+    {
+        bytebuffer_append(bfuente, 49);
+        if (i < 299)
+        {
+            bytebuffer_append(bfuente, 43);
+        }
+        i = i + 1;
+    }
+    total = bytebuffer_get_size(bfuente);
+
+    escanea();
+
+    print_int(tok_count);
+    print_int(da_count(dt_tipo));
+    print_int(da_count(dt_valor));
+    print_int(errores);
+    print_int(errores_arena);
 
     return 0;
 }
