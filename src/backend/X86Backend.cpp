@@ -2034,6 +2034,29 @@ X86Backend::generate(
                     rightIt->second.registerCode == 0)
                 {
                     /*
+                     * EBX actúa como lanzadera: el POP EBX
+                     * de esta ruta lo sobrescribe con el
+                     * operando derecho. Si un temporal vivo
+                     * ajeno a la operación reside en EBX,
+                     * hay que derramarlo antes; si no, el
+                     * POP destruye su valor y el mapa de
+                     * temporales queda falso. (Criterio de
+                     * CMP_GT CASO 4, aplicado a EBX.)
+                     */
+                    const std::string ebxTemporary =
+                        temporaryInRegister(3);
+
+                    if (!ebxTemporary.empty() &&
+                        ebxTemporary != left &&
+                        ebxTemporary != right)
+                    {
+                        spillTemporary(
+                            ebxTemporary,
+                            data,
+                            temporarySpillPatches);
+                    }
+
+                    /*
                      * Conservamos el operando derecho.
                      */
                     emitter.emitPushEax();
@@ -2347,6 +2370,29 @@ X86Backend::generate(
                         TemporaryLocation::Kind::Register &&
                     rightIt->second.registerCode == 0)
                 {
+                    /*
+                     * EBX actúa como lanzadera: el POP EBX
+                     * de esta ruta lo sobrescribe con el
+                     * operando derecho. Si un temporal vivo
+                     * ajeno a la operación reside en EBX,
+                     * hay que derramarlo antes; si no, el
+                     * POP destruye su valor y el mapa de
+                     * temporales queda falso. (Criterio de
+                     * CMP_GT CASO 4, aplicado a EBX.)
+                     */
+                    const std::string ebxTemporary =
+                        temporaryInRegister(3);
+
+                    if (!ebxTemporary.empty() &&
+                        ebxTemporary != left &&
+                        ebxTemporary != right)
+                    {
+                        spillTemporary(
+                            ebxTemporary,
+                            data,
+                            temporarySpillPatches);
+                    }
+
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
@@ -2574,6 +2620,29 @@ X86Backend::generate(
                         TemporaryLocation::Kind::Register &&
                     rightIt->second.registerCode == 0)
                 {
+                    /*
+                     * EBX actúa como lanzadera: el POP EBX
+                     * de esta ruta lo sobrescribe con el
+                     * operando derecho. Si un temporal vivo
+                     * ajeno a la operación reside en EBX,
+                     * hay que derramarlo antes; si no, el
+                     * POP destruye su valor y el mapa de
+                     * temporales queda falso. (Criterio de
+                     * CMP_GT CASO 4, aplicado a EBX.)
+                     */
+                    const std::string ebxTemporary =
+                        temporaryInRegister(3);
+
+                    if (!ebxTemporary.empty() &&
+                        ebxTemporary != left &&
+                        ebxTemporary != right)
+                    {
+                        spillTemporary(
+                            ebxTemporary,
+                            data,
+                            temporarySpillPatches);
+                    }
+
                     emitter.emitPushEax();
 
                     const std::size_t patchOffset =
@@ -2829,6 +2898,32 @@ X86Backend::generate(
                     throw std::runtime_error(
                         "K++ X86Backend: NOT usa temporal inexistente: " +
                         operand);
+                }
+
+                /*
+                 * Si el operando no está en EAX, las ramas
+                 * siguientes sobrescriben EAX para recibirlo
+                 * (MOV EAX, EBX o MOV EAX, [operando]). Un
+                 * temporal vivo ajeno que resida en EAX debe
+                 * derramarse antes; si no, su valor se
+                 * destruye y el mapa de temporales queda
+                 * falso. (Criterio de CMP_GT CASO 4.)
+                 */
+                if (it->second.kind !=
+                        TemporaryLocation::Kind::Register ||
+                    it->second.registerCode != 0)
+                {
+                    const std::string eaxTemporary =
+                        temporaryInRegister(0);
+
+                    if (!eaxTemporary.empty() &&
+                        eaxTemporary != operand)
+                    {
+                        spillTemporary(
+                            eaxTemporary,
+                            data,
+                            temporarySpillPatches);
+                    }
                 }
 
                 if (it->second.kind == TemporaryLocation::Kind::Register &&
