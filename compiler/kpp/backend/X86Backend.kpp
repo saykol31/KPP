@@ -139,6 +139,33 @@
 // y detiene la pasada. JumpIfNotZero (56) no tiene
 // rama en el oraculo: el paseo lo deja pasar sin
 // emitir nada.
+//
+// Rebanada B-7 (2026-11-22): llamadas del paseo —
+// la rama Call de generate() (opcode 39) y la
+// pasada de relleno de los parches de llamada al
+// final de genera(), tras la de control de flujo
+// (el orden del oraculo: PATCH CONTROL FLOW y
+// despues PATCH FUNCTION CALLS), con la misma
+// formula: rel = destino - (hueco + 4), buscando
+// la funcion en la tabla de entradas; la primera
+// que falte acusa y detiene la pasada. La rama
+// verifica nombre y resultado antes de tocar
+// nada, derrama todos los temporales vivos en
+// registro (las filas vivas de la tabla, ntmp),
+// parsea los argumentos del operando por comas
+// (la referencia de cada uno es la de su
+// subcadena; segmento vacio o temporal
+// inexistente acusa), empuja los argumentos 2..
+// en orden inverso cargandolos a EAX por su
+// reten, normaliza los argumentos 0 y 1 con las
+// siete combinaciones del oraculo, libera los
+// argumentos, emite E8 + hueco, registra el
+// parche de llamada, retira los de la pila con
+// ADD ESP, (n-2)*4 y liga el resultado a EAX.
+// StringConst (3) ya tenia su rama y su registro
+// desde B-2; su pasada de relleno resuelve
+// contra dataBase y es de B-9, como quedo
+// declarado en la cabecera de GENERA.
 
 enum TemporaryLocationKind
 {
@@ -1215,6 +1242,8 @@ int detq_pos;
 int netq;
 int dfc_fun;
 int dfc_pos;
+int darg;
+int ndarg;
 
 // ============================================================
 // ESTADO DE LA MAQUINARIA.
@@ -2920,6 +2949,82 @@ void rellena_cf()
     }
 }
 
+int em_call_hueco()
+{
+    em_byte(232);
+    return em_hueco();
+}
+
+void em_add_esp_imm(int v)
+{
+    em_byte(129);
+    em_byte(196);
+    em_dword(v);
+}
+
+int carga_mem_eax(int tmp, int off)
+{
+    int pos;
+    pos = emite_reten_eax();
+    if (pos < 0)
+    {
+        return -1;
+    }
+    registra_reload(tmp, pos, off);
+    return 0;
+}
+
+void registra_arg(int ref)
+{
+    if (ndarg < da_count(darg))
+    {
+        da_set(darg, ndarg, ref);
+    }
+    else
+    {
+        da_add(darg, ref);
+    }
+    ndarg = ndarg + 1;
+}
+
+int lee_arg(int i)
+{
+    return da_get(darg, i);
+}
+
+int busca_entrada(int fun)
+{
+    int i;
+    i = 0;
+    while (i < ndent)
+    {
+        if (da_get(dent_fun, i) == fun)
+        {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+void rellena_fc()
+{
+    int i;
+    int fila;
+    i = 0;
+    while (i < nfc)
+    {
+        fila = busca_entrada(da_get(dfc_fun, i));
+        if (fila < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        parche32(da_get(dfc_pos, i), da_get(dent_pos, fila) - (da_get(dfc_pos, i) + 4));
+        i = i + 1;
+    }
+}
+
 int em_sub_esp_hueco()
 {
     em_byte(129);
@@ -3112,6 +3217,8 @@ void genera()
     int n2;
     int cte;
     int dereax;
+    int argx;
+    int narg;
     dent_fun = da_create(region_backend, 256);
     dent_pos = da_create(region_backend, 256);
     dret_pos = da_create(region_backend, 256);
@@ -3124,6 +3231,8 @@ void genera()
     detq_pos = da_create(region_backend, 256);
     dcf_fun = da_create(region_backend, 256);
     netq = 0;
+    darg = da_create(region_backend, 256);
+    ndarg = 0;
     fun_actual = 0;
     pos_main = 0;
     idx_sc = 0;
@@ -4238,6 +4347,229 @@ void genera()
             }
             registra_cf2(fun_actual, nom, pos);
         }
+        else if (op == 39)
+        {
+            if (nom == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (res == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            n2 = ntmp;
+            i2 = 0;
+            while (i2 < n2)
+            {
+                if (da_get(dtmp_kind, i2) == 0)
+                {
+                    derrama_tmp(da_get(dtmp_nom, i2));
+                }
+                i2 = i2 + 1;
+            }
+            ndarg = 0;
+            narg = 0;
+            if (texto_len(ope) > 0)
+            {
+                ppos = 0;
+                largo = texto_len(ope);
+                while (1)
+                {
+                    coma = -1;
+                    j = ppos;
+                    while (j < largo)
+                    {
+                        if (texto_char(ope, j) == 44)
+                        {
+                            coma = j;
+                            j = largo;
+                        }
+                        else
+                        {
+                            j = j + 1;
+                        }
+                    }
+                    fin = largo;
+                    if (coma >= 0)
+                    {
+                        fin = coma;
+                    }
+                    a = ppos;
+                    z = fin;
+                    while (a < z && texto_char(ope, a) == 32)
+                    {
+                        a = a + 1;
+                    }
+                    while (z > a && texto_char(ope, z - 1) == 32)
+                    {
+                        z = z - 1;
+                    }
+                    if (a >= z)
+                    {
+                        errores_back = errores_back + 1;
+                        return;
+                    }
+                    refpar = (texto_ini(ope) + a) * 128 + (z - a);
+                    if (busca_tmp(refpar) < 0)
+                    {
+                        errores_back = errores_back + 1;
+                        return;
+                    }
+                    registra_arg(refpar);
+                    if (coma < 0)
+                    {
+                        break;
+                    }
+                    ppos = coma + 1;
+                }
+                narg = ndarg;
+                j = narg;
+                while (j > 2)
+                {
+                    j = j - 1;
+                    argx = lee_arg(j);
+                    fila = busca_tmp(argx);
+                    if (da_get(dtmp_kind, fila) == 1)
+                    {
+                        if (carga_mem_eax(argx, da_get(dtmp_off, fila)) < 0)
+                        {
+                            return;
+                        }
+                    }
+                    else if (da_get(dtmp_reg, fila) == 3)
+                    {
+                        em_mov_eax_ebx();
+                    }
+                    else if (da_get(dtmp_reg, fila) != 0)
+                    {
+                        errores_back = errores_back + 1;
+                        return;
+                    }
+                    em_push_eax();
+                }
+                izq = lee_arg(0);
+                fila = busca_tmp(izq);
+                ki = da_get(dtmp_kind, fila);
+                ri = da_get(dtmp_reg, fila);
+                if (narg == 1)
+                {
+                    if (ki == 1)
+                    {
+                        if (carga_mem_eax(izq, da_get(dtmp_off, fila)) < 0)
+                        {
+                            return;
+                        }
+                    }
+                    else if (ri == 3)
+                    {
+                        em_mov_eax_ebx();
+                    }
+                    else if (ri != 0)
+                    {
+                        errores_back = errores_back + 1;
+                        return;
+                    }
+                }
+                else
+                {
+                    der = lee_arg(1);
+                    fila2 = busca_tmp(der);
+                    kd = da_get(dtmp_kind, fila2);
+                    rd = da_get(dtmp_reg, fila2);
+                    if (ki == 0 && ri == 0 && kd == 0 && rd == 3)
+                    {
+                    }
+                    else if (ki == 0 && ri == 3 && kd == 0 && rd == 0)
+                    {
+                        em_push_eax();
+                        em_mov_eax_ebx();
+                        em_pop_ebx();
+                    }
+                    else if (ki == 0 && ri == 0 && kd == 1)
+                    {
+                        em_push_eax();
+                        if (carga_mem_eax(der, da_get(dtmp_off, fila2)) < 0)
+                        {
+                            return;
+                        }
+                        em_pop_ebx();
+                        em_push_eax();
+                        em_mov_eax_ebx();
+                        em_pop_ebx();
+                    }
+                    else if (ki == 0 && ri == 3 && kd == 1)
+                    {
+                        em_mov_eax_ebx();
+                        em_push_eax();
+                        if (carga_mem_eax(der, da_get(dtmp_off, fila2)) < 0)
+                        {
+                            return;
+                        }
+                        em_pop_ebx();
+                        em_push_eax();
+                        em_mov_eax_ebx();
+                        em_pop_ebx();
+                    }
+                    else if (ki == 1 && kd == 0 && rd == 0)
+                    {
+                        em_push_eax();
+                        if (carga_mem_eax(izq, da_get(dtmp_off, fila)) < 0)
+                        {
+                            return;
+                        }
+                        em_pop_ebx();
+                    }
+                    else if (ki == 1 && kd == 0 && rd == 3)
+                    {
+                        if (carga_mem_eax(izq, da_get(dtmp_off, fila)) < 0)
+                        {
+                            return;
+                        }
+                    }
+                    else if (ki == 1 && kd == 1)
+                    {
+                        if (carga_mem_eax(izq, da_get(dtmp_off, fila)) < 0)
+                        {
+                            return;
+                        }
+                        em_push_eax();
+                        if (carga_mem_eax(der, da_get(dtmp_off, fila2)) < 0)
+                        {
+                            return;
+                        }
+                        em_pop_ebx();
+                        em_push_eax();
+                        em_mov_eax_ebx();
+                        em_pop_ebx();
+                    }
+                    else
+                    {
+                        errores_back = errores_back + 1;
+                        return;
+                    }
+                }
+                libera_tmp(izq);
+                if (narg > 1)
+                {
+                    libera_tmp(der);
+                }
+                j = 2;
+                while (j < narg)
+                {
+                    libera_tmp(lee_arg(j));
+                    j = j + 1;
+                }
+            }
+            pos = em_call_hueco();
+            registra_fc(nom, pos);
+            if (narg > 2)
+            {
+                em_add_esp_imm((narg - 2) * 4);
+            }
+            liga_tmp_eax(res);
+        }
         else if (op == 40)
         {
             if (texto_len(ope) > 0)
@@ -4305,6 +4637,7 @@ void genera()
         guarda_contexto(fun_actual);
     }
     rellena_cf();
+    rellena_fc();
 }
 
 // ============================================================
@@ -6176,6 +6509,349 @@ void sonda_errores_flujo()
     imprime_flujo();
 }
 
+// ============================================================
+// SONDA B-7: LLAMADAS Y CADENAS.
+//
+// Tras las sondas B-1 a B-6 enteras (la conservacion
+// de 8.979 valores), siete movimientos de llamadas,
+// cada uno en su mundo: la llamada simple hacia
+// atras con su normalizacion (memoria, memoria), la
+// de tres argumentos con el tercero por la pila y
+// su ADD ESP, 4, la anidada (el resultado de una es
+// el argumento de la otra), la llamada hacia
+// adelante que el relleno resuelve, StringConst
+// como argumento y sola (su parche queda registrado
+// y su relleno es de B-9), la llamada sin argumentos
+// y los cinco errores (sin funcion destino, sin
+// temporal resultado, argumento inexistente,
+// argumento vacio y funcion no definida en la
+// pasada de relleno). Cada movimiento vuelca el
+// codigo ya rellenado, el estado de genera, las
+// listas, la maquinaria, los errores y el flujo.
+// ============================================================
+
+void sonda_llamada_simple()
+{
+    int r_suma;
+    int r_opep;
+    int ini_p;
+    int r_a;
+    int r_b;
+    int r_ope;
+    int ini_o;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_main;
+    int r_ope2;
+    int ini_o2;
+    int r_u0;
+    int r_u1;
+    int r_u2;
+    mundo2();
+    r_suma = tx4(115, 117, 109, 97);
+    r_opep = tx4(97, 44, 32, 98);
+    ini_p = r_opep / 128;
+    r_a = ini_p * 128 + 1;
+    r_b = (ini_p + 3) * 128 + 1;
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_o = r_ope / 128;
+    r_t0 = ini_o * 128 + 2;
+    r_t1 = (ini_o + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    r_main = tx4(109, 97, 105, 110);
+    r_ope2 = tx6(37, 48, 44, 32, 37, 49);
+    ini_o2 = r_ope2 / 128;
+    r_u0 = ini_o2 * 128 + 2;
+    r_u1 = (ini_o2 + 4) * 128 + 2;
+    r_u2 = tx2(37, 50);
+    registra_ir(0, r_suma, r_opep, 0, 0);
+    registra_ir(6, r_a, 0, r_t0, 0);
+    registra_ir(6, r_b, 0, r_t1, 0);
+    registra_ir(11, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_u0, 30);
+    registra_ir(2, 0, 0, r_u1, 12);
+    registra_ir(39, r_suma, r_ope2, r_u2, 0);
+    registra_ir(40, 0, r_u2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_llamada_tres()
+{
+    int r_tres;
+    int r_opep;
+    int ini_p;
+    int r_a;
+    int r_b;
+    int r_c;
+    int r_ope;
+    int ini_o;
+    int r_t0;
+    int r_t1;
+    int r_ope2;
+    int ini_o2;
+    int r_t2;
+    int r_t3;
+    int r_t4;
+    int r_main;
+    int r_ope3;
+    int ini_o3;
+    int r_u0;
+    int r_u1;
+    int r_u2;
+    int r_u3;
+    mundo2();
+    r_tres = tx4(116, 114, 101, 115);
+    r_opep = tx6(97, 44, 32, 98, 44, 32);
+    tx1(99);
+    ini_p = r_opep / 128;
+    r_opep = ini_p * 128 + 7;
+    r_a = ini_p * 128 + 1;
+    r_b = (ini_p + 3) * 128 + 1;
+    r_c = (ini_p + 6) * 128 + 1;
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_o = r_ope / 128;
+    r_t0 = ini_o * 128 + 2;
+    r_t1 = (ini_o + 4) * 128 + 2;
+    r_ope2 = tx6(37, 50, 44, 32, 37, 51);
+    ini_o2 = r_ope2 / 128;
+    r_t2 = ini_o2 * 128 + 2;
+    r_t3 = (ini_o2 + 4) * 128 + 2;
+    r_t4 = tx2(37, 52);
+    r_main = tx4(109, 97, 105, 110);
+    r_ope3 = tx6(37, 48, 44, 32, 37, 49);
+    tx4(44, 32, 37, 50);
+    ini_o3 = r_ope3 / 128;
+    r_ope3 = ini_o3 * 128 + 10;
+    r_u0 = ini_o3 * 128 + 2;
+    r_u1 = (ini_o3 + 4) * 128 + 2;
+    r_u2 = (ini_o3 + 8) * 128 + 2;
+    r_u3 = tx2(37, 51);
+    registra_ir(0, r_tres, r_opep, 0, 0);
+    registra_ir(6, r_a, 0, r_t0, 0);
+    registra_ir(6, r_b, 0, r_t1, 0);
+    registra_ir(11, 0, r_ope, r_t2, 0);
+    registra_ir(6, r_c, 0, r_t3, 0);
+    registra_ir(11, 0, r_ope2, r_t4, 0);
+    registra_ir(40, 0, r_t4, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_u0, 1);
+    registra_ir(2, 0, 0, r_u1, 2);
+    registra_ir(2, 0, 0, r_u2, 3);
+    registra_ir(39, r_tres, r_ope3, r_u3, 0);
+    registra_ir(40, 0, r_u3, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_llamada_anidada()
+{
+    int r_dobl;
+    int r_a;
+    int r_ope;
+    int ini_o;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_main;
+    int r_u0;
+    int r_u1;
+    int r_u2;
+    mundo2();
+    r_dobl = tx4(100, 111, 98, 108);
+    r_a = tx1(97);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_o = r_ope / 128;
+    r_t0 = ini_o * 128 + 2;
+    r_t1 = (ini_o + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    r_main = tx4(109, 97, 105, 110);
+    r_u0 = tx2(37, 48);
+    r_u1 = tx2(37, 49);
+    r_u2 = tx2(37, 50);
+    registra_ir(0, r_dobl, r_a, 0, 0);
+    registra_ir(6, r_a, 0, r_t0, 0);
+    registra_ir(6, r_a, 0, r_t1, 0);
+    registra_ir(11, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_u0, 5);
+    registra_ir(39, r_dobl, r_u0, r_u1, 0);
+    registra_ir(39, r_dobl, r_u1, r_u2, 0);
+    registra_ir(40, 0, r_u2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_llamada_adelante()
+{
+    int r_main;
+    int r_u0;
+    int r_u1;
+    int r_tard;
+    int r_a;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_u0 = tx2(37, 48);
+    r_u1 = tx2(37, 49);
+    r_tard = tx4(116, 97, 114, 100);
+    r_a = tx1(97);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_u0, 9);
+    registra_ir(39, r_tard, r_u0, r_u1, 0);
+    registra_ir(40, 0, r_u1, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_tard, r_a, 0, 0);
+    registra_ir(6, r_a, 0, r_u0, 0);
+    registra_ir(40, 0, r_u0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_llamada_cadena()
+{
+    int r_mues;
+    int r_a;
+    int r_main;
+    int r_hola;
+    int r_s0;
+    int r_s1;
+    int r_chao;
+    int r_s2;
+    mundo2();
+    r_mues = tx4(109, 117, 101, 115);
+    r_a = tx1(97);
+    r_main = tx4(109, 97, 105, 110);
+    r_hola = tx4(72, 111, 108, 97);
+    r_s0 = tx2(37, 48);
+    r_s1 = tx2(37, 49);
+    r_chao = tx4(67, 104, 97, 111);
+    r_s2 = tx2(37, 50);
+    registra_ir(0, r_mues, r_a, 0, 0);
+    registra_ir(40, 0, 0, 0, 7);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(3, r_hola, 0, r_s0, 0);
+    registra_ir(39, r_mues, r_s0, r_s1, 0);
+    registra_ir(3, r_chao, 0, r_s2, 0);
+    registra_ir(40, 0, r_s1, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_llamada_sin_args()
+{
+    int r_salu;
+    int r_main;
+    int r_u0;
+    mundo2();
+    r_salu = tx4(115, 97, 108, 117);
+    r_main = tx4(109, 97, 105, 110);
+    r_u0 = tx2(37, 48);
+    registra_ir(0, r_salu, 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 3);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(39, r_salu, 0, r_u0, 0);
+    registra_ir(40, 0, r_u0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_errores_llamada()
+{
+    int r_main;
+    int r_t0;
+    int r_salu;
+    int r_t9;
+    int r_t1;
+    int r_ope;
+    int ini_o;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(39, 0, 0, r_t0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_salu = tx4(115, 97, 108, 117);
+    r_main = tx4(109, 97, 105, 110);
+    registra_ir(0, r_salu, 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 3);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(39, r_salu, 0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_salu = tx4(115, 97, 108, 117);
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_t9 = tx2(37, 57);
+    r_t1 = tx2(37, 49);
+    registra_ir(0, r_salu, 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 3);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 5);
+    registra_ir(39, r_salu, r_t9, r_t1, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_salu = tx4(115, 97, 108, 117);
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx3(37, 48, 44);
+    ini_o = r_ope / 128;
+    r_t0 = ini_o * 128 + 2;
+    r_t1 = tx2(37, 49);
+    registra_ir(0, r_salu, 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 3);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 5);
+    registra_ir(39, r_salu, r_ope, r_t1, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx4(110, 111, 112, 101);
+    r_t9 = tx2(37, 48);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(39, r_t0, 0, r_t9, 0);
+    registra_ir(40, 0, r_t9, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
 int main()
 {
     sonda_backend_b1();
@@ -6224,5 +6900,12 @@ int main()
     sonda_salto_no_cero();
     sonda_dos_funciones();
     sonda_errores_flujo();
+    sonda_llamada_simple();
+    sonda_llamada_tres();
+    sonda_llamada_anidada();
+    sonda_llamada_adelante();
+    sonda_llamada_cadena();
+    sonda_llamada_sin_args();
+    sonda_errores_llamada();
     return 0;
 }
