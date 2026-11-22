@@ -40,6 +40,30 @@
 // de reserva diminuta. Sin generate() todavia: la
 // maquinaria es B-1 y el paseo es B-2, que naceran
 // sobre arenas.
+// Rebanada B-1 (2026-11-21): la maquinaria, sin generate().
+// Entran los temporales con su asignador (EAX primero,
+// EBX despues, derrama el de EAX: la politica exacta de
+// allocateRegisterForTemporary), el derrame y la recarga
+// con sus emisiones al ByteBuffer de codigo y sus
+// registros en las listas de M-1, el marco EBP con sus
+// ranuras compartidas (allocateFrameSlot sirve a los
+// derrames y a las locales de pila) y los tres retenes
+// (emitMovEax/Ebx/EcxFramePlaceholder: 8B 85 / 8B 9D /
+// 8B 8D con el desplazamiento a cero y su offset de
+// parche en size + 2), y las variables con sus contextos
+// por funcion (el mapa de trabajo sembrado de globales
+// en cada reinicia_variables, los contextos guardados
+// por guarda_contexto para las pasadas de resolucion).
+// Todo vive en 24 DynamicArray mas de BackendArena y en
+// dos ByteBuffer (codigo y datos), nacidos en
+// reinicia_back tras las 18 listas. Las diferencias de
+// forma con el oraculo quedan declaradas en el modulo
+// ESTADO DE LA MAQUINARIA. Lo que no entra: el prologo y
+// el cierre emitidos del marco (son del paseo, B-2), el
+// paseo mismo, y el alias de arreglos por nombre con su
+// limpieza de nombres por funcion (sharedArrayOffsets,
+// sharedArraySizes, functionArrayNames: son de Declare
+// de arreglos, B-8).
 
 enum TemporaryLocationKind
 {
@@ -1113,6 +1137,90 @@ int dfc_fun;
 int dfc_pos;
 
 // ============================================================
+// ESTADO DE LA MAQUINARIA.
+//
+//
+// Los contadores y handles de la rebanada B-1. Las
+// tablas de temporales (nombre, clase, registro,
+// desplazamiento), de constantes de temporales (nombre,
+// valor), de variables del contexto vivo y de globales
+// (nombre, offset en DATA, si es de pila, offset de
+// pila, capacidad), el directorio de contextos
+// guardados (funcion, fila inicial, filas) y las filas
+// guardadas: 24 DynamicArray de BackendArena nacidos a
+// 256 en reinicia_back, tras las listas. El codigo que
+// la maquinaria emite (guardados de derrame y retenes
+// de recarga) va al ByteBuffer dcod y la reserva de
+// datos de allocateVariableData al ByteBuffer ddat;
+// ambos nacen a 8, como manda bytebuffer_create.
+// La clase del temporal es el enum de la cabecera:
+// 0 = Register, 1 = Memory; el registro es el codigo
+// fisico (EAX = 0, EBX = 3) y el desplazamiento de
+// memoria es la ranura del marco (-4, -8, ...).
+// El estado del marco: frame_activo y frame_slots, los
+// miembros frameActive y frameSlots del oraculo.
+// Convenciones de la pieza frente al oraculo, declaradas:
+// - Donde Stage 0 lanza (throw), la pieza acusa en
+//   errores_back y devuelve un centinela (-1 o 0, que
+//   nunca son valores validos en esos puestos), sin
+//   escribir nada mas; la ranura quemada por un derrame
+//   de registro no soportado si se consume, como alli.
+// - Borrar un temporal o una constante es el erase del
+//   mapa: la ultima fila ocupa el hueco (swap), porque
+//   el oraculo guarda mapas sin orden y la pieza filas
+//   con orden; el unico lector sensible al orden,
+//   temporaryInRegister, pregunta por un registro que
+//   por construccion tiene un solo dueno.
+// - Un contexto guardado dos veces vale por el ultimo:
+//   contexto_de busca desde el final del directorio,
+//   como la asignacion del mapa del oraculo.
+// - abre_marco y cierra_marco transcriben solo la mitad
+//   de estado de FunctionBegin y de
+//   finishCurrentFunctionFrame (marco activo, ranuras a
+//   cero); la mitad emitida (prologo, SUB ESP con su
+//   reten, parche del tamano) es del paseo, B-2.
+// - anota_const transcribe la escritura en linea de
+//   generate() sobre temporaryConstants; declara_var_
+//   pila transcribe su escritura en linea de la local de
+//   pila (isStackLocal) en Declare.
+// ============================================================
+
+int ntmp;
+int ncon;
+int nvar;
+int nglo;
+int nctx;
+int nsv;
+int frame_activo;
+int frame_slots;
+int dtmp_nom;
+int dtmp_kind;
+int dtmp_reg;
+int dtmp_off;
+int dcon_nom;
+int dcon_val;
+int dvar_nom;
+int dvar_dat;
+int dvar_stack;
+int dvar_soff;
+int dvar_cap;
+int dglo_nom;
+int dglo_dat;
+int dglo_stack;
+int dglo_soff;
+int dglo_cap;
+int dctx_fun;
+int dctx_ini;
+int dctx_n;
+int dsv_nom;
+int dsv_dat;
+int dsv_stack;
+int dsv_soff;
+int dsv_cap;
+int dcod;
+int ddat;
+
+// ============================================================
 // REINICIA EL BACKEND.
 //
 // Pone a cero el andamiaje (el codigo y las tablas de
@@ -1126,7 +1234,10 @@ int dfc_pos;
 // como capacidad inicial, ya no como techo: crecen por
 // la geometria de la biblioteca. El llamador crea
 // BackendArena antes (region_backend) y los handles
-// quedan en los escalares compartidos.
+// quedan en los escalares compartidos. La rebanada B-1
+// agrega al final los nacimientos de la maquinaria:
+// las 24 tablas del modulo ESTADO DE LA MAQUINARIA y
+// los dos ByteBuffer, codigo y datos.
 // ============================================================
 
 void reinicia_back()
@@ -1164,6 +1275,14 @@ void reinicia_back()
     nsc = 0;
     ncf = 0;
     nfc = 0;
+    ntmp = 0;
+    ncon = 0;
+    nvar = 0;
+    nglo = 0;
+    nctx = 0;
+    nsv = 0;
+    frame_activo = 0;
+    frame_slots = 0;
     dvl_fun = da_create(region_backend, 256);
     dvl_nom = da_create(region_backend, 256);
     dvl_pos = da_create(region_backend, 256);
@@ -1182,6 +1301,32 @@ void reinicia_back()
     dcf_pos = da_create(region_backend, 256);
     dfc_fun = da_create(region_backend, 256);
     dfc_pos = da_create(region_backend, 256);
+    dtmp_nom = da_create(region_backend, 256);
+    dtmp_kind = da_create(region_backend, 256);
+    dtmp_reg = da_create(region_backend, 256);
+    dtmp_off = da_create(region_backend, 256);
+    dcon_nom = da_create(region_backend, 256);
+    dcon_val = da_create(region_backend, 256);
+    dvar_nom = da_create(region_backend, 256);
+    dvar_dat = da_create(region_backend, 256);
+    dvar_stack = da_create(region_backend, 256);
+    dvar_soff = da_create(region_backend, 256);
+    dvar_cap = da_create(region_backend, 256);
+    dglo_nom = da_create(region_backend, 256);
+    dglo_dat = da_create(region_backend, 256);
+    dglo_stack = da_create(region_backend, 256);
+    dglo_soff = da_create(region_backend, 256);
+    dglo_cap = da_create(region_backend, 256);
+    dctx_fun = da_create(region_backend, 256);
+    dctx_ini = da_create(region_backend, 256);
+    dctx_n = da_create(region_backend, 256);
+    dsv_nom = da_create(region_backend, 256);
+    dsv_dat = da_create(region_backend, 256);
+    dsv_stack = da_create(region_backend, 256);
+    dsv_soff = da_create(region_backend, 256);
+    dsv_cap = da_create(region_backend, 256);
+    dcod = bytebuffer_create(region_backend);
+    ddat = bytebuffer_create(region_backend);
 }
 
 // ============================================================
@@ -1382,41 +1527,901 @@ void imprime_listas()
 }
 
 // ============================================================
-// SONDA DEL BACKEND M-1: B-0 SOBRE ARENAS.
+// TEMPORALES.
 //
-// Tres tramos y un arranque. El arranque: las regiones
-// nacen en el orden del plan de la biblioteca, Frontend
-// muere y Backend hereda el bloque B con la reserva de
-// la pieza (32768 celdas); se imprime su handle, su
-// reserva y la guarda de la arena en cero. El tramo
-// basico: los registros conocidos de B-0 impresos por
-// imprime_listas — la misma corriente que la sonda de
-// B-0 daba en ese tramo. El crecimiento: la lista de
-// llamadas se llena hasta 257 (se imprime la capacidad:
-// 512, el primer crecimiento sobre el nacimiento a 256)
-// y despues hasta 3.000 — la demanda de FunctionCall
-// de Oxigen, imposible bajo la guarda vieja — y se
-// verifica la cuenta por partida doble (el contador de
-// la pieza y el de la biblioteca), la capacidad
-// crecida, las bases tras las copias, lo usado de la
-// region, la integridad del primer elemento, la del
-// borde 255/256 y la del ultimo, y las dos guardas en
-// cero. La acusacion: mundo nuevo (inicia_arena otra
-// vez) con una BackendArena de reserva diminuta (4864
-// celdas: caben los 18 nacimientos a 256, no el primer
-// crecimiento de 512); la lista se llena hasta 256 y
-// tres registros mas acusan en errores_back y en
-// errores_arena sin escribir fuera: las cuentas quedan
-// en 256 y la ultima ranura intacta.
+//
+// El mapa de temporales y su asignador, transcritos de
+// X86Backend.cpp. busca_tmp da la fila por nombre o -1.
+// inserta_tmp escribe una fila con la disciplina de la
+// casa: si la fila ya existe fisicamente la reescribe
+// con da_set; si es nueva entra por da_add con el nombre
+// de guarda. liga_tmp liga o actualiza (la actualizacion
+// a registro pone el desplazamiento a cero y la de
+// memoria el registro a cero, como la inicializacion
+// por agregado del oraculo). libera_tmp es el erase:
+// la ultima fila ocupa el hueco, y la constante del
+// temporal se borra con el, como en freeTemporary.
+// tmp_en_registro devuelve el nombre del dueno de un
+// registro o -1. reinicia_temporales pone las cuentas
+// a cero: las filas quedan para reuso.
 // ============================================================
 
-void sonda_backend_m1()
+int busca_tmp(int nom)
+{
+    int i;
+    i = 0;
+    while (i < ntmp)
+    {
+        if (da_get(dtmp_nom, i) == nom)
+        {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+int inserta_tmp(int fila, int nom, int kind, int reg, int off)
+{
+    int r;
+    if (fila < da_count(dtmp_nom))
+    {
+        da_set(dtmp_nom, fila, nom);
+        da_set(dtmp_kind, fila, kind);
+        da_set(dtmp_reg, fila, reg);
+        da_set(dtmp_off, fila, off);
+        return 1;
+    }
+    r = da_add(dtmp_nom, nom);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+    r = da_add(dtmp_kind, kind);
+    r = da_add(dtmp_reg, reg);
+    r = da_add(dtmp_off, off);
+    return 1;
+}
+
+void liga_tmp(int nom, int kind, int reg, int off)
+{
+    int f;
+    int nueva;
+    f = busca_tmp(nom);
+    nueva = 0;
+    if (f < 0)
+    {
+        f = ntmp;
+        nueva = 1;
+    }
+    if (inserta_tmp(f, nom, kind, reg, off) == 1)
+    {
+        if (nueva == 1)
+        {
+            ntmp = ntmp + 1;
+        }
+    }
+}
+
+void liga_tmp_eax(int nom)
+{
+    liga_tmp(nom, 0, 0, 0);
+}
+
+void liga_tmp_ebx(int nom)
+{
+    liga_tmp(nom, 0, 3, 0);
+}
+
+void liga_tmp_mem(int nom, int off)
+{
+    liga_tmp(nom, 1, 0, off);
+}
+
+int busca_const_fila(int nom)
+{
+    int i;
+    i = 0;
+    while (i < ncon)
+    {
+        if (da_get(dcon_nom, i) == nom)
+        {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+int busca_const(int nom)
+{
+    int f;
+    f = busca_const_fila(nom);
+    if (f < 0)
+    {
+        return -1;
+    }
+    return da_get(dcon_val, f);
+}
+
+int inserta_con(int fila, int nom, int val)
+{
+    int r;
+    if (fila < da_count(dcon_nom))
+    {
+        da_set(dcon_nom, fila, nom);
+        da_set(dcon_val, fila, val);
+        return 1;
+    }
+    r = da_add(dcon_nom, nom);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+    r = da_add(dcon_val, val);
+    return 1;
+}
+
+void anota_const(int nom, int val)
+{
+    int f;
+    int nueva;
+    f = busca_const_fila(nom);
+    nueva = 0;
+    if (f < 0)
+    {
+        f = ncon;
+        nueva = 1;
+    }
+    if (inserta_con(f, nom, val) == 1)
+    {
+        if (nueva == 1)
+        {
+            ncon = ncon + 1;
+        }
+    }
+}
+
+void libera_tmp(int nom)
+{
+    int f;
+    int u;
+    int c;
+    f = busca_tmp(nom);
+    if (f >= 0)
+    {
+        u = ntmp - 1;
+        if (f != u)
+        {
+            da_set(dtmp_nom, f, da_get(dtmp_nom, u));
+            da_set(dtmp_kind, f, da_get(dtmp_kind, u));
+            da_set(dtmp_reg, f, da_get(dtmp_reg, u));
+            da_set(dtmp_off, f, da_get(dtmp_off, u));
+        }
+        ntmp = ntmp - 1;
+    }
+    c = busca_const_fila(nom);
+    if (c >= 0)
+    {
+        u = ncon - 1;
+        if (c != u)
+        {
+            da_set(dcon_nom, c, da_get(dcon_nom, u));
+            da_set(dcon_val, c, da_get(dcon_val, u));
+        }
+        ncon = ncon - 1;
+    }
+}
+
+int tmp_en_registro(int cod)
+{
+    int i;
+    i = 0;
+    while (i < ntmp)
+    {
+        if (da_get(dtmp_kind, i) == 0)
+        {
+            if (da_get(dtmp_reg, i) == cod)
+            {
+                return da_get(dtmp_nom, i);
+            }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+int eax_ocupado()
+{
+    if (tmp_en_registro(0) >= 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+int ebx_ocupado()
+{
+    if (tmp_en_registro(3) >= 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+void reinicia_temporales()
+{
+    ntmp = 0;
+    ncon = 0;
+}
+
+// ============================================================
+// MARCO Y RETENES.
+//
+//
+// El marco EBP de la funcion en curso. abre_marco y
+// cierra_marco fijan solo el estado (la emision del
+// prologo y del cierre es de B-2). ranura_marco es
+// allocateFrameSlot: sin marco activo acusa y devuelve
+// 0; con marco, entrega -4, -8, -12... en orden, y la
+// misma ranura sirve a los derrames y a las locales de
+// pila. Los tres retenes son los emitMov*FramePlace-
+// holder del oraculo: sin marco acusan y devuelven -1;
+// con marco emiten MOV registro, [EBP + 0] (8B 85 para
+// EAX, 8B 9D para EBX, 8B 8D para ECX, con el desplaza-
+// miento de 32 bits a cero) en el ByteBuffer de codigo
+// y devuelven el offset del hueco, size + 2.
+// ============================================================
+
+void abre_marco()
+{
+    frame_activo = 1;
+    frame_slots = 0;
+}
+
+void cierra_marco()
+{
+    frame_activo = 0;
+}
+
+int ranura_marco()
+{
+    if (frame_activo == 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+    frame_slots = frame_slots + 1;
+    return 0 - (4 * frame_slots);
+}
+
+int emite_reten_eax()
+{
+    int pos;
+    if (frame_activo == 0)
+    {
+        errores_back = errores_back + 1;
+        return -1;
+    }
+    pos = bytebuffer_get_size(dcod) + 2;
+    bytebuffer_append(dcod, 0x8B);
+    bytebuffer_append(dcod, 0x85);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    return pos;
+}
+
+int emite_reten_ebx()
+{
+    int pos;
+    if (frame_activo == 0)
+    {
+        errores_back = errores_back + 1;
+        return -1;
+    }
+    pos = bytebuffer_get_size(dcod) + 2;
+    bytebuffer_append(dcod, 0x8B);
+    bytebuffer_append(dcod, 0x9D);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    return pos;
+}
+
+int emite_reten_ecx()
+{
+    int pos;
+    if (frame_activo == 0)
+    {
+        errores_back = errores_back + 1;
+        return -1;
+    }
+    pos = bytebuffer_get_size(dcod) + 2;
+    bytebuffer_append(dcod, 0x8B);
+    bytebuffer_append(dcod, 0x8D);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    bytebuffer_append(dcod, 0);
+    return pos;
+}
+
+// ============================================================
+// DERRAME Y RECARGA.
+//
+//
+// derrama_tmp es spillTemporary: el temporal debe
+// existir y vivir en registro; pide su ranura al marco,
+// emite MOV [EBP + 0], registro (89 85 si es EAX,
+// 89 9D si es EBX) en el ByteBuffer de codigo, registra
+// el parche en la lista de derrames de M-1 con el offset
+// del hueco (size + 2 antes de emitir) y liga el
+// temporal a memoria. Un registro que no sea EAX ni EBX
+// acusa despues de consumir la ranura, como el throw
+// del oraculo. asigna_registro es allocateRegisterFor-
+// Temporary con su politica exacta: si el temporal ya
+// vive en registro devuelve el suyo; si EAX esta libre
+// lo liga a EAX; si EBX esta libre, a EBX; si no,
+// derrama el dueno de EAX y liga a EAX (la rama de
+// derramar EBX del oraculo es inalcanzable: si ambos
+// estan ocupados, el de EAX siempre existe).
+// registro_de es getTemporaryRegister y recarga_tmp es
+// reloadTemporary: emite el reten de EAX, registra el
+// parche en la lista de recargas y liga el temporal a
+// EAX sin desalojar a nadie, como el oraculo.
+// ============================================================
+
+void derrama_tmp(int nom)
+{
+    int f;
+    int reg;
+    int off;
+    int pos;
+    f = busca_tmp(nom);
+    if (f < 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    if (da_get(dtmp_kind, f) != 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    reg = da_get(dtmp_reg, f);
+    off = ranura_marco();
+    if (off == 0)
+    {
+        return;
+    }
+    pos = 0;
+    if (reg == 0)
+    {
+        pos = bytebuffer_get_size(dcod) + 2;
+        bytebuffer_append(dcod, 0x89);
+        bytebuffer_append(dcod, 0x85);
+        bytebuffer_append(dcod, 0);
+        bytebuffer_append(dcod, 0);
+        bytebuffer_append(dcod, 0);
+        bytebuffer_append(dcod, 0);
+    }
+    else
+    {
+        if (reg == 3)
+        {
+            pos = bytebuffer_get_size(dcod) + 2;
+            bytebuffer_append(dcod, 0x89);
+            bytebuffer_append(dcod, 0x9D);
+            bytebuffer_append(dcod, 0);
+            bytebuffer_append(dcod, 0);
+            bytebuffer_append(dcod, 0);
+            bytebuffer_append(dcod, 0);
+        }
+        else
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+    }
+    registra_spill(nom, pos, off);
+    liga_tmp_mem(nom, off);
+}
+
+int asigna_registro(int nom)
+{
+    int f;
+    int ocupante;
+    f = busca_tmp(nom);
+    if (f >= 0)
+    {
+        if (da_get(dtmp_kind, f) == 0)
+        {
+            return da_get(dtmp_reg, f);
+        }
+    }
+    if (eax_ocupado() == 0)
+    {
+        liga_tmp_eax(nom);
+        return 0;
+    }
+    if (ebx_ocupado() == 0)
+    {
+        liga_tmp_ebx(nom);
+        return 3;
+    }
+    ocupante = tmp_en_registro(0);
+    derrama_tmp(ocupante);
+    liga_tmp_eax(nom);
+    return 0;
+}
+
+int registro_de(int nom)
+{
+    int f;
+    f = busca_tmp(nom);
+    if (f < 0)
+    {
+        errores_back = errores_back + 1;
+        return -1;
+    }
+    if (da_get(dtmp_kind, f) != 0)
+    {
+        errores_back = errores_back + 1;
+        return -1;
+    }
+    return da_get(dtmp_reg, f);
+}
+
+void recarga_tmp(int nom)
+{
+    int f;
+    int off;
+    int pos;
+    f = busca_tmp(nom);
+    if (f < 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    if (da_get(dtmp_kind, f) != 1)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    off = da_get(dtmp_off, f);
+    pos = emite_reten_eax();
+    if (pos < 0)
+    {
+        return;
+    }
+    registra_reload(nom, pos, off);
+    liga_tmp_eax(nom);
+}
+
+// ============================================================
+// VARIABLES Y CONTEXTOS.
+//
+//
+// El mapa de variables del contexto vivo, el de
+// globales y los contextos guardados por funcion.
+// declara_var es declareVariable (residencia en DATA,
+// con capacidad si es arreglo); declara_var_pila
+// transcribe la escritura de la local de pila;
+// declara_global registra en el mapa de globales.
+// reinicia_variables es resetVariables: vacia el
+// contexto vivo y lo siembra con los globales, que se
+// ven en todas las funciones. reserva_datos es
+// allocateVariableData: devuelve el offset actual del
+// ByteBuffer de datos y lo crece en 4 * n ceros.
+// guarda_contexto copia las filas del contexto vivo a
+// las filas guardadas y anota el directorio (funcion,
+// fila inicial, filas); contexto_de devuelve la entrada
+// mas reciente de una funcion o -1. Los contextos los
+// leeran las pasadas de resolucion de B-2 en adelante.
+// ============================================================
+
+int busca_var(int nom)
+{
+    int i;
+    i = 0;
+    while (i < nvar)
+    {
+        if (da_get(dvar_nom, i) == nom)
+        {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+int inserta_var(int fila, int nom, int dat, int stack, int soff, int cap)
+{
+    int r;
+    if (fila < da_count(dvar_nom))
+    {
+        da_set(dvar_nom, fila, nom);
+        da_set(dvar_dat, fila, dat);
+        da_set(dvar_stack, fila, stack);
+        da_set(dvar_soff, fila, soff);
+        da_set(dvar_cap, fila, cap);
+        return 1;
+    }
+    r = da_add(dvar_nom, nom);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+    r = da_add(dvar_dat, dat);
+    r = da_add(dvar_stack, stack);
+    r = da_add(dvar_soff, soff);
+    r = da_add(dvar_cap, cap);
+    return 1;
+}
+
+void declara_var(int nom, int dat, int cap)
+{
+    int f;
+    int nueva;
+    f = busca_var(nom);
+    nueva = 0;
+    if (f < 0)
+    {
+        f = nvar;
+        nueva = 1;
+    }
+    if (inserta_var(f, nom, dat, 0, 0, cap) == 1)
+    {
+        if (nueva == 1)
+        {
+            nvar = nvar + 1;
+        }
+    }
+}
+
+void declara_var_pila(int nom, int soff, int cap)
+{
+    int f;
+    int nueva;
+    f = busca_var(nom);
+    nueva = 0;
+    if (f < 0)
+    {
+        f = nvar;
+        nueva = 1;
+    }
+    if (inserta_var(f, nom, 0, 1, soff, cap) == 1)
+    {
+        if (nueva == 1)
+        {
+            nvar = nvar + 1;
+        }
+    }
+}
+
+int busca_glo(int nom)
+{
+    int i;
+    i = 0;
+    while (i < nglo)
+    {
+        if (da_get(dglo_nom, i) == nom)
+        {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+int inserta_glo(int fila, int nom, int dat, int stack, int soff, int cap)
+{
+    int r;
+    if (fila < da_count(dglo_nom))
+    {
+        da_set(dglo_nom, fila, nom);
+        da_set(dglo_dat, fila, dat);
+        da_set(dglo_stack, fila, stack);
+        da_set(dglo_soff, fila, soff);
+        da_set(dglo_cap, fila, cap);
+        return 1;
+    }
+    r = da_add(dglo_nom, nom);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+    r = da_add(dglo_dat, dat);
+    r = da_add(dglo_stack, stack);
+    r = da_add(dglo_soff, soff);
+    r = da_add(dglo_cap, cap);
+    return 1;
+}
+
+void declara_global(int nom, int dat, int cap)
+{
+    int f;
+    int nueva;
+    f = busca_glo(nom);
+    nueva = 0;
+    if (f < 0)
+    {
+        f = nglo;
+        nueva = 1;
+    }
+    if (inserta_glo(f, nom, dat, 0, 0, cap) == 1)
+    {
+        if (nueva == 1)
+        {
+            nglo = nglo + 1;
+        }
+    }
+}
+
+void reinicia_variables()
+{
+    int i;
+    nvar = 0;
+    i = 0;
+    while (i < nglo)
+    {
+        if (inserta_var(i, da_get(dglo_nom, i), da_get(dglo_dat, i), da_get(dglo_stack, i), da_get(dglo_soff, i), da_get(dglo_cap, i)) == 1)
+        {
+            nvar = nvar + 1;
+        }
+        i = i + 1;
+    }
+}
+
+int reserva_datos(int n)
+{
+    int off;
+    int i;
+    off = bytebuffer_get_size(ddat);
+    i = 0;
+    while (i < 4 * n)
+    {
+        bytebuffer_append(ddat, 0);
+        i = i + 1;
+    }
+    return off;
+}
+
+int inserta_sv(int fila, int nom, int dat, int stack, int soff, int cap)
+{
+    int r;
+    if (fila < da_count(dsv_nom))
+    {
+        da_set(dsv_nom, fila, nom);
+        da_set(dsv_dat, fila, dat);
+        da_set(dsv_stack, fila, stack);
+        da_set(dsv_soff, fila, soff);
+        da_set(dsv_cap, fila, cap);
+        return 1;
+    }
+    r = da_add(dsv_nom, nom);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+    r = da_add(dsv_dat, dat);
+    r = da_add(dsv_stack, stack);
+    r = da_add(dsv_soff, soff);
+    r = da_add(dsv_cap, cap);
+    return 1;
+}
+
+int inserta_ctx(int fila, int fun, int ini, int n)
+{
+    int r;
+    if (fila < da_count(dctx_fun))
+    {
+        da_set(dctx_fun, fila, fun);
+        da_set(dctx_ini, fila, ini);
+        da_set(dctx_n, fila, n);
+        return 1;
+    }
+    r = da_add(dctx_fun, fun);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+    r = da_add(dctx_ini, ini);
+    r = da_add(dctx_n, n);
+    return 1;
+}
+
+void guarda_contexto(int fun)
+{
+    int i;
+    int ini;
+    ini = nsv;
+    i = 0;
+    while (i < nvar)
+    {
+        if (inserta_sv(nsv, da_get(dvar_nom, i), da_get(dvar_dat, i), da_get(dvar_stack, i), da_get(dvar_soff, i), da_get(dvar_cap, i)) == 0)
+        {
+            return;
+        }
+        nsv = nsv + 1;
+        i = i + 1;
+    }
+    if (inserta_ctx(nctx, fun, ini, nvar) == 1)
+    {
+        nctx = nctx + 1;
+    }
+}
+
+int contexto_de(int fun)
+{
+    int i;
+    i = nctx - 1;
+    while (i >= 0)
+    {
+        if (da_get(dctx_fun, i) == fun)
+        {
+            return i;
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
+// ============================================================
+// IMPRIME LA MAQUINARIA.
+//
+//
+// El volcado de la sonda B-1: el estado del marco, las
+// filas de temporales y de constantes, las del contexto
+// vivo y las de globales, el directorio de contextos y
+// las filas guardadas, el ByteBuffer de codigo entero
+// (su cuenta y cada byte) y la cuenta del de datos, y
+// al final el contador de errores de la pieza. volcado
+// junta las listas de M-1 y la maquinaria.
+// ============================================================
+
+void imprime_maquinaria()
+{
+    int i;
+    print_int(frame_activo);
+    print_int(frame_slots);
+    print_int(ntmp);
+    i = 0;
+    while (i < ntmp)
+    {
+        print_int(da_get(dtmp_nom, i));
+        print_int(da_get(dtmp_kind, i));
+        print_int(da_get(dtmp_reg, i));
+        print_int(da_get(dtmp_off, i));
+        i = i + 1;
+    }
+    print_int(ncon);
+    i = 0;
+    while (i < ncon)
+    {
+        print_int(da_get(dcon_nom, i));
+        print_int(da_get(dcon_val, i));
+        i = i + 1;
+    }
+    print_int(nvar);
+    i = 0;
+    while (i < nvar)
+    {
+        print_int(da_get(dvar_nom, i));
+        print_int(da_get(dvar_dat, i));
+        print_int(da_get(dvar_stack, i));
+        print_int(da_get(dvar_soff, i));
+        print_int(da_get(dvar_cap, i));
+        i = i + 1;
+    }
+    print_int(nglo);
+    i = 0;
+    while (i < nglo)
+    {
+        print_int(da_get(dglo_nom, i));
+        print_int(da_get(dglo_dat, i));
+        print_int(da_get(dglo_stack, i));
+        print_int(da_get(dglo_soff, i));
+        print_int(da_get(dglo_cap, i));
+        i = i + 1;
+    }
+    print_int(nctx);
+    i = 0;
+    while (i < nctx)
+    {
+        print_int(da_get(dctx_fun, i));
+        print_int(da_get(dctx_ini, i));
+        print_int(da_get(dctx_n, i));
+        i = i + 1;
+    }
+    print_int(nsv);
+    i = 0;
+    while (i < nsv)
+    {
+        print_int(da_get(dsv_nom, i));
+        print_int(da_get(dsv_dat, i));
+        print_int(da_get(dsv_stack, i));
+        print_int(da_get(dsv_soff, i));
+        print_int(da_get(dsv_cap, i));
+        i = i + 1;
+    }
+    print_int(bytebuffer_get_size(dcod));
+    i = 0;
+    while (i < bytebuffer_get_size(dcod))
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+    print_int(bytebuffer_get_size(ddat));
+    print_int(errores_back);
+}
+
+void volcado()
+{
+    imprime_listas();
+    imprime_maquinaria();
+}
+
+// ============================================================
+// SONDA DEL BACKEND B-1: LA MAQUINARIA.
+//
+//
+// Cinco movimientos. El primero conserva la sonda de
+// M-1 en sus dos primeros tramos (arranque, basico y
+// crecimiento de la lista de llamadas hasta 3.000) con
+// los unicos numeros re-apuntados que los nacimientos
+// de la maquinaria mueven: las bases de la lista crecida
+// (17936 y 22032) y el usado de la region (26128); la
+// corriente de registros, cuentas, capacidades e
+// integridad es la de M-1, intacta. El segundo corre el
+// guion de la maquinaria: el asignador liga 101 a EAX y
+// 102 a EBX, el tercer temporal derrama el de EAX a la
+// ranura -4, el cuarto derrama el nuevo de EAX a -8 y
+// pedir el que esta en memoria derrama el de EAX a -12
+// y lo liga a EAX sin recargarlo (la politica del
+// oraculo); liberado EBX entra 105, liberado EAX la
+// recarga de 103 emite su reten y lo liga a EAX; la
+// constante de 106 nace, se lee y muere con su liberacion
+// tras derramar a 103 a -16; el reinicio de temporales
+// vacia el mapa sin tocar las listas; los retenes de EBX
+// y ECX cierran el codigo en 42 bytes. Despues, los
+// globales 201 y 202 se reservan en datos (offsets 0 y
+// 4), el contexto de la funcion 301 se siembra con
+// ellos, suma una variable de datos (offset 16) y una
+// de pila (ranura -20, tras las cuatro de los derrames),
+// se guarda, y el de 302 nace sembrado y solo con la
+// suya (offset 20): el directorio los encuentra a los
+// dos y no al 303. El cierre acusa dos veces: la ranura
+// sin marco y el registro de un temporal inexistente.
+// El tercero crece las tablas nuevas: 300 variables
+// (capacidad 512), su contexto guardado (512) y 300
+// temporales (512). El cuarto y el quinto acusan contra
+// una BackendArena de 11024 celdas (caben los
+// nacimientos, no el primer crecimiento): la guarda de
+// variables ante la declaracion 257 y la lista de
+// llamadas de M-1 ante el registro 257, ambas con las
+// cuentas clavadas en 256 y la ultima ranura intacta.
+// ============================================================
+
+void sonda_backend_b1()
 {
     int rs;
     int rf;
     int rc;
     int rb;
     int i;
+    int r;
+    int o;
+    int s;
     inicia_arena();
     rs = arena_create(256);
     region_source = rs;
@@ -1478,6 +2483,124 @@ void sonda_backend_m1()
     print_int(errores_back);
     print_int(errores_arena);
     inicia_arena();
+    rs = arena_create(256);
+    region_source = rs;
+    rf = arena_create(256);
+    region_frontend = rf;
+    rc = arena_create(256);
+    region_compiler = rc;
+    arena_destroy(rf);
+    rb = arena_create(32768);
+    region_backend = rb;
+    print_int(rb);
+    print_int(arena_get_reserved(rb));
+    print_int(errores_arena);
+    reinicia_back();
+    abre_marco();
+    print_int(frame_activo);
+    print_int(frame_slots);
+    r = asigna_registro(101);
+    print_int(r);
+    r = asigna_registro(102);
+    print_int(r);
+    r = asigna_registro(103);
+    print_int(r);
+    volcado();
+    r = asigna_registro(104);
+    print_int(r);
+    r = asigna_registro(101);
+    print_int(r);
+    volcado();
+    libera_tmp(102);
+    r = asigna_registro(105);
+    print_int(r);
+    libera_tmp(101);
+    recarga_tmp(103);
+    print_int(registro_de(103));
+    print_int(tmp_en_registro(0));
+    print_int(tmp_en_registro(3));
+    volcado();
+    anota_const(106, 42);
+    print_int(busca_const(106));
+    r = asigna_registro(106);
+    print_int(r);
+    libera_tmp(106);
+    print_int(busca_const(106));
+    volcado();
+    reinicia_temporales();
+    volcado();
+    print_int(emite_reten_ebx());
+    print_int(emite_reten_ecx());
+    o = reserva_datos(1);
+    print_int(o);
+    declara_global(201, o, 0);
+    o = reserva_datos(3);
+    print_int(o);
+    declara_global(202, o, 3);
+    reinicia_variables();
+    o = reserva_datos(1);
+    print_int(o);
+    declara_var(211, o, 0);
+    s = ranura_marco();
+    print_int(s);
+    declara_var_pila(212, s, 0);
+    volcado();
+    guarda_contexto(301);
+    reinicia_variables();
+    o = reserva_datos(1);
+    print_int(o);
+    declara_var(221, o, 0);
+    volcado();
+    guarda_contexto(302);
+    print_int(contexto_de(301));
+    print_int(contexto_de(302));
+    print_int(contexto_de(303));
+    volcado();
+    cierra_marco();
+    print_int(frame_activo);
+    print_int(ranura_marco());
+    print_int(registro_de(999));
+    volcado();
+    inicia_arena();
+    rs = arena_create(256);
+    region_source = rs;
+    rf = arena_create(256);
+    region_frontend = rf;
+    rc = arena_create(256);
+    region_compiler = rc;
+    arena_destroy(rf);
+    rb = arena_create(32768);
+    region_backend = rb;
+    print_int(rb);
+    print_int(arena_get_reserved(rb));
+    print_int(errores_arena);
+    reinicia_back();
+    i = 0;
+    while (i < 300)
+    {
+        declara_var(1000 + i, reserva_datos(1), 0);
+        i = i + 1;
+    }
+    print_int(da_capacity(dvar_nom));
+    print_int(nvar);
+    guarda_contexto(301);
+    print_int(da_capacity(dsv_nom));
+    print_int(nsv);
+    i = 0;
+    while (i < 300)
+    {
+        liga_tmp_eax(2000 + i);
+        i = i + 1;
+    }
+    print_int(da_capacity(dtmp_nom));
+    print_int(ntmp);
+    print_int(da_get(dvar_nom, 299));
+    print_int(da_get(dsv_nom, 299));
+    print_int(da_get(dtmp_nom, 299));
+    print_int(arena_get_used(rb));
+    print_int(errores_back);
+    print_int(errores_arena);
+    inicia_arena();
     rs = arena_create(64);
     region_source = rs;
     rf = arena_create(64);
@@ -1485,7 +2608,34 @@ void sonda_backend_m1()
     rc = arena_create(64);
     region_compiler = rc;
     arena_destroy(rf);
-    rb = arena_create(4864);
+    rb = arena_create(11024);
+    region_backend = rb;
+    print_int(rb);
+    print_int(arena_get_reserved(rb));
+    reinicia_back();
+    i = 0;
+    while (i < 256)
+    {
+        declara_var(1000 + i, 4 * i, 0);
+        i = i + 1;
+    }
+    declara_var(7777, 0, 0);
+    declara_var(7777, 0, 0);
+    declara_var(7777, 0, 0);
+    print_int(nvar);
+    print_int(da_count(dvar_nom));
+    print_int(da_get(dvar_nom, 255));
+    print_int(errores_back);
+    print_int(errores_arena);
+    inicia_arena();
+    rs = arena_create(64);
+    region_source = rs;
+    rf = arena_create(64);
+    region_frontend = rf;
+    rc = arena_create(64);
+    region_compiler = rc;
+    arena_destroy(rf);
+    rb = arena_create(11024);
     region_backend = rb;
     print_int(rb);
     print_int(arena_get_reserved(rb));
@@ -1510,6 +2660,6 @@ void sonda_backend_m1()
 
 int main()
 {
-    sonda_backend_m1();
+    sonda_backend_b1();
     return 0;
 }
