@@ -199,6 +199,87 @@
 // backend los trata como cualquier escalar. La
 // resolucion de los parches de direccion contra
 // dataBase es de B-9, como los demas.
+//
+// Rebanada B-9 (2026-11-22): nativas y cierre — las
+// ramas Print (41) y PrintInteger (42) del paseo,
+// FileRead (9) y FileWrite (10) contra el contrato
+// del runtime, la pasada final de parches completa
+// y el volcado de DATA con la piscina de cadenas.
+// Con esta rebanada generate() queda completo: toda
+// rama del paseo del oraculo esta portada. Print
+// mueve el temporal a EDX (MOV EDX, EAX o MOV EDX,
+// EBX; otro registro o un temporal en memoria
+// acusa) y emite emitRecordLine(40) transcrito
+// entero con su llamada al refresco; PrintInteger
+// exige el temporal en EAX (de EBX con MOV) y emite
+// emitPrintInteger transcrito entero, registrando
+// el hueco de su MOV EDI en la lista del buffer de
+// impresion entera. Las direcciones del runtime
+// (las del historial de lineas, el event loop, las
+// entradas de archivo) son la costura declarada
+// desde B-2: sus huecos quedan a cero en el buffer
+// modelado, porque el codigo del runtime es otra
+// pieza (KolibriRuntime, Stage 1); los saltos
+// internos de las rutinas transcritas si se parchan
+// en el acto, como en el oraculo. FileRead y
+// FileWrite validan en el orden del oraculo (marco,
+// ruta no vacia y sin NUL, operando, resultado, en
+// Write el auxiliar, valor, el arreglo vivo: que
+// exista, no sea de pila, capacidad no cero y en
+// acuerdo con el valor; en Write el temporal de
+// conteo existe), derraman todos los temporales en
+// registro, copian la ruta a DATA, emiten los MOV
+// de direccion con hueco, el conteo (en Write desde
+// su ranura [EBP + desp], validada: memoria y
+// desplazamiento negativo multiplo de 4) y la
+// capacidad, la llamada a la entrada del runtime
+// (hueco, costura), liberan el auxiliar en Write,
+// ligan el resultado a EAX y registran el parche
+// de archivo. El cierre de genera(), tras
+// rellena_cf() y rellena_fc(), construye DATA en
+// el orden del oraculo: el buffer de impresion
+// entera de 16 bytes solo si hay huecos suyos, el
+// bloque de lineas de la Konsole (cabeza, cuenta,
+// primera visible, cursor de repintado y las 512
+// lineas de 64 bytes), la barra (pulgar, altura,
+// estado y agarre del arrastre), el menu (abierto,
+// seleccion, largo del portapapeles, su buffer de
+// 21516 bytes y el bloque de textos de 84 bytes),
+// la piscina de cadenas (solo el titulo "K++ -
+// KolibriOS": el comentario del oraculo que nombra
+// un segundo PRINT esta fosilizado, verificado
+// contra su codigo), las constantes de cadena del
+// programa en su orden y, solo si el programa usa
+// archivo, el area temporal de 65536 bytes
+// alineada a 4 y el bloque de parametros de 25.
+// La base es 36 + el tamano del codigo (la
+// cabecera MENUET01). Tras construir: el relleno
+// de las constantes de cadena (dataBase +
+// desplazamiento de cada una; indice fuera de la
+// piscina acusa y detiene la pasada), la
+// resolucion de archivo en dos pasadas (primero
+// las escrituras, luego las lecturas) revalidando
+// cada parche contra el contexto guardado de su
+// funcion, los derrames y las recargas (el
+// desplazamiento del marco, tal cual), las cargas
+// y los almacenes de variable (dataBase +
+// desplazamiento en DATA) y el buffer de impresion
+// entera (dataBase + su desplazamiento + 16: el
+// fin del buffer). Cada pasada acusa en su primer
+// error y se detiene; genera() continua con la
+// siguiente, la convencion de la casa desde B-6.
+// Los errores de cierre por indice o por
+// revalidacion son inalcanzables por construccion
+// en el paseo (los indices nacen en secuencia de
+// la misma lista previa y la fase 5 revalida lo
+// que el paseo ya valido): quedan transcritos por
+// fidelidad al oraculo. genera() ya no deja los
+// huecos a cero ni DATA a medio construir: dcod
+// sale con todo parche del backend resuelto y
+// ddat con el volcado completo; el resultado de
+// generate() en el oraculo es codigo seguido de
+// datos tras el prefijo del runtime, que es la
+// costura.
 
 enum TemporaryLocationKind
 {
@@ -1374,6 +1455,7 @@ int dir_nom;
 int dir_ope;
 int dir_res;
 int dir_val;
+int dir_aux;
 int dpool;
 int ndir;
 int dir_nglob;
@@ -1388,6 +1470,45 @@ int fun_actual;
 int pos_marco;
 int pos_main;
 int idx_sc;
+int dibuf_pos;
+int ndibuf;
+int dfw_fun;
+int dfw_arr;
+int dfw_ruta;
+int dfw_phue;
+int dfw_ahue;
+int dfw_cap;
+int nfw;
+int dfr_fun;
+int dfr_arr;
+int dfr_ruta;
+int dfr_phue;
+int dfr_ahue;
+int dfr_cap;
+int nfr;
+int dsco_off;
+int nsco;
+int nprint;
+int necesita_io;
+int base_datos;
+int off_entero;
+int o_cabeza;
+int o_cuenta;
+int o_primera;
+int o_cursor;
+int o_lineas;
+int o_pulgar;
+int o_altura;
+int o_arrastre;
+int o_agarre;
+int o_menu;
+int o_selec;
+int o_cliplen;
+int o_clip;
+int o_texto;
+int o_titulo;
+int o_scratch;
+int o_params;
 
 // ============================================================
 // REINICIA EL BACKEND.
@@ -2569,6 +2690,7 @@ void reinicia_ir()
     dir_ope = da_create(region_backend, 256);
     dir_res = da_create(region_backend, 256);
     dir_val = da_create(region_backend, 256);
+    dir_aux = da_create(region_backend, 256);
     dpool = string_pool_create(region_backend);
     ndir = 0;
     dir_nglob = 0;
@@ -2583,6 +2705,7 @@ void registra_ir(int op, int nom, int ope, int res, int val)
         da_set(dir_ope, ndir, ope);
         da_set(dir_res, ndir, res);
         da_set(dir_val, ndir, val);
+        da_set(dir_aux, ndir, 0);
     }
     else
     {
@@ -2591,8 +2714,16 @@ void registra_ir(int op, int nom, int ope, int res, int val)
         da_add(dir_ope, ope);
         da_add(dir_res, res);
         da_add(dir_val, val);
+        da_add(dir_aux, 0);
     }
     ndir = ndir + 1;
+}
+
+// El auxiliar de la ultima instruccion registrada
+// (el temporal de conteo de FileWrite).
+void registra_aux(int ref)
+{
+    da_set(dir_aux, ndir - 1, ref);
 }
 
 int texto_len(int ref)
@@ -3264,6 +3395,915 @@ int em_load_ebx_mem()
 }
 
 // ============================================================
+// NATIVAS Y CIERRE DE B-9.
+//
+// Los emisores nuevos, las dos rutinas del runtime
+// transcritas (emitRecordLine y emitPrintInteger),
+// el registro de los parches de archivo, la
+// construccion de DATA y las pasadas del cierre.
+// ============================================================
+
+void em_mov_edx_eax()
+{
+    em_byte(137);
+    em_byte(194);
+}
+
+void em_mov_edx_ebx()
+{
+    em_byte(137);
+    em_byte(218);
+}
+
+// MOV EAX, [direccion]: A1 + hueco. La direccion la
+// posee el runtime (costura): el hueco queda a cero.
+int em_mov_eax_moffs_hueco()
+{
+    em_byte(161);
+    return em_hueco();
+}
+
+// MOV [direccion], EAX: 89 05 + hueco, idem.
+int em_mov_mem_eax_hueco()
+{
+    em_byte(137);
+    em_byte(5);
+    return em_hueco();
+}
+
+void em_add_eax_imm(int v)
+{
+    em_byte(129);
+    em_byte(192);
+    em_dword(v);
+}
+
+void em_mov_edi_imm(int v)
+{
+    em_byte(191);
+    em_dword(v);
+}
+
+void em_mov_ecx_imm(int v)
+{
+    em_byte(185);
+    em_dword(v);
+}
+
+void em_mov_edx_imm(int v)
+{
+    em_byte(186);
+    em_dword(v);
+}
+
+int em_jne_hueco()
+{
+    em_byte(15);
+    em_byte(133);
+    return em_hueco();
+}
+
+// El parche relativo de la casa para los saltos
+// internos de las rutinas transcritas: destino -
+// (hueco + 4), parcheado en el acto.
+void parche_rel(int pos, int destino)
+{
+    parche32(pos, destino - (pos + 4));
+}
+
+// emitRecordLine del runtime, transcrito entero: la
+// linea de dibujo (largo) entra en EDX y la rutina
+// la registra en el historial de la Konsole. Los
+// huecos de direccion (primera visible, cuenta,
+// cabeza, base del buffer de lineas) son del
+// runtime: quedan a cero (costura).
+void em_registra_linea(int largo)
+{
+    int bas;
+    int p_noviva;
+    int p_nollena;
+    int copia;
+    int p_copia;
+    int p_guardar;
+    int p_sigue;
+    int p_viva;
+    int p_fin;
+    int p_hist;
+    int p_histfin;
+    int p_guarda;
+    int fin;
+    em_byte(49);
+    em_byte(201);
+    bas = em_mov_eax_moffs_hueco();
+    em_add_eax_imm(41);
+    em_byte(59);
+    em_byte(5);
+    bas = em_hueco();
+    em_byte(15);
+    em_byte(130);
+    p_noviva = em_hueco();
+    em_byte(131);
+    em_byte(201);
+    em_byte(1);
+    parche_rel(p_noviva, bytebuffer_get_size(dcod));
+    bas = em_mov_eax_moffs_hueco();
+    em_cmp_eax_imm32(512);
+    em_byte(15);
+    em_byte(133);
+    p_nollena = em_hueco();
+    em_byte(131);
+    em_byte(201);
+    em_byte(2);
+    parche_rel(p_nollena, bytebuffer_get_size(dcod));
+    em_byte(81);
+    bas = em_mov_eax_moffs_hueco();
+    em_byte(193);
+    em_byte(224);
+    em_byte(6);
+    em_byte(5);
+    bas = em_hueco();
+    em_byte(137);
+    em_byte(198);
+    em_byte(199);
+    em_byte(6);
+    em_dword(largo);
+    em_byte(137);
+    em_byte(247);
+    em_byte(131);
+    em_byte(199);
+    em_byte(4);
+    em_mov_ecx_imm(40);
+    copia = bytebuffer_get_size(dcod);
+    em_byte(138);
+    em_byte(2);
+    em_byte(136);
+    em_byte(7);
+    em_byte(66);
+    em_byte(71);
+    em_byte(73);
+    p_copia = em_jne_hueco();
+    parche_rel(p_copia, copia);
+    bas = em_mov_eax_moffs_hueco();
+    em_add_eax_imm(1);
+    em_cmp_eax_imm32(512);
+    em_byte(15);
+    em_byte(130);
+    p_guardar = em_hueco();
+    em_mov_eax_imm(0);
+    parche_rel(p_guardar, bytebuffer_get_size(dcod));
+    bas = em_mov_mem_eax_hueco();
+    bas = em_mov_eax_moffs_hueco();
+    em_cmp_eax_imm32(512);
+    em_byte(15);
+    em_byte(131);
+    p_sigue = em_hueco();
+    em_add_eax_imm(1);
+    bas = em_mov_mem_eax_hueco();
+    parche_rel(p_sigue, bytebuffer_get_size(dcod));
+    em_byte(89);
+    em_byte(247);
+    em_byte(193);
+    em_dword(1);
+    em_byte(15);
+    em_byte(133);
+    p_viva = em_hueco();
+    em_byte(247);
+    em_byte(193);
+    em_dword(2);
+    em_byte(15);
+    em_byte(132);
+    p_fin = em_hueco();
+    bas = em_mov_eax_moffs_hueco();
+    em_byte(131);
+    em_byte(232);
+    em_byte(1);
+    em_byte(15);
+    em_byte(137);
+    p_hist = em_hueco();
+    em_mov_eax_imm(0);
+    parche_rel(p_hist, bytebuffer_get_size(dcod));
+    bas = em_mov_mem_eax_hueco();
+    em_byte(233);
+    p_histfin = em_hueco();
+    parche_rel(p_viva, bytebuffer_get_size(dcod));
+    bas = em_mov_eax_moffs_hueco();
+    em_add_eax_imm(0 - 41);
+    em_byte(15);
+    em_byte(141);
+    p_guarda = em_hueco();
+    em_mov_eax_imm(0);
+    parche_rel(p_guarda, bytebuffer_get_size(dcod));
+    bas = em_mov_mem_eax_hueco();
+    fin = bytebuffer_get_size(dcod);
+    parche_rel(p_fin, fin);
+    parche_rel(p_histfin, fin);
+}
+
+// Print desde EDX: registrar la linea de 40 y
+// llamar al refresco del runtime (E8 con hueco,
+// costura).
+void em_print_desde_edx()
+{
+    int bas;
+    em_registra_linea(40);
+    em_byte(232);
+    bas = em_hueco();
+}
+
+// emitPrintInteger del runtime, transcrito entero:
+// convierte EAX a texto hacia atras desde el fin
+// del buffer de impresion entera y registra la
+// linea de 16. Devuelve el hueco del MOV EDI
+// inicial, que el cierre apunta al fin del buffer.
+int em_print_integer_rt()
+{
+    int bas;
+    int pos_buf;
+    int p_signo;
+    int p_cero;
+    int conv;
+    int p_conv;
+    int p_fincero;
+    int p_sinmenos;
+    em_push_eax();
+    em_push_ebx();
+    pos_buf = bytebuffer_get_size(dcod) + 1;
+    em_mov_edi_imm(0);
+    em_byte(79);
+    em_byte(199);
+    em_byte(7);
+    em_byte(0);
+    em_byte(49);
+    em_byte(219);
+    em_byte(133);
+    em_byte(192);
+    em_byte(15);
+    em_byte(137);
+    p_signo = em_hueco();
+    em_mov_ebx_imm(1);
+    em_byte(247);
+    em_byte(216);
+    parche_rel(p_signo, bytebuffer_get_size(dcod));
+    em_cmp_eax_imm32(0);
+    p_cero = em_je_hueco();
+    em_byte(49);
+    em_byte(210);
+    em_mov_ecx_imm(10);
+    conv = bytebuffer_get_size(dcod);
+    em_byte(49);
+    em_byte(210);
+    em_byte(247);
+    em_byte(241);
+    em_byte(128);
+    em_byte(194);
+    em_byte(48);
+    em_byte(79);
+    em_byte(136);
+    em_byte(23);
+    em_cmp_eax_imm32(0);
+    p_conv = em_jne_hueco();
+    p_fincero = em_jmp_hueco();
+    parche_rel(p_cero, bytebuffer_get_size(dcod));
+    em_byte(79);
+    em_byte(199);
+    em_byte(7);
+    em_byte(48);
+    parche_rel(p_conv, conv);
+    parche_rel(p_fincero, bytebuffer_get_size(dcod));
+    em_byte(131);
+    em_byte(251);
+    em_byte(0);
+    p_sinmenos = em_je_hueco();
+    em_byte(79);
+    em_byte(199);
+    em_byte(7);
+    em_byte(45);
+    parche_rel(p_sinmenos, bytebuffer_get_size(dcod));
+    em_byte(137);
+    em_byte(250);
+    em_registra_linea(16);
+    em_byte(232);
+    bas = em_hueco();
+    em_pop_ebx();
+    em_pop_eax();
+    return pos_buf;
+}
+
+// El hueco del buffer de impresion entera.
+void registra_dibuf(int pos)
+{
+    int r;
+    r = da_add(dibuf_pos, pos);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    ndibuf = ndibuf + 1;
+}
+
+// FileWritePatch: funcion, arreglo, desplazamiento
+// de la ruta en DATA, huecos y capacidad.
+void registra_fw(int fun, int arr, int ruta, int phue, int ahue, int cap)
+{
+    int r;
+    r = da_add(dfw_fun, fun);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    r = da_add(dfw_arr, arr);
+    r = da_add(dfw_ruta, ruta);
+    r = da_add(dfw_phue, phue);
+    r = da_add(dfw_ahue, ahue);
+    r = da_add(dfw_cap, cap);
+    nfw = nfw + 1;
+}
+
+// FileReadPatch: los mismos campos.
+void registra_fr(int fun, int arr, int ruta, int phue, int ahue, int cap)
+{
+    int r;
+    r = da_add(dfr_fun, fun);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    r = da_add(dfr_arr, arr);
+    r = da_add(dfr_ruta, ruta);
+    r = da_add(dfr_phue, phue);
+    r = da_add(dfr_ahue, ahue);
+    r = da_add(dfr_cap, cap);
+    nfr = nfr + 1;
+}
+
+// La ruta de un archivo se copia a DATA en el
+// paseo (bytes y NUL) y su desplazamiento se
+// devuelve.
+int copia_ruta(int nom)
+{
+    int off;
+    int j;
+    off = bytebuffer_get_size(ddat);
+    j = 0;
+    while (j < texto_len(nom))
+    {
+        bytebuffer_append(ddat, texto_char(nom, j));
+        j = j + 1;
+    }
+    bytebuffer_append(ddat, 0);
+    return off;
+}
+
+void agrega_ceros(int n)
+{
+    int i;
+    i = 0;
+    while (i < n)
+    {
+        bytebuffer_append(ddat, 0);
+        i = i + 1;
+    }
+}
+
+// El bloque de textos del menu: 84 bytes en el
+// orden del oraculo (EDIT, CORTAR, COPIAR,
+// SELECCIONAR TODO, PEGAR, ELIMINAR, KONSOLE.TXT,
+// FILE, OPEN, SAVE, CLOSE; cada palabra con su
+// NUL, el ultimo incluido).
+void agrega_menu_datos()
+{
+    int mb[84];
+    int i;
+    mb[0] = 69;
+    mb[1] = 68;
+    mb[2] = 73;
+    mb[3] = 84;
+    mb[4] = 0;
+    mb[5] = 67;
+    mb[6] = 79;
+    mb[7] = 82;
+    mb[8] = 84;
+    mb[9] = 65;
+    mb[10] = 82;
+    mb[11] = 0;
+    mb[12] = 67;
+    mb[13] = 79;
+    mb[14] = 80;
+    mb[15] = 73;
+    mb[16] = 65;
+    mb[17] = 82;
+    mb[18] = 0;
+    mb[19] = 83;
+    mb[20] = 69;
+    mb[21] = 76;
+    mb[22] = 69;
+    mb[23] = 67;
+    mb[24] = 67;
+    mb[25] = 73;
+    mb[26] = 79;
+    mb[27] = 78;
+    mb[28] = 65;
+    mb[29] = 82;
+    mb[30] = 32;
+    mb[31] = 84;
+    mb[32] = 79;
+    mb[33] = 68;
+    mb[34] = 79;
+    mb[35] = 0;
+    mb[36] = 80;
+    mb[37] = 69;
+    mb[38] = 71;
+    mb[39] = 65;
+    mb[40] = 82;
+    mb[41] = 0;
+    mb[42] = 69;
+    mb[43] = 76;
+    mb[44] = 73;
+    mb[45] = 77;
+    mb[46] = 73;
+    mb[47] = 78;
+    mb[48] = 65;
+    mb[49] = 82;
+    mb[50] = 0;
+    mb[51] = 75;
+    mb[52] = 79;
+    mb[53] = 78;
+    mb[54] = 83;
+    mb[55] = 79;
+    mb[56] = 76;
+    mb[57] = 69;
+    mb[58] = 46;
+    mb[59] = 84;
+    mb[60] = 88;
+    mb[61] = 84;
+    mb[62] = 0;
+    mb[63] = 70;
+    mb[64] = 73;
+    mb[65] = 76;
+    mb[66] = 69;
+    mb[67] = 0;
+    mb[68] = 79;
+    mb[69] = 80;
+    mb[70] = 69;
+    mb[71] = 78;
+    mb[72] = 0;
+    mb[73] = 83;
+    mb[74] = 65;
+    mb[75] = 86;
+    mb[76] = 69;
+    mb[77] = 0;
+    mb[78] = 67;
+    mb[79] = 76;
+    mb[80] = 79;
+    mb[81] = 83;
+    mb[82] = 69;
+    mb[83] = 0;
+    i = 0;
+    while (i < 84)
+    {
+        bytebuffer_append(ddat, mb[i]);
+        i = i + 1;
+    }
+}
+
+// El titulo de la piscina: "K++ - KolibriOS" y su
+// NUL, 16 bytes.
+void agrega_titulo_datos()
+{
+    int tb[15];
+    int i;
+    tb[0] = 75;
+    tb[1] = 43;
+    tb[2] = 43;
+    tb[3] = 32;
+    tb[4] = 45;
+    tb[5] = 32;
+    tb[6] = 75;
+    tb[7] = 111;
+    tb[8] = 108;
+    tb[9] = 105;
+    tb[10] = 98;
+    tb[11] = 114;
+    tb[12] = 105;
+    tb[13] = 79;
+    tb[14] = 83;
+    i = 0;
+    while (i < 15)
+    {
+        bytebuffer_append(ddat, tb[i]);
+        i = i + 1;
+    }
+    bytebuffer_append(ddat, 0);
+}
+
+// La construccion de DATA del cierre, en el orden
+// exacto del oraculo, y al final la base: 36 (la
+// cabecera) + el tamano del codigo.
+void construye_datos()
+{
+    int codigo;
+    int i;
+    int t;
+    int r;
+    codigo = bytebuffer_get_size(dcod);
+    if (ndibuf > 0)
+    {
+        off_entero = bytebuffer_get_size(ddat);
+        agrega_ceros(16);
+    }
+    o_cabeza = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_cuenta = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_primera = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_cursor = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_lineas = bytebuffer_get_size(ddat);
+    agrega_ceros(32768);
+    o_pulgar = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_altura = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_arrastre = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_agarre = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_menu = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_selec = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_cliplen = bytebuffer_get_size(ddat);
+    agrega_ceros(4);
+    o_clip = bytebuffer_get_size(ddat);
+    agrega_ceros(12 + 512 * 42);
+    o_texto = bytebuffer_get_size(ddat);
+    agrega_menu_datos();
+    o_titulo = bytebuffer_get_size(ddat);
+    agrega_titulo_datos();
+    nsco = 0;
+    i = 0;
+    while (i < ntextos)
+    {
+        t = da_get(dtextos_nom, i);
+        r = da_add(dsco_off, bytebuffer_get_size(ddat));
+        if (r < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        nsco = nsco + 1;
+        r = 0;
+        while (r < texto_len(t))
+        {
+            bytebuffer_append(ddat, texto_char(t, r));
+            r = r + 1;
+        }
+        bytebuffer_append(ddat, 0);
+        i = i + 1;
+    }
+    if (necesita_io == 1)
+    {
+        o_scratch = bytebuffer_get_size(ddat);
+        agrega_ceros(65536);
+        while (bytebuffer_get_size(ddat) - (bytebuffer_get_size(ddat) / 4) * 4 != 0)
+        {
+            bytebuffer_append(ddat, 0);
+        }
+        o_params = bytebuffer_get_size(ddat);
+        agrega_ceros(25);
+    }
+    base_datos = 36 + codigo;
+}
+
+// El relleno de las constantes de cadena: el
+// indice fuera de la piscina acusa y detiene la
+// pasada.
+void rellena_sc()
+{
+    int i;
+    int pos;
+    int idx;
+    i = 0;
+    while (i < nsc)
+    {
+        pos = da_get(dsc_pos, i);
+        idx = da_get(dsc_idx, i);
+        if (idx >= nsco)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        parche32(pos, base_datos + da_get(dsco_off, idx));
+        i = i + 1;
+    }
+}
+
+// La fila de un nombre en el contexto guardado de
+// una funcion, o -1.
+int busca_sv(int ci, int nom)
+{
+    int ini;
+    int n;
+    int k;
+    ini = da_get(dctx_ini, ci);
+    n = da_get(dctx_n, ci);
+    k = 0;
+    while (k < n)
+    {
+        if (da_get(dsv_nom, ini + k) == nom)
+        {
+            return ini + k;
+        }
+        k = k + 1;
+    }
+    return -1;
+}
+
+// La resolucion de los parches de archivo (fase 5
+// del oraculo): escribe vale 1 para las escrituras
+// y 0 para las lecturas. Revalida la funcion, el
+// arreglo en su contexto guardado, la capacidad,
+// los limites y que ambos huecos sigan a cero, y
+// parcha las dos direcciones absolutas. El primer
+// error detiene la pasada.
+void resuelve_io(int escribe)
+{
+    int n;
+    int i;
+    int fun;
+    int arr;
+    int ruta;
+    int phue;
+    int ahue;
+    int cap;
+    int ci;
+    int fila;
+    int acap;
+    int aoff;
+    int total;
+    int cs;
+    int ceros;
+    int k;
+    if (escribe == 1)
+    {
+        n = nfw;
+    }
+    else
+    {
+        n = nfr;
+    }
+    i = 0;
+    while (i < n)
+    {
+        if (escribe == 1)
+        {
+            fun = da_get(dfw_fun, i);
+            arr = da_get(dfw_arr, i);
+            ruta = da_get(dfw_ruta, i);
+            phue = da_get(dfw_phue, i);
+            ahue = da_get(dfw_ahue, i);
+            cap = da_get(dfw_cap, i);
+        }
+        else
+        {
+            fun = da_get(dfr_fun, i);
+            arr = da_get(dfr_arr, i);
+            ruta = da_get(dfr_ruta, i);
+            phue = da_get(dfr_phue, i);
+            ahue = da_get(dfr_ahue, i);
+            cap = da_get(dfr_cap, i);
+        }
+        if (texto_len(fun) == 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        ci = contexto_de(fun);
+        if (ci < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (texto_len(arr) == 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        fila = busca_sv(ci, arr);
+        if (fila < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (da_get(dsv_stack, fila) == 1)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        acap = da_get(dsv_cap, fila);
+        if (acap == 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (cap == 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (cap != acap)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        aoff = da_get(dsv_dat, fila);
+        total = bytebuffer_get_size(ddat);
+        if (aoff >= total)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (acap > (total - aoff) / 4)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (ruta >= total)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        cs = bytebuffer_get_size(dcod);
+        if (phue > cs)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (cs - phue < 4)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (ahue > cs)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (cs - ahue < 4)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        if (phue == ahue)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        ceros = 1;
+        k = 0;
+        while (k < 4)
+        {
+            if (bytebuffer_get(dcod, phue + k) != 0)
+            {
+                ceros = 0;
+            }
+            if (bytebuffer_get(dcod, ahue + k) != 0)
+            {
+                ceros = 0;
+            }
+            k = k + 1;
+        }
+        if (ceros == 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        parche32(phue, base_datos + ruta);
+        parche32(ahue, base_datos + aoff);
+        i = i + 1;
+    }
+}
+
+// Los derrames: el hueco recibe el desplazamiento
+// del marco, tal cual (negativo).
+void rellena_sp9()
+{
+    int i;
+    i = 0;
+    while (i < nsp)
+    {
+        parche32(da_get(dsp_pos, i), da_get(dsp_dat, i));
+        i = i + 1;
+    }
+}
+
+// Las recargas: idem.
+void rellena_rl9()
+{
+    int i;
+    i = 0;
+    while (i < nrl)
+    {
+        parche32(da_get(drl_pos, i), da_get(drl_dat, i));
+        i = i + 1;
+    }
+}
+
+// Las cargas de variable: dataBase + el
+// desplazamiento en DATA del contexto guardado.
+void rellena_vl9()
+{
+    int i;
+    int ci;
+    int fila;
+    i = 0;
+    while (i < nvl)
+    {
+        ci = contexto_de(da_get(dvl_fun, i));
+        if (ci < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        fila = busca_sv(ci, da_get(dvl_nom, i));
+        if (fila < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        parche32(da_get(dvl_pos, i), base_datos + da_get(dsv_dat, fila));
+        i = i + 1;
+    }
+}
+
+// Los almacenes de variable: idem.
+void rellena_vs9()
+{
+    int i;
+    int ci;
+    int fila;
+    i = 0;
+    while (i < nvs)
+    {
+        ci = contexto_de(da_get(dvs_fun, i));
+        if (ci < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        fila = busca_sv(ci, da_get(dvs_nom, i));
+        if (fila < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        parche32(da_get(dvs_pos, i), base_datos + da_get(dsv_dat, fila));
+        i = i + 1;
+    }
+}
+
+// El buffer de impresion entera: cada hueco
+// recibe el fin del buffer (su desplazamiento en
+// DATA + 16), en direccion absoluta.
+void rellena_dibuf()
+{
+    int dirbuf;
+    int i;
+    if (ndibuf > 0)
+    {
+        dirbuf = base_datos + off_entero + 16;
+        i = 0;
+        while (i < ndibuf)
+        {
+            parche32(da_get(dibuf_pos, i), dirbuf);
+            i = i + 1;
+        }
+    }
+}
+
+// La pasada de cierre completa, en el orden del
+// oraculo tras rellena_fc(): construir DATA y la
+// base, constantes de cadena, archivo (escrituras
+// y luego lecturas), derrames, recargas, cargas,
+// almacenes y el buffer de impresion entera.
+void cierra_genera()
+{
+    construye_datos();
+    rellena_sc();
+    resuelve_io(1);
+    resuelve_io(0);
+    rellena_sp9();
+    rellena_rl9();
+    rellena_vl9();
+    rellena_vs9();
+    rellena_dibuf();
+}
+
+// ============================================================
 // GENERA: EL ESQUELETO DE GENERATE().
 //
 // La transcripcion del generate() de Stage 0 en su
@@ -3400,6 +4440,12 @@ void genera()
     int kv;
     int rv;
     int ova;
+    int aux;
+    int cap;
+    int ruta;
+    int phue;
+    int ahue;
+    int nula;
     dent_fun = da_create(region_backend, 256);
     dent_pos = da_create(region_backend, 256);
     dret_pos = da_create(region_backend, 256);
@@ -3422,6 +4468,58 @@ void genera()
     nshr = 0;
     nfunarr = 0;
     ndcl = 0;
+    dibuf_pos = da_create(region_backend, 256);
+    dfw_fun = da_create(region_backend, 256);
+    dfw_arr = da_create(region_backend, 256);
+    dfw_ruta = da_create(region_backend, 256);
+    dfw_phue = da_create(region_backend, 256);
+    dfw_ahue = da_create(region_backend, 256);
+    dfw_cap = da_create(region_backend, 256);
+    dfr_fun = da_create(region_backend, 256);
+    dfr_arr = da_create(region_backend, 256);
+    dfr_ruta = da_create(region_backend, 256);
+    dfr_phue = da_create(region_backend, 256);
+    dfr_ahue = da_create(region_backend, 256);
+    dfr_cap = da_create(region_backend, 256);
+    dsco_off = da_create(region_backend, 256);
+    ndibuf = 0;
+    nfw = 0;
+    nfr = 0;
+    nsco = 0;
+    nprint = 0;
+    necesita_io = 0;
+    base_datos = 0;
+    off_entero = 0;
+    o_cabeza = 0;
+    o_cuenta = 0;
+    o_primera = 0;
+    o_cursor = 0;
+    o_lineas = 0;
+    o_pulgar = 0;
+    o_altura = 0;
+    o_arrastre = 0;
+    o_agarre = 0;
+    o_menu = 0;
+    o_selec = 0;
+    o_cliplen = 0;
+    o_clip = 0;
+    o_texto = 0;
+    o_titulo = 0;
+    o_scratch = 0;
+    o_params = 0;
+    i = dir_nglob;
+    while (i < ndir)
+    {
+        if (da_get(dir_op, i) == 9)
+        {
+            necesita_io = 1;
+        }
+        if (da_get(dir_op, i) == 10)
+        {
+            necesita_io = 1;
+        }
+        i = i + 1;
+    }
     fun_actual = 0;
     pos_main = 0;
     idx_sc = 0;
@@ -3478,6 +4576,7 @@ void genera()
         ope = da_get(dir_ope, i);
         res = da_get(dir_res, i);
         val = da_get(dir_val, i);
+        aux = da_get(dir_aux, i);
         if (op == 1)
         {
             cierra_funcion();
@@ -4935,6 +6034,269 @@ void genera()
             }
             liga_tmp_eax(res);
         }
+        else if (op == 41)
+        {
+            fila = busca_tmp(ope);
+            if (fila < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (da_get(dtmp_kind, fila) != 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            reg = da_get(dtmp_reg, fila);
+            if (reg == 0)
+            {
+                em_mov_edx_eax();
+            }
+            else if (reg == 3)
+            {
+                em_mov_edx_ebx();
+            }
+            else
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            em_print_desde_edx();
+            nprint = nprint + 1;
+        }
+        else if (op == 42)
+        {
+            fila = busca_tmp(ope);
+            if (fila < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (da_get(dtmp_kind, fila) != 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            reg = da_get(dtmp_reg, fila);
+            if (reg == 3)
+            {
+                em_mov_eax_ebx();
+            }
+            else if (reg != 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            pos = em_print_integer_rt();
+            registra_dibuf(pos);
+            nprint = nprint + 1;
+        }
+        else if (op == 9)
+        {
+            if (frame_activo == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (texto_len(nom) == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            nula = 0;
+            j = 0;
+            while (j < texto_len(nom))
+            {
+                if (texto_char(nom, j) == 0)
+                {
+                    nula = 1;
+                }
+                j = j + 1;
+            }
+            if (nula == 1)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (texto_len(ope) == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (texto_len(res) == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (val <= 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            fila = busca_var(ope);
+            if (fila < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (da_get(dvar_stack, fila) == 1)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            cap = da_get(dvar_cap, fila);
+            if (cap == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (cap != val)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            n2 = ntmp;
+            i2 = 0;
+            while (i2 < n2)
+            {
+                if (da_get(dtmp_kind, i2) == 0)
+                {
+                    derrama_tmp(da_get(dtmp_nom, i2));
+                }
+                i2 = i2 + 1;
+            }
+            ruta = copia_ruta(nom);
+            phue = bytebuffer_get_size(dcod) + 1;
+            em_mov_eax_imm(0);
+            ahue = bytebuffer_get_size(dcod) + 1;
+            em_mov_ebx_imm(0);
+            em_mov_ecx_imm(cap);
+            em_byte(232);
+            pos = em_hueco();
+            liga_tmp_eax(res);
+            registra_fr(fun_actual, ope, ruta, phue, ahue, cap);
+        }
+        else if (op == 10)
+        {
+            if (frame_activo == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (texto_len(nom) == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            nula = 0;
+            j = 0;
+            while (j < texto_len(nom))
+            {
+                if (texto_char(nom, j) == 0)
+                {
+                    nula = 1;
+                }
+                j = j + 1;
+            }
+            if (nula == 1)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (texto_len(ope) == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (texto_len(res) == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (texto_len(aux) == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (val <= 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            fila = busca_var(ope);
+            if (fila < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (da_get(dvar_stack, fila) == 1)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            cap = da_get(dvar_cap, fila);
+            if (cap == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (cap != val)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (busca_tmp(aux) < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            n2 = ntmp;
+            i2 = 0;
+            while (i2 < n2)
+            {
+                if (da_get(dtmp_kind, i2) == 0)
+                {
+                    derrama_tmp(da_get(dtmp_nom, i2));
+                }
+                i2 = i2 + 1;
+            }
+            fila = busca_tmp(aux);
+            if (fila < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (da_get(dtmp_kind, fila) != 1)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            off = da_get(dtmp_off, fila);
+            if (off >= 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (off - (off / 4) * 4 != 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            ruta = copia_ruta(nom);
+            phue = bytebuffer_get_size(dcod) + 1;
+            em_mov_eax_imm(0);
+            ahue = bytebuffer_get_size(dcod) + 1;
+            em_mov_ebx_imm(0);
+            em_byte(139);
+            em_byte(141);
+            em_dword(off);
+            em_mov_edx_imm(cap);
+            em_byte(232);
+            pos = em_hueco();
+            libera_tmp(aux);
+            liga_tmp_eax(res);
+            registra_fw(fun_actual, ope, ruta, phue, ahue, cap);
+        }
         else if (op == 40)
         {
             if (texto_len(ope) > 0)
@@ -5003,6 +6365,7 @@ void genera()
     }
     rellena_cf();
     rellena_fc();
+    cierra_genera();
 }
 
 // ============================================================
@@ -5045,508 +6408,6 @@ void genera()
 // llamadas de M-1 ante el registro 257, ambas con las
 // cuentas clavadas en 256 y la ultima ranura intacta.
 // ============================================================
-
-
-// ============================================================
-// B-9 — RESOLUCIÓN FINAL DEL BACKEND.
-//
-// Esta pasada se ejecuta DESPUÉS de genera():
-//
-//   - Las funciones ya tienen sus posiciones.
-//   - Los saltos y CALL ya fueron resueltos.
-//   - Los contextos de variables ya fueron guardados.
-//   - El ByteBuffer dcod contiene el código.
-//   - El ByteBuffer ddat contiene los datos reservados.
-//
-// dataBase sigue el contrato de Stage 0:
-//
-//      dataBase = KOLIBRI_HEADER_SIZE + codeSize
-//      KOLIBRI_HEADER_SIZE = 36
-//
-// Los desplazamientos de variables y cadenas son
-// relativos al inicio de DATA.
-// ============================================================
-
-
-// ------------------------------------------------------------
-// BUSCAR DIRECCIÓN FINAL DE UNA VARIABLE.
-//
-// Devuelve:
-//   DATA: dataBase + offset
-//   STACK: desplazamiento EBP firmado
-//   -1: variable o contexto inexistente.
-// ------------------------------------------------------------
-
-int b9_direccion_variable(int fun, int nom, int dataBase)
-{
-    int ctx;
-    int ini;
-    int cantidad;
-    int i;
-
-    ctx = contexto_de(fun);
-
-    if (ctx < 0)
-    {
-        return -1;
-    }
-
-    ini = da_get(dctx_ini, ctx);
-    cantidad = da_get(dctx_n, ctx);
-
-    i = ini;
-
-    while (i < ini + cantidad)
-    {
-        if (da_get(dsv_nom, i) == nom)
-        {
-            if (da_get(dsv_stack, i) == 1)
-            {
-                return da_get(dsv_soff, i);
-            }
-
-            return dataBase + da_get(dsv_dat, i);
-        }
-
-        i = i + 1;
-    }
-
-    return -1;
-}
-
-
-// ------------------------------------------------------------
-// RESOLVER VARIABLE LOAD Y VARIABLE STORE.
-//
-// Los parches de arrays B-8 también están registrados
-// como VariableLoadPatch. Por eso se resuelven aquí,
-// utilizando el contexto de la función correspondiente.
-// ------------------------------------------------------------
-
-int b9_resuelve_variables(int dataBase)
-{
-    int i;
-    int direccion;
-    int fun;
-    int nom;
-    int pos;
-
-    i = 0;
-
-    while (i < nvl)
-    {
-        fun = da_get(dvl_fun, i);
-        nom = da_get(dvl_nom, i);
-        pos = da_get(dvl_pos, i);
-
-        direccion = b9_direccion_variable(
-            fun,
-            nom,
-            dataBase
-        );
-
-        if (direccion < 0)
-        {
-            errores_back = errores_back + 1;
-            return 0;
-        }
-
-        parche32(pos, direccion);
-
-        i = i + 1;
-    }
-
-    i = 0;
-
-    while (i < nvs)
-    {
-        fun = da_get(dvs_fun, i);
-        nom = da_get(dvs_nom, i);
-        pos = da_get(dvs_pos, i);
-
-        direccion = b9_direccion_variable(
-            fun,
-            nom,
-            dataBase
-        );
-
-        if (direccion < 0)
-        {
-            errores_back = errores_back + 1;
-            return 0;
-        }
-
-        parche32(pos, direccion);
-
-        i = i + 1;
-    }
-
-    return 1;
-}
-
-
-// ------------------------------------------------------------
-// RESOLVER TEMPORARY SPILL.
-//
-// Los derrames usan desplazamientos relativos a EBP.
-// No se les suma dataBase.
-// ------------------------------------------------------------
-
-int b9_resuelve_spills()
-{
-    int i;
-    int pos;
-    int desplazamiento;
-
-    i = 0;
-
-    while (i < nsp)
-    {
-        pos = da_get(dsp_pos, i);
-        desplazamiento = da_get(dsp_dat, i);
-
-        parche32(pos, desplazamiento);
-
-        i = i + 1;
-    }
-
-    return 1;
-}
-
-
-// ------------------------------------------------------------
-// RESOLVER TEMPORARY RELOAD.
-//
-// Los retenes de recarga también son EBP-relativos.
-// ------------------------------------------------------------
-
-int b9_resuelve_reloads()
-{
-    int i;
-    int pos;
-    int desplazamiento;
-
-    i = 0;
-
-    while (i < nrl)
-    {
-        pos = da_get(drl_pos, i);
-        desplazamiento = da_get(drl_dat, i);
-
-        parche32(pos, desplazamiento);
-
-        i = i + 1;
-    }
-
-    return 1;
-}
-
-
-// ------------------------------------------------------------
-// COPIAR CADENAS A DATA.
-//
-// Cada cadena se incorpora una sola vez, en el orden
-// de dtextos_nom.
-//
-// Se conserva el contrato de StringConstPatch:
-// el índice registrado apunta a la posición de la
-// cadena en dtextos_nom.
-//
-// Cada cadena termina con byte NUL.
-// ------------------------------------------------------------
-
-int b9_copiar_cadenas(int offsets)
-{
-    int i;
-    int j;
-    int nom;
-    int largo;
-    int offset;
-    int resultado;
-
-    i = 0;
-
-    while (i < ntextos)
-    {
-        nom = da_get(dtextos_nom, i);
-        largo = texto_len(nom);
-
-        if (largo < 0)
-        {
-            errores_back = errores_back + 1;
-            return 0;
-        }
-
-        offset = bytebuffer_get_size(ddat);
-
-        resultado = da_add(offsets, offset);
-
-        if (resultado < 0)
-        {
-            errores_back = errores_back + 1;
-            return 0;
-        }
-
-        j = 0;
-
-        while (j < largo)
-        {
-            if (bytebuffer_append(
-                ddat,
-                texto_char(nom, j)
-            ) < 0)
-            {
-                errores_back = errores_back + 1;
-                return 0;
-            }
-
-            j = j + 1;
-        }
-
-        if (bytebuffer_append(ddat, 0) < 0)
-        {
-            errores_back = errores_back + 1;
-            return 0;
-        }
-
-        i = i + 1;
-    }
-
-    return 1;
-}
-
-
-// ------------------------------------------------------------
-// RESOLVER STRING CONST PATCH.
-//
-// El desplazamiento de la cadena se convierte en
-// dirección absoluta:
-//
-//      dataBase + stringOffset
-// ------------------------------------------------------------
-
-int b9_resuelve_cadenas(int dataBase, int offsets)
-{
-    int i;
-    int indice;
-    int pos;
-    int offset;
-
-    i = 0;
-
-    while (i < nsc)
-    {
-        pos = da_get(dsc_pos, i);
-        indice = da_get(dsc_idx, i);
-
-        if (indice < 0 || indice >= ntextos)
-        {
-            errores_back = errores_back + 1;
-            return 0;
-        }
-
-        offset = da_get(offsets, indice);
-
-        parche32(
-            pos,
-            dataBase + offset
-        );
-
-        i = i + 1;
-    }
-
-    return 1;
-}
-
-
-// ------------------------------------------------------------
-// PASADA FINAL.
-//
-// Devuelve un ByteBuffer con:
-//
-//      [ código x86 ][ DATA ]
-//
-// El buffer de salida nace en arena_salida.
-// No se presupone que la arena de Backend tenga
-// capacidad ilimitada.
-//
-// El llamador debe crear arena_salida con espacio
-// suficiente para el ejecutable completo.
-// ------------------------------------------------------------
-
-int b9_finaliza(int arena_salida)
-{
-    int codeSize;
-    int dataSize;
-    int dataBase;
-    int offsets;
-    int output;
-    int erroresArenaAntes;
-
-    if (arena_salida <= 0)
-    {
-        errores_back = errores_back + 1;
-        return 0;
-    }
-
-    erroresArenaAntes = errores_arena;
-
-    // --------------------------------------------------------
-    // 1. Copiar las cadenas a DATA.
-    // --------------------------------------------------------
-
-    offsets = da_create(region_backend, 256);
-
-    if (offsets <= 0)
-    {
-        errores_back = errores_back + 1;
-        return 0;
-    }
-
-    if (b9_copiar_cadenas(offsets) == 0)
-    {
-        return 0;
-    }
-
-    // --------------------------------------------------------
-    // 2. Calcular base absoluta de DATA.
-    //
-    // El tamaño del código ya es definitivo.
-    // --------------------------------------------------------
-
-    codeSize = bytebuffer_get_size(dcod);
-
-    if (codeSize < 0)
-    {
-        errores_back = errores_back + 1;
-        return 0;
-    }
-
-    dataBase = 36 + codeSize;
-
-    // --------------------------------------------------------
-    // 3. Resolver spills y reloads.
-    // --------------------------------------------------------
-
-    if (b9_resuelve_spills() == 0)
-    {
-        return 0;
-    }
-
-    if (b9_resuelve_reloads() == 0)
-    {
-        return 0;
-    }
-
-    // --------------------------------------------------------
-    // 4. Resolver direcciones de variables y arrays.
-    // --------------------------------------------------------
-
-    if (b9_resuelve_variables(dataBase) == 0)
-    {
-        return 0;
-    }
-
-    // --------------------------------------------------------
-    // 5. Resolver cadenas.
-    // --------------------------------------------------------
-
-    if (b9_resuelve_cadenas(dataBase, offsets) == 0)
-    {
-        return 0;
-    }
-
-    // --------------------------------------------------------
-    // 6. Crear el buffer final.
-    // --------------------------------------------------------
-
-    output = bytebuffer_create(arena_salida);
-
-    if (output <= 0)
-    {
-        errores_back = errores_back + 1;
-        return 0;
-    }
-
-    // Código primero.
-    bytebuffer_write(
-        output,
-        dcod,
-        0,
-        codeSize
-    );
-
-    // DATA después del código.
-    dataSize = bytebuffer_get_size(ddat);
-
-    if (dataSize < 0)
-    {
-        errores_back = errores_back + 1;
-        return 0;
-    }
-
-    bytebuffer_write(
-        output,
-        ddat,
-        0,
-        dataSize
-    );
-
-    // --------------------------------------------------------
-    // 7. Comprobar que la copia no haya fallado.
-    // --------------------------------------------------------
-
-    if (errores_arena != erroresArenaAntes)
-    {
-        errores_back = errores_back + 1;
-        return 0;
-    }
-
-    if (bytebuffer_get_size(output) != codeSize + dataSize)
-    {
-        errores_back = errores_back + 1;
-        return 0;
-    }
-
-    return output;
-}
-
-
-// ------------------------------------------------------------
-// API B-9.
-//
-// Ejecuta el paseo B-8 y después la pasada final.
-//
-// Retorna:
-//   handle ByteBuffer CODE + DATA
-//   0 si hay errores.
-//
-// No modifica el comportamiento de genera() ni
-// elimina las sondas B-1 a B-8.
-// ------------------------------------------------------------
-
-int genera_b9(int arena_salida)
-{
-    genera();
-
-    if (errores_back != 0)
-    {
-        return 0;
-    }
-
-    if (errores_arena != 0)
-    {
-        return 0;
-    }
-
-    return b9_finaliza(arena_salida);
-}
-
-
-// ============================================================
-// FIN B-9 CORE
-// ============================================================
-
 
 void sonda_backend_b1()
 {
@@ -6125,6 +6986,21 @@ int tx6(int c0, int c1, int c2, int c3, int c4, int c5)
     return ini * 128 + 6;
 }
 
+int tx9(int c0, int c1, int c2, int c3, int c4, int c5, int c6, int c7, int c8)
+{
+    int ini;
+    ini = string_pool_add_char(dpool, c0);
+    string_pool_add_char(dpool, c1);
+    string_pool_add_char(dpool, c2);
+    string_pool_add_char(dpool, c3);
+    string_pool_add_char(dpool, c4);
+    string_pool_add_char(dpool, c5);
+    string_pool_add_char(dpool, c6);
+    string_pool_add_char(dpool, c7);
+    string_pool_add_char(dpool, c8);
+    return ini * 128 + 9;
+}
+
 void imprime_mov()
 {
     imprime_codigo();
@@ -6177,6 +7053,95 @@ void imprime_arreglos()
         print_int(da_get(dfun_nom, i));
         i = i + 1;
     }
+}
+
+// La impresion del cierre de B-9: la gemela de la
+// del puerto.
+void imprime_cierre()
+{
+    int i;
+    int j;
+    int k;
+    print_int(nprint);
+    print_int(necesita_io);
+    print_int(base_datos);
+    print_int(off_entero);
+    print_int(o_cabeza);
+    print_int(o_cuenta);
+    print_int(o_primera);
+    print_int(o_cursor);
+    print_int(o_lineas);
+    print_int(o_pulgar);
+    print_int(o_altura);
+    print_int(o_arrastre);
+    print_int(o_agarre);
+    print_int(o_menu);
+    print_int(o_selec);
+    print_int(o_cliplen);
+    print_int(o_clip);
+    print_int(o_texto);
+    print_int(o_titulo);
+    print_int(o_scratch);
+    print_int(o_params);
+    print_int(nsco);
+    i = 0;
+    while (i < nsco)
+    {
+        print_int(da_get(dsco_off, i));
+        i = i + 1;
+    }
+    print_int(ndibuf);
+    i = 0;
+    while (i < ndibuf)
+    {
+        print_int(da_get(dibuf_pos, i));
+        i = i + 1;
+    }
+    print_int(nfw);
+    i = 0;
+    while (i < nfw)
+    {
+        print_int(da_get(dfw_ruta, i));
+        print_int(da_get(dfw_phue, i));
+        print_int(da_get(dfw_ahue, i));
+        print_int(da_get(dfw_cap, i));
+        j = da_get(dfw_ruta, i);
+        while (bytebuffer_get(ddat, j) != 0)
+        {
+            print_int(bytebuffer_get(ddat, j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    print_int(nfr);
+    i = 0;
+    while (i < nfr)
+    {
+        print_int(da_get(dfr_ruta, i));
+        print_int(da_get(dfr_phue, i));
+        print_int(da_get(dfr_ahue, i));
+        print_int(da_get(dfr_cap, i));
+        j = da_get(dfr_ruta, i);
+        while (bytebuffer_get(ddat, j) != 0)
+        {
+            print_int(bytebuffer_get(ddat, j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    k = 0;
+    while (k < 84)
+    {
+        print_int(bytebuffer_get(ddat, o_texto + k));
+        k = k + 1;
+    }
+    k = 0;
+    while (k < 16)
+    {
+        print_int(bytebuffer_get(ddat, o_titulo + k));
+        k = k + 1;
+    }
+    print_int(bytebuffer_get_size(ddat));
 }
 
 void sonda_suma_caso1()
@@ -7993,6 +8958,284 @@ void sonda_errores_arreglo()
     imprime_arreglos();
 }
 
+// ============================================================
+// SONDA DE B-9: NATIVAS Y CIERRE.
+//
+// Cinco movimientos (59 a 63): Print de una
+// constante de cadena, de un temporal en EBX y
+// PrintInteger de una constante; Print y
+// PrintInteger de variables; el viaje de ida y
+// vuelta del archivo; el programa completo con
+// todas las listas conviviendo; y los errores de
+// las ramas nuevas en seis submundos.
+// ============================================================
+
+// Movimiento 59: Print de una constante de cadena
+// (la piscina y el relleno de la cadena, de punta
+// a punta), PrintInteger de una constante y Print
+// de un temporal en EBX.
+void sonda_print()
+{
+    int r_main;
+    int r_hola;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t3;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_hola = tx4(72, 111, 108, 97);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_t2 = tx2(37, 50);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(3, r_hola, 0, r_t0, 0);
+    registra_ir(41, 0, r_t0, 0, 0);
+    registra_ir(2, 0, 0, r_t1, 30);
+    registra_ir(42, 0, r_t1, 0, 0);
+    registra_ir(2, 0, 0, r_t2, 7);
+    registra_ir(2, 0, 0, r_t3, 9);
+    registra_ir(41, 0, r_t3, 0, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+}
+
+// Movimiento 60: Print y PrintInteger de variables
+// (carga de una global y de una local de marco,
+// con derrame y recarga entre medias).
+void sonda_print_variable()
+{
+    int r_g;
+    int r_main;
+    int r_y;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t3;
+    mundo2();
+    r_g = tx1(103);
+    r_main = tx4(109, 97, 105, 110);
+    r_y = tx1(121);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_t2 = tx2(37, 50);
+    r_t3 = tx2(37, 51);
+    registra_ir(4, r_g, 0, 0, 0);
+    dir_nglob = 1;
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(4, r_y, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 5);
+    registra_ir(5, r_g, r_t0, 0, 0);
+    registra_ir(6, r_g, 0, r_t1, 0);
+    registra_ir(42, 0, r_t1, 0, 0);
+    registra_ir(2, 0, 0, r_t2, 8);
+    registra_ir(5, r_y, r_t2, 0, 0);
+    registra_ir(6, r_y, 0, r_t3, 0);
+    registra_ir(41, 0, r_t3, 0, 0);
+    registra_ir(40, 0, r_t1, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+}
+
+// Movimiento 61: el viaje de ida y vuelta del
+// archivo: FileWrite con su temporal de conteo y
+// FileRead sobre la misma ruta y el mismo arreglo.
+void sonda_archivo()
+{
+    int r_main;
+    int r_v;
+    int r_ruta;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t3;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_v = tx3(118, 64, 48);
+    r_ruta = tx9(68, 65, 84, 79, 83, 46, 84, 88, 84);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_t2 = tx2(37, 50);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(4, r_v, 0, 0, 4);
+    registra_ir(2, 0, 0, r_t0, 3);
+    registra_ir(10, r_ruta, r_v, r_t1, 4);
+    registra_aux(r_t0);
+    registra_ir(9, r_ruta, r_v, r_t2, 4);
+    registra_ir(2, 0, 0, r_t3, 0);
+    registra_ir(7, r_v, r_t3, r_t1, 0);
+    registra_ir(40, 0, r_t1, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+}
+
+// Movimiento 62: el programa completo: global,
+// arreglo compartido con alias, cadena, llamada,
+// carga, almacen, carga y almacen de arreglo,
+// Print y PrintInteger: el cierre resuelve todas
+// las listas en un solo programa.
+void sonda_completo()
+{
+    int r_g;
+    int r_ayud;
+    int r_main;
+    int r_v0;
+    int r_v1;
+    int r_hola;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t3;
+    int r_t4;
+    int r_t5;
+    int r_t6;
+    mundo2();
+    r_g = tx1(103);
+    r_ayud = tx4(97, 121, 117, 100);
+    r_main = tx4(109, 97, 105, 110);
+    r_v0 = tx3(118, 64, 48);
+    r_v1 = tx3(118, 64, 49);
+    r_hola = tx4(72, 111, 108, 97);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_t2 = tx2(37, 50);
+    r_t3 = tx2(37, 51);
+    r_t4 = tx2(37, 52);
+    r_t5 = tx2(37, 53);
+    r_t6 = tx2(37, 54);
+    registra_ir(4, r_g, 0, 0, 0);
+    dir_nglob = 1;
+    registra_ir(0, r_ayud, 0, 0, 0);
+    registra_ir(4, r_v0, 0, 0, 3);
+    registra_ir(2, 0, 0, r_t0, 2);
+    registra_ir(2, 0, 0, r_t1, 40);
+    registra_ir(8, r_v0, r_t0, r_t1, 0);
+    registra_ir(2, 0, 0, r_t0, 40);
+    registra_ir(40, 0, r_t0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(4, r_v1, 0, 0, 3);
+    registra_ir(39, r_ayud, 0, r_t2, 0);
+    registra_ir(2, 0, 0, r_t3, 11);
+    registra_ir(5, r_g, r_t3, 0, 0);
+    registra_ir(6, r_g, 0, r_t4, 0);
+    registra_ir(42, 0, r_t4, 0, 0);
+    registra_ir(3, r_hola, 0, r_t5, 0);
+    registra_ir(41, 0, r_t5, 0, 0);
+    registra_ir(2, 0, 0, r_t6, 2);
+    registra_ir(7, r_v1, r_t6, r_t4, 0);
+    registra_ir(40, 0, r_t4, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+}
+
+// Movimiento 63: los errores de las ramas nuevas,
+// en seis submundos.
+void sonda_errores_nativas()
+{
+    int r_main;
+    int r_mues;
+    int r_v;
+    int r_ruta;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t3;
+    int r_t9;
+    // (a) Print de un temporal inexistente.
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t9 = tx2(37, 57);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(41, 0, r_t9, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+    // (b) PrintInteger de un temporal en memoria.
+    mundo2();
+    r_mues = tx4(109, 117, 101, 115);
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_t2 = tx2(37, 50);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_mues, 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 1);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 1);
+    registra_ir(2, 0, 0, r_t1, 2);
+    registra_ir(2, 0, 0, r_t2, 3);
+    registra_ir(39, r_mues, 0, r_t3, 0);
+    registra_ir(42, 0, r_t0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+    // (c) FileRead de un arreglo no declarado.
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_v = tx3(118, 64, 48);
+    r_ruta = tx9(68, 65, 84, 79, 83, 46, 84, 88, 84);
+    r_t0 = tx2(37, 48);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(9, r_ruta, r_v, r_t0, 4);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+    // (d) FileRead con la capacidad en desacuerdo.
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_v = tx3(118, 64, 48);
+    r_ruta = tx9(68, 65, 84, 79, 83, 46, 84, 88, 84);
+    r_t0 = tx2(37, 48);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(4, r_v, 0, 0, 4);
+    registra_ir(9, r_ruta, r_v, r_t0, 3);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+    // (e) FileWrite sin el temporal de conteo.
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_v = tx3(118, 64, 48);
+    r_ruta = tx9(68, 65, 84, 79, 83, 46, 84, 88, 84);
+    r_t0 = tx2(37, 48);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(4, r_v, 0, 0, 4);
+    registra_ir(10, r_ruta, r_v, r_t0, 4);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+    // (f) FileRead fuera de todo marco.
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_v = tx3(118, 64, 48);
+    r_ruta = tx9(68, 65, 84, 79, 83, 46, 84, 88, 84);
+    r_t0 = tx2(37, 48);
+    registra_ir(9, r_ruta, r_v, r_t0, 4);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_cierre();
+}
+
 int main()
 {
     sonda_backend_b1();
@@ -8053,5 +9296,10 @@ int main()
     sonda_arreglo_memoria();
     sonda_campos();
     sonda_errores_arreglo();
+    sonda_print();
+    sonda_print_variable();
+    sonda_archivo();
+    sonda_completo();
+    sonda_errores_nativas();
     return 0;
 }
