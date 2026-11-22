@@ -78,6 +78,22 @@
 // de los demas opcodes (B-3 a B-9): en el paseo caen
 // sin emitir, como en la cadena de if del oraculo
 // cuando ninguna rama casa.
+//
+// Rebanada B-3 (2026-11-21): la aritmetica del
+// paseo — las ramas Add, Sub, Mul, Div y Mod de
+// generate(), transcritas de X86Backend.cpp. Add
+// con sus tres casos (EAX+EBX; EBX+EAX con la
+// lanzadera PUSH/MOV/POP; izquierdo en memoria y
+// derecho en EAX, con el derrame protector del
+// temporal ajeno que viva en EBX — el arreglo
+// derrame_fix de Stage 0); Sub derramando todos
+// los temporales en registro en el orden de la
+// tabla, recargando por los retenes y sin liberar
+// los operandos; Mul, Div y Mod derramando solo a
+// los ocupantes de EAX y EBX, en ese orden de
+// registro, y liberando al final. Pow queda
+// diferido: su rama no existe en Stage 0 y nacera
+// nativa en Stage 1 cuando se ordene.
 
 enum TemporaryLocationKind
 {
@@ -2589,6 +2605,52 @@ void em_mov_eax_ebx()
     em_byte(216);
 }
 
+void em_add_eax_ebx()
+{
+    em_byte(1);
+    em_byte(216);
+}
+
+void em_sub_eax_ebx()
+{
+    em_byte(41);
+    em_byte(216);
+}
+
+void em_mul_eax_ebx()
+{
+    em_byte(15);
+    em_byte(175);
+    em_byte(195);
+}
+
+void em_cdq()
+{
+    em_byte(153);
+}
+
+void em_idiv_ebx()
+{
+    em_byte(247);
+    em_byte(251);
+}
+
+void em_mov_eax_edx()
+{
+    em_byte(137);
+    em_byte(208);
+}
+
+void em_push_eax()
+{
+    em_byte(80);
+}
+
+void em_pop_ebx()
+{
+    em_byte(91);
+}
+
 int em_sub_esp_hueco()
 {
     em_byte(129);
@@ -2769,6 +2831,16 @@ void genera()
     int a;
     int z;
     int refpar;
+    int izq;
+    int der;
+    int fila2;
+    int ki;
+    int ri;
+    int kd;
+    int rd;
+    int tb;
+    int i2;
+    int n2;
     dent_fun = da_create(region_backend, 256);
     dent_pos = da_create(region_backend, 256);
     dret_pos = da_create(region_backend, 256);
@@ -3073,6 +3145,210 @@ void genera()
                     return;
                 }
                 registra_vl(fun_actual, nom, pos);
+            }
+        }
+        else if (op >= 11 && op <= 15)
+        {
+            coma = -1;
+            j = 0;
+            while (j < texto_len(ope))
+            {
+                if (texto_char(ope, j) == 44)
+                {
+                    coma = j;
+                    j = texto_len(ope);
+                }
+                else
+                {
+                    j = j + 1;
+                }
+            }
+            if (coma < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            izq = texto_ini(ope) * 128 + coma;
+            der = (texto_ini(ope) + coma + 2) * 128 + (texto_len(ope) - coma - 2);
+            if (busca_tmp(izq) < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (busca_tmp(der) < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (op == 11)
+            {
+                fila = busca_tmp(izq);
+                fila2 = busca_tmp(der);
+                ki = da_get(dtmp_kind, fila);
+                ri = da_get(dtmp_reg, fila);
+                kd = da_get(dtmp_kind, fila2);
+                rd = da_get(dtmp_reg, fila2);
+                if (ki == 0 && ri == 0 && kd == 0 && rd == 3)
+                {
+                    em_add_eax_ebx();
+                    libera_tmp(izq);
+                    libera_tmp(der);
+                    liga_tmp_eax(res);
+                }
+                else if (ki == 0 && ri == 3 && kd == 0 && rd == 0)
+                {
+                    em_push_eax();
+                    em_mov_eax_ebx();
+                    em_pop_ebx();
+                    em_add_eax_ebx();
+                    libera_tmp(izq);
+                    libera_tmp(der);
+                    liga_tmp_eax(res);
+                }
+                else if (ki == 1 && kd == 0 && rd == 0)
+                {
+                    tb = tmp_en_registro(3);
+                    if (tb >= 0 && tb != izq && tb != der)
+                    {
+                        derrama_tmp(tb);
+                    }
+                    em_push_eax();
+                    pos = emite_reten_eax();
+                    if (pos < 0)
+                    {
+                        return;
+                    }
+                    registra_reload(izq, pos, da_get(dtmp_off, fila));
+                    em_pop_ebx();
+                    em_add_eax_ebx();
+                    libera_tmp(izq);
+                    libera_tmp(der);
+                    liga_tmp_eax(res);
+                }
+                else
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+            }
+            else if (op == 12)
+            {
+                if (frame_activo == 0)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                n2 = da_count(dtmp_nom);
+                i2 = 0;
+                while (i2 < n2)
+                {
+                    if (da_get(dtmp_kind, i2) == 0)
+                    {
+                        derrama_tmp(da_get(dtmp_nom, i2));
+                    }
+                    i2 = i2 + 1;
+                }
+                fila = busca_tmp(izq);
+                if (fila < 0)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                fila2 = busca_tmp(der);
+                if (fila2 < 0)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                if (da_get(dtmp_kind, fila) != 1)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                if (da_get(dtmp_kind, fila2) != 1)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                pos = emite_reten_eax();
+                if (pos < 0)
+                {
+                    return;
+                }
+                registra_reload(izq, pos, da_get(dtmp_off, fila));
+                pos = emite_reten_ebx();
+                if (pos < 0)
+                {
+                    return;
+                }
+                registra_reload(der, pos, da_get(dtmp_off, fila2));
+                em_sub_eax_ebx();
+                liga_tmp_eax(res);
+            }
+            else
+            {
+                tb = tmp_en_registro(0);
+                if (tb >= 0)
+                {
+                    derrama_tmp(tb);
+                }
+                tb = tmp_en_registro(3);
+                if (tb >= 0)
+                {
+                    derrama_tmp(tb);
+                }
+                fila = busca_tmp(izq);
+                if (fila < 0)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                fila2 = busca_tmp(der);
+                if (fila2 < 0)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                if (da_get(dtmp_kind, fila) != 1)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                if (da_get(dtmp_kind, fila2) != 1)
+                {
+                    errores_back = errores_back + 1;
+                    return;
+                }
+                pos = emite_reten_eax();
+                if (pos < 0)
+                {
+                    return;
+                }
+                registra_reload(izq, pos, da_get(dtmp_off, fila));
+                pos = emite_reten_ebx();
+                if (pos < 0)
+                {
+                    return;
+                }
+                registra_reload(der, pos, da_get(dtmp_off, fila2));
+                if (op == 13)
+                {
+                    em_mul_eax_ebx();
+                }
+                else if (op == 14)
+                {
+                    em_cdq();
+                    em_idiv_ebx();
+                }
+                else
+                {
+                    em_cdq();
+                    em_idiv_ebx();
+                    em_mov_eax_edx();
+                }
+                libera_tmp(izq);
+                libera_tmp(der);
+                liga_tmp_eax(res);
             }
         }
         else if (op == 40)
@@ -3729,6 +4005,369 @@ void sonda_crecimiento_gen()
     print_int(errores_arena);
 }
 
+
+// ============================================================
+// SONDA B-3: LA ARITMETICA.
+//
+// Tras las sondas B-1 y B-2 enteras (la conservacion
+// de 1.465 valores), once movimientos del paseo
+// aritmetico, cada uno en su mundo con su programa en
+// main (salvo el Sub sin marco, en f): Add en sus
+// tres casos y en su caso 2 con EBX libre, Sub base y
+// Sub con el orden de la tabla, Mul base y Mul con el
+// orden de registro, Div, Mod y los tres errores
+// (temporal inexistente, combinacion no soportada y
+// Sub sin marco). Cada movimiento vuelca el codigo,
+// el estado de genera, las listas de parches, la
+// maquinaria y los errores. Los operandos "izq, der"
+// se internan con tx6 y las referencias de los
+// temporales operandos son las de sus subcadenas,
+// como los parametros de B-2.
+// ============================================================
+
+int tx6(int c0, int c1, int c2, int c3, int c4, int c5)
+{
+    int ini;
+    ini = string_pool_add_char(dpool, c0);
+    string_pool_add_char(dpool, c1);
+    string_pool_add_char(dpool, c2);
+    string_pool_add_char(dpool, c3);
+    string_pool_add_char(dpool, c4);
+    string_pool_add_char(dpool, c5);
+    return ini * 128 + 6;
+}
+
+void imprime_mov()
+{
+    imprime_codigo();
+    imprime_genera();
+    imprime_listas();
+    imprime_maquinaria();
+    print_int(errores_back);
+    print_int(errores_arena);
+}
+
+void sonda_suma_caso1()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(11, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_suma_caso1b()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 49, 44, 32, 37, 48);
+    ini_ope = r_ope / 128;
+    r_t1 = ini_ope * 128 + 2;
+    r_t0 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(11, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_suma_caso2()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t2;
+    int r_t1;
+    int r_t3;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 50);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t2 = (ini_ope + 4) * 128 + 2;
+    r_t1 = tx2(37, 49);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(2, 0, 0, r_t2, 5);
+    registra_ir(11, 0, r_ope, r_t3, 0);
+    registra_ir(40, 0, r_t3, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_suma_caso2_solo()
+{
+    int r_main;
+    int r_x;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t2;
+    int r_t1;
+    int r_t3;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_x = tx1(120);
+    r_ope = tx6(37, 48, 44, 32, 37, 50);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t2 = (ini_ope + 4) * 128 + 2;
+    r_t1 = tx2(37, 49);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(4, r_x, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(2, 0, 0, r_t2, 5);
+    registra_ir(5, r_x, r_t1, 0, 0);
+    registra_ir(11, 0, r_ope, r_t3, 0);
+    registra_ir(40, 0, r_t3, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_resta()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(12, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_resta_orden()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t2;
+    int r_t0;
+    int r_t1;
+    int r_t3;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 50, 44, 32, 37, 48);
+    ini_ope = r_ope / 128;
+    r_t2 = ini_ope * 128 + 2;
+    r_t0 = (ini_ope + 4) * 128 + 2;
+    r_t1 = tx2(37, 49);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(2, 0, 0, r_t2, 5);
+    registra_ir(12, 0, r_ope, r_t3, 0);
+    registra_ir(40, 0, r_t3, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_mul()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(13, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_mul_orden()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t3;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(2, 0, 0, r_t2, 5);
+    registra_ir(13, 0, r_ope, r_t3, 0);
+    registra_ir(40, 0, r_t3, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_div()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(14, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_mod()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(15, 0, r_ope, r_t2, 0);
+    registra_ir(40, 0, r_t2, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+}
+
+void sonda_errores_arit()
+{
+    int r_main;
+    int r_ope;
+    int ini_ope;
+    int r_t9;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t3;
+    int r_f;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 57, 44, 32, 37, 48);
+    ini_ope = r_ope / 128;
+    r_t9 = ini_ope * 128 + 2;
+    r_t0 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(11, 0, r_ope, r_t2, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    r_t3 = tx2(37, 51);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(2, 0, 0, r_t2, 5);
+    registra_ir(11, 0, r_ope, r_t3, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    mundo2();
+    r_f = tx1(102);
+    r_ope = tx6(37, 48, 44, 32, 37, 49);
+    ini_ope = r_ope / 128;
+    r_t0 = ini_ope * 128 + 2;
+    r_t1 = (ini_ope + 4) * 128 + 2;
+    r_t2 = tx2(37, 50);
+    registra_ir(0, r_f, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 10);
+    registra_ir(2, 0, 0, r_t1, 3);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(12, 0, r_ope, r_t2, 0);
+    genera();
+    imprime_mov();
+}
+
 int main()
 {
     sonda_backend_b1();
@@ -3737,5 +4376,16 @@ int main()
     sonda_implicito();
     sonda_errores();
     sonda_crecimiento_gen();
+    sonda_suma_caso1();
+    sonda_suma_caso1b();
+    sonda_suma_caso2();
+    sonda_suma_caso2_solo();
+    sonda_resta();
+    sonda_resta_orden();
+    sonda_mul();
+    sonda_mul_orden();
+    sonda_div();
+    sonda_mod();
+    sonda_errores_arit();
     return 0;
 }
