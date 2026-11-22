@@ -126,6 +126,19 @@
 // LogicalNot con un solo operando y el derrame
 // protector del ocupante ajeno de EAX cuando el
 // operando no vive en EAX.
+//
+// Rebanada B-6 (2026-11-22): control de flujo del
+// paseo — las ramas Label, Jump y JumpIfZero de
+// generate() (opcodes 53 a 55), la tabla de
+// etiquetas con ambito de funcion (la clave es la
+// pareja funcion actual y etiqueta, el
+// makeScopedLabel del oraculo) y la pasada de
+// relleno de los parches de control de flujo al
+// final de genera(): rel = destino - (hueco + 4),
+// en orden, y la primera etiqueta que falte acusa
+// y detiene la pasada. JumpIfNotZero (56) no tiene
+// rama en el oraculo: el paseo lo deja pasar sin
+// emitir nada.
 
 enum TemporaryLocationKind
 {
@@ -1195,6 +1208,11 @@ int dsc_pos;
 int dsc_idx;
 int dcf_etiq;
 int dcf_pos;
+int dcf_fun;
+int detq_fun;
+int detq_etq;
+int detq_pos;
+int netq;
 int dfc_fun;
 int dfc_pos;
 
@@ -2830,6 +2848,78 @@ void em_normaliza()
     em_movzx_eax_al();
 }
 
+int em_je_hueco()
+{
+    em_byte(15);
+    em_byte(132);
+    return em_hueco();
+}
+
+int em_jmp_hueco()
+{
+    em_byte(233);
+    return em_hueco();
+}
+
+int busca_etq(int fun, int etq)
+{
+    int i;
+    i = 0;
+    while (i < netq)
+    {
+        if (da_get(detq_fun, i) == fun && da_get(detq_etq, i) == etq)
+        {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+void registra_etq(int fun, int etq, int pos)
+{
+    int r;
+    r = da_add(detq_fun, fun);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    r = da_add(detq_etq, etq);
+    r = da_add(detq_pos, pos);
+    netq = netq + 1;
+}
+
+void registra_cf2(int fun, int etiq, int pos)
+{
+    int r;
+    r = da_add(dcf_fun, fun);
+    if (r < 0)
+    {
+        errores_back = errores_back + 1;
+        return;
+    }
+    registra_cf(etiq, pos);
+}
+
+void rellena_cf()
+{
+    int i;
+    int fila;
+    i = 0;
+    while (i < ncf)
+    {
+        fila = busca_etq(da_get(dcf_fun, i), da_get(dcf_etiq, i));
+        if (fila < 0)
+        {
+            errores_back = errores_back + 1;
+            return;
+        }
+        parche32(da_get(dcf_pos, i), da_get(detq_pos, fila) - (da_get(dcf_pos, i) + 4));
+        i = i + 1;
+    }
+}
+
 int em_sub_esp_hueco()
 {
     em_byte(129);
@@ -3029,6 +3119,11 @@ void genera()
     ndent = 0;
     nret = 0;
     ntextos = 0;
+    detq_fun = da_create(region_backend, 256);
+    detq_etq = da_create(region_backend, 256);
+    detq_pos = da_create(region_backend, 256);
+    dcf_fun = da_create(region_backend, 256);
+    netq = 0;
     fun_actual = 0;
     pos_main = 0;
     idx_sc = 0;
@@ -4072,6 +4167,77 @@ void genera()
             libera_tmp(ope);
             liga_tmp_eax(res);
         }
+        else if (op == 53)
+        {
+            if (nom == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (fun_actual == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (busca_etq(fun_actual, nom) >= 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            registra_etq(fun_actual, nom, bytebuffer_get_size(dcod));
+        }
+        else if (op == 54)
+        {
+            if (nom == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            pos = em_jmp_hueco();
+            if (fun_actual == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            registra_cf2(fun_actual, nom, pos);
+        }
+        else if (op == 55)
+        {
+            if (ope == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (nom == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (busca_tmp(ope) < 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            fila = busca_tmp(ope);
+            if (da_get(dtmp_kind, fila) != 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            if (da_get(dtmp_reg, fila) != 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            em_cmp_eax_imm32(0);
+            pos = em_je_hueco();
+            if (fun_actual == 0)
+            {
+                errores_back = errores_back + 1;
+                return;
+            }
+            registra_cf2(fun_actual, nom, pos);
+        }
         else if (op == 40)
         {
             if (texto_len(ope) > 0)
@@ -4138,6 +4304,7 @@ void genera()
     {
         guarda_contexto(fun_actual);
     }
+    rellena_cf();
 }
 
 // ============================================================
@@ -4766,6 +4933,29 @@ void imprime_mov()
     imprime_maquinaria();
     print_int(errores_back);
     print_int(errores_arena);
+}
+
+void imprime_flujo()
+{
+    int i;
+    print_int(netq);
+    i = 0;
+    while (i < netq)
+    {
+        print_int(da_get(detq_fun, i));
+        print_int(da_get(detq_etq, i));
+        print_int(da_get(detq_pos, i));
+        i = i + 1;
+    }
+    print_int(ncf);
+    i = 0;
+    while (i < ncf)
+    {
+        print_int(da_get(dcf_fun, i));
+        print_int(da_get(dcf_etiq, i));
+        print_int(da_get(dcf_pos, i));
+        i = i + 1;
+    }
 }
 
 void sonda_suma_caso1()
@@ -5776,6 +5966,216 @@ void sonda_errores_cmp()
     imprime_mov();
 }
 
+// ============================================================
+// SONDA B-6: CONTROL DE FLUJO.
+//
+// Tras las sondas B-1 a B-5 enteras (la conservacion
+// de 7.789 valores), seis movimientos de control de
+// flujo, cada uno en su mundo con su programa en
+// main: el salto condicional hacia adelante, el
+// incondicional hacia adelante, el bucle hacia
+// atras con su rel negativo y la salida
+// condicional, JumpIfNotZero en silencio (sin rama
+// en el oraculo), dos funciones con la misma
+// etiqueta (el ambito las separa) y los seis
+// errores (condicion inexistente, condicion en
+// EBX, condicion en memoria, etiqueta duplicada,
+// salto a etiqueta no definida en la pasada de
+// relleno y etiqueta fuera de funcion). Cada
+// movimiento vuelca el codigo ya rellenado, el
+// estado de genera, las listas, la maquinaria, los
+// errores y el flujo (etiquetas y parches con su
+// funcion).
+// ============================================================
+
+void sonda_salto_adelante()
+{
+    int r_main;
+    int r_t0;
+    int r_t1;
+    int r_l1;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_l1 = tx2(76, 49);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 1);
+    registra_ir(55, r_l1, r_t0, 0, 0);
+    registra_ir(2, 0, 0, r_t1, 2);
+    registra_ir(53, r_l1, 0, 0, 0);
+    registra_ir(40, 0, r_t0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_salto_incondicional()
+{
+    int r_main;
+    int r_t0;
+    int r_t1;
+    int r_l2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_l2 = tx2(76, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(54, r_l2, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 9);
+    registra_ir(53, r_l2, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t1, 4);
+    registra_ir(40, 0, r_t1, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_bucle_atras()
+{
+    int r_main;
+    int r_t0;
+    int r_l1;
+    int r_l2;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_l1 = tx2(76, 49);
+    r_l2 = tx2(76, 50);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(53, r_l1, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 5);
+    registra_ir(55, r_l2, r_t0, 0, 0);
+    registra_ir(54, r_l1, 0, 0, 0);
+    registra_ir(53, r_l2, 0, 0, 0);
+    registra_ir(40, 0, r_t0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_salto_no_cero()
+{
+    int r_main;
+    int r_t0;
+    int r_l1;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_l1 = tx2(76, 49);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 1);
+    registra_ir(56, r_l1, r_t0, 0, 0);
+    registra_ir(53, r_l1, 0, 0, 0);
+    registra_ir(40, 0, r_t0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_dos_funciones()
+{
+    int r_main;
+    int r_suma;
+    int r_l1;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_suma = tx4(115, 117, 109, 97);
+    r_l1 = tx2(76, 49);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(54, r_l1, 0, 0, 0);
+    registra_ir(53, r_l1, 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 42);
+    registra_ir(1, 0, 0, 0, 0);
+    registra_ir(0, r_suma, 0, 0, 0);
+    registra_ir(53, r_l1, 0, 0, 0);
+    registra_ir(54, r_l1, 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 7);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
+void sonda_errores_flujo()
+{
+    int r_main;
+    int r_t0;
+    int r_t1;
+    int r_t2;
+    int r_t9;
+    int r_l1;
+    int r_l9;
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t9 = tx2(37, 57);
+    r_l1 = tx2(76, 49);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(55, r_l1, r_t9, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_l1 = tx2(76, 49);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 1);
+    registra_ir(2, 0, 0, r_t1, 2);
+    registra_ir(55, r_l1, r_t1, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_t0 = tx2(37, 48);
+    r_t1 = tx2(37, 49);
+    r_t2 = tx2(37, 50);
+    r_l1 = tx2(76, 49);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(2, 0, 0, r_t0, 1);
+    registra_ir(2, 0, 0, r_t1, 2);
+    registra_ir(2, 0, 0, r_t2, 3);
+    registra_ir(55, r_l1, r_t0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_l1 = tx2(76, 49);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(53, r_l1, 0, 0, 0);
+    registra_ir(53, r_l1, 0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_main = tx4(109, 97, 105, 110);
+    r_l9 = tx2(76, 57);
+    registra_ir(0, r_main, 0, 0, 0);
+    registra_ir(54, r_l9, 0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+    mundo2();
+    r_l1 = tx2(76, 49);
+    registra_ir(53, r_l1, 0, 0, 0);
+    genera();
+    imprime_mov();
+    imprime_flujo();
+}
+
 int main()
 {
     sonda_backend_b1();
@@ -5818,5 +6218,11 @@ int main()
     sonda_log_not();
     sonda_log_not_mem();
     sonda_errores_cmp();
+    sonda_salto_adelante();
+    sonda_salto_incondicional();
+    sonda_bucle_atras();
+    sonda_salto_no_cero();
+    sonda_dos_funciones();
+    sonda_errores_flujo();
     return 0;
 }
