@@ -5046,6 +5046,508 @@ void genera()
 // cuentas clavadas en 256 y la ultima ranura intacta.
 // ============================================================
 
+
+// ============================================================
+// B-9 — RESOLUCIÓN FINAL DEL BACKEND.
+//
+// Esta pasada se ejecuta DESPUÉS de genera():
+//
+//   - Las funciones ya tienen sus posiciones.
+//   - Los saltos y CALL ya fueron resueltos.
+//   - Los contextos de variables ya fueron guardados.
+//   - El ByteBuffer dcod contiene el código.
+//   - El ByteBuffer ddat contiene los datos reservados.
+//
+// dataBase sigue el contrato de Stage 0:
+//
+//      dataBase = KOLIBRI_HEADER_SIZE + codeSize
+//      KOLIBRI_HEADER_SIZE = 36
+//
+// Los desplazamientos de variables y cadenas son
+// relativos al inicio de DATA.
+// ============================================================
+
+
+// ------------------------------------------------------------
+// BUSCAR DIRECCIÓN FINAL DE UNA VARIABLE.
+//
+// Devuelve:
+//   DATA: dataBase + offset
+//   STACK: desplazamiento EBP firmado
+//   -1: variable o contexto inexistente.
+// ------------------------------------------------------------
+
+int b9_direccion_variable(int fun, int nom, int dataBase)
+{
+    int ctx;
+    int ini;
+    int cantidad;
+    int i;
+
+    ctx = contexto_de(fun);
+
+    if (ctx < 0)
+    {
+        return -1;
+    }
+
+    ini = da_get(dctx_ini, ctx);
+    cantidad = da_get(dctx_n, ctx);
+
+    i = ini;
+
+    while (i < ini + cantidad)
+    {
+        if (da_get(dsv_nom, i) == nom)
+        {
+            if (da_get(dsv_stack, i) == 1)
+            {
+                return da_get(dsv_soff, i);
+            }
+
+            return dataBase + da_get(dsv_dat, i);
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+
+// ------------------------------------------------------------
+// RESOLVER VARIABLE LOAD Y VARIABLE STORE.
+//
+// Los parches de arrays B-8 también están registrados
+// como VariableLoadPatch. Por eso se resuelven aquí,
+// utilizando el contexto de la función correspondiente.
+// ------------------------------------------------------------
+
+int b9_resuelve_variables(int dataBase)
+{
+    int i;
+    int direccion;
+    int fun;
+    int nom;
+    int pos;
+
+    i = 0;
+
+    while (i < nvl)
+    {
+        fun = da_get(dvl_fun, i);
+        nom = da_get(dvl_nom, i);
+        pos = da_get(dvl_pos, i);
+
+        direccion = b9_direccion_variable(
+            fun,
+            nom,
+            dataBase
+        );
+
+        if (direccion < 0)
+        {
+            errores_back = errores_back + 1;
+            return 0;
+        }
+
+        parche32(pos, direccion);
+
+        i = i + 1;
+    }
+
+    i = 0;
+
+    while (i < nvs)
+    {
+        fun = da_get(dvs_fun, i);
+        nom = da_get(dvs_nom, i);
+        pos = da_get(dvs_pos, i);
+
+        direccion = b9_direccion_variable(
+            fun,
+            nom,
+            dataBase
+        );
+
+        if (direccion < 0)
+        {
+            errores_back = errores_back + 1;
+            return 0;
+        }
+
+        parche32(pos, direccion);
+
+        i = i + 1;
+    }
+
+    return 1;
+}
+
+
+// ------------------------------------------------------------
+// RESOLVER TEMPORARY SPILL.
+//
+// Los derrames usan desplazamientos relativos a EBP.
+// No se les suma dataBase.
+// ------------------------------------------------------------
+
+int b9_resuelve_spills()
+{
+    int i;
+    int pos;
+    int desplazamiento;
+
+    i = 0;
+
+    while (i < nsp)
+    {
+        pos = da_get(dsp_pos, i);
+        desplazamiento = da_get(dsp_dat, i);
+
+        parche32(pos, desplazamiento);
+
+        i = i + 1;
+    }
+
+    return 1;
+}
+
+
+// ------------------------------------------------------------
+// RESOLVER TEMPORARY RELOAD.
+//
+// Los retenes de recarga también son EBP-relativos.
+// ------------------------------------------------------------
+
+int b9_resuelve_reloads()
+{
+    int i;
+    int pos;
+    int desplazamiento;
+
+    i = 0;
+
+    while (i < nrl)
+    {
+        pos = da_get(drl_pos, i);
+        desplazamiento = da_get(drl_dat, i);
+
+        parche32(pos, desplazamiento);
+
+        i = i + 1;
+    }
+
+    return 1;
+}
+
+
+// ------------------------------------------------------------
+// COPIAR CADENAS A DATA.
+//
+// Cada cadena se incorpora una sola vez, en el orden
+// de dtextos_nom.
+//
+// Se conserva el contrato de StringConstPatch:
+// el índice registrado apunta a la posición de la
+// cadena en dtextos_nom.
+//
+// Cada cadena termina con byte NUL.
+// ------------------------------------------------------------
+
+int b9_copiar_cadenas(int offsets)
+{
+    int i;
+    int j;
+    int nom;
+    int largo;
+    int offset;
+    int resultado;
+
+    i = 0;
+
+    while (i < ntextos)
+    {
+        nom = da_get(dtextos_nom, i);
+        largo = texto_len(nom);
+
+        if (largo < 0)
+        {
+            errores_back = errores_back + 1;
+            return 0;
+        }
+
+        offset = bytebuffer_get_size(ddat);
+
+        resultado = da_add(offsets, offset);
+
+        if (resultado < 0)
+        {
+            errores_back = errores_back + 1;
+            return 0;
+        }
+
+        j = 0;
+
+        while (j < largo)
+        {
+            if (bytebuffer_append(
+                ddat,
+                texto_char(nom, j)
+            ) < 0)
+            {
+                errores_back = errores_back + 1;
+                return 0;
+            }
+
+            j = j + 1;
+        }
+
+        if (bytebuffer_append(ddat, 0) < 0)
+        {
+            errores_back = errores_back + 1;
+            return 0;
+        }
+
+        i = i + 1;
+    }
+
+    return 1;
+}
+
+
+// ------------------------------------------------------------
+// RESOLVER STRING CONST PATCH.
+//
+// El desplazamiento de la cadena se convierte en
+// dirección absoluta:
+//
+//      dataBase + stringOffset
+// ------------------------------------------------------------
+
+int b9_resuelve_cadenas(int dataBase, int offsets)
+{
+    int i;
+    int indice;
+    int pos;
+    int offset;
+
+    i = 0;
+
+    while (i < nsc)
+    {
+        pos = da_get(dsc_pos, i);
+        indice = da_get(dsc_idx, i);
+
+        if (indice < 0 || indice >= ntextos)
+        {
+            errores_back = errores_back + 1;
+            return 0;
+        }
+
+        offset = da_get(offsets, indice);
+
+        parche32(
+            pos,
+            dataBase + offset
+        );
+
+        i = i + 1;
+    }
+
+    return 1;
+}
+
+
+// ------------------------------------------------------------
+// PASADA FINAL.
+//
+// Devuelve un ByteBuffer con:
+//
+//      [ código x86 ][ DATA ]
+//
+// El buffer de salida nace en arena_salida.
+// No se presupone que la arena de Backend tenga
+// capacidad ilimitada.
+//
+// El llamador debe crear arena_salida con espacio
+// suficiente para el ejecutable completo.
+// ------------------------------------------------------------
+
+int b9_finaliza(int arena_salida)
+{
+    int codeSize;
+    int dataSize;
+    int dataBase;
+    int offsets;
+    int output;
+    int erroresArenaAntes;
+
+    if (arena_salida <= 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+
+    erroresArenaAntes = errores_arena;
+
+    // --------------------------------------------------------
+    // 1. Copiar las cadenas a DATA.
+    // --------------------------------------------------------
+
+    offsets = da_create(region_backend, 256);
+
+    if (offsets <= 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+
+    if (b9_copiar_cadenas(offsets) == 0)
+    {
+        return 0;
+    }
+
+    // --------------------------------------------------------
+    // 2. Calcular base absoluta de DATA.
+    //
+    // El tamaño del código ya es definitivo.
+    // --------------------------------------------------------
+
+    codeSize = bytebuffer_get_size(dcod);
+
+    if (codeSize < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+
+    dataBase = 36 + codeSize;
+
+    // --------------------------------------------------------
+    // 3. Resolver spills y reloads.
+    // --------------------------------------------------------
+
+    if (b9_resuelve_spills() == 0)
+    {
+        return 0;
+    }
+
+    if (b9_resuelve_reloads() == 0)
+    {
+        return 0;
+    }
+
+    // --------------------------------------------------------
+    // 4. Resolver direcciones de variables y arrays.
+    // --------------------------------------------------------
+
+    if (b9_resuelve_variables(dataBase) == 0)
+    {
+        return 0;
+    }
+
+    // --------------------------------------------------------
+    // 5. Resolver cadenas.
+    // --------------------------------------------------------
+
+    if (b9_resuelve_cadenas(dataBase, offsets) == 0)
+    {
+        return 0;
+    }
+
+    // --------------------------------------------------------
+    // 6. Crear el buffer final.
+    // --------------------------------------------------------
+
+    output = bytebuffer_create(arena_salida);
+
+    if (output <= 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+
+    // Código primero.
+    bytebuffer_write(
+        output,
+        dcod,
+        0,
+        codeSize
+    );
+
+    // DATA después del código.
+    dataSize = bytebuffer_get_size(ddat);
+
+    if (dataSize < 0)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+
+    bytebuffer_write(
+        output,
+        ddat,
+        0,
+        dataSize
+    );
+
+    // --------------------------------------------------------
+    // 7. Comprobar que la copia no haya fallado.
+    // --------------------------------------------------------
+
+    if (errores_arena != erroresArenaAntes)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+
+    if (bytebuffer_get_size(output) != codeSize + dataSize)
+    {
+        errores_back = errores_back + 1;
+        return 0;
+    }
+
+    return output;
+}
+
+
+// ------------------------------------------------------------
+// API B-9.
+//
+// Ejecuta el paseo B-8 y después la pasada final.
+//
+// Retorna:
+//   handle ByteBuffer CODE + DATA
+//   0 si hay errores.
+//
+// No modifica el comportamiento de genera() ni
+// elimina las sondas B-1 a B-8.
+// ------------------------------------------------------------
+
+int genera_b9(int arena_salida)
+{
+    genera();
+
+    if (errores_back != 0)
+    {
+        return 0;
+    }
+
+    if (errores_arena != 0)
+    {
+        return 0;
+    }
+
+    return b9_finaliza(arena_salida);
+}
+
+
+// ============================================================
+// FIN B-9 CORE
+// ============================================================
+
+
 void sonda_backend_b1()
 {
     int rs;
