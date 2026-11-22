@@ -72,6 +72,8 @@ from tkinter import ttk
 from tkinter import filedialog
 from tkinter import messagebox
 
+import consola_rebanadas
+
 
 # ============================================================
 # CONFIGURACIÓN
@@ -2185,6 +2187,300 @@ class KPPBootstrapStudio(tk.Tk):
         self.disassembly_text.tag_configure(
             "warning",
             foreground=YELLOW
+        )
+
+        # ====================================================
+        # TAB 3
+        # REBANADAS
+        # ====================================================
+
+        self.rebanadas_tab = tk.Frame(
+            self.output_notebook,
+            bg=OUTPUT_BG
+        )
+
+        self.output_notebook.add(
+            self.rebanadas_tab,
+            text="  REBANADAS  "
+        )
+
+        # ----------------------------------------------------
+        # HEADER REBANADAS
+        # ----------------------------------------------------
+
+        rebanadas_header = tk.Frame(
+            self.rebanadas_tab,
+            bg=PANEL,
+            height=36
+        )
+
+        rebanadas_header.pack(
+            fill=tk.X
+        )
+
+        rebanadas_header.pack_propagate(
+            False
+        )
+
+        tk.Label(
+            rebanadas_header,
+            text="  CONSOLA DE REBANADAS",
+            bg=PANEL,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9,
+                "bold"
+            )
+        ).pack(
+            side=tk.LEFT,
+            pady=8
+        )
+
+        # ----------------------------------------------------
+        # COPIAR RESUMEN
+        # ----------------------------------------------------
+
+        self._make_small_button(
+            rebanadas_header,
+            "COPIAR RESUMEN",
+            self._rebanadas_copiar_resumen
+        ).pack(
+            side=tk.RIGHT,
+            padx=(3, 8),
+            pady=5
+        )
+
+        # ----------------------------------------------------
+        # CARPETA DE REBANADA
+        # ----------------------------------------------------
+
+        rebanada_dir_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        rebanada_dir_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=(8, 2)
+        )
+
+        tk.Label(
+            rebanada_dir_frame,
+            text="Carpeta de rebanada:",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.rebanada_dir_entry = tk.Entry(
+            rebanada_dir_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        )
+
+        self.rebanada_dir_entry.pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+            padx=6,
+            ipady=3
+        )
+
+        self._make_small_button(
+            rebanada_dir_frame,
+            "EXAMINAR",
+            self._rebanadas_elegir_carpeta
+        ).pack(
+            side=tk.LEFT
+        )
+
+        # ----------------------------------------------------
+        # SWITCH - FUENTE LOCAL
+        # ----------------------------------------------------
+
+        switch_file_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        switch_file_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        tk.Label(
+            switch_file_frame,
+            text="Fuente local:",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.switch_file_entry = tk.Entry(
+            switch_file_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        )
+
+        self.switch_file_entry.pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+            padx=6,
+            ipady=3
+        )
+
+        self.switch_file_entry.insert(
+            0,
+            str(self.current_file)
+        )
+
+        self._make_small_button(
+            switch_file_frame,
+            "EXAMINAR",
+            self._switch_elegir_archivo
+        ).pack(
+            side=tk.LEFT
+        )
+
+        # ----------------------------------------------------
+        # SWITCH - NOMBRE DESTINO Y BOTON
+        # ----------------------------------------------------
+
+        switch_name_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        switch_name_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        tk.Label(
+            switch_name_frame,
+            text="Nombre en la imagen (8.3):",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.switch_name_entry = tk.Entry(
+            switch_name_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            ),
+            width=18
+        )
+
+        self.switch_name_entry.pack(
+            side=tk.LEFT,
+            padx=6,
+            ipady=3
+        )
+
+        self.switch_name_entry.insert(
+            0,
+            self._switch_nombre_propuesto(
+                self.current_file.name
+            )
+        )
+
+        self._make_button(
+            switch_name_frame,
+            "SWITCH",
+            self._switch_ejecutar
+        ).pack(
+            side=tk.LEFT,
+            padx=6
+        )
+
+        # ----------------------------------------------------
+        # RESUMEN
+        # ----------------------------------------------------
+
+        rebanadas_container = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        rebanadas_container.pack(
+            fill=tk.BOTH,
+            expand=True,
+            pady=(6, 0)
+        )
+
+        self.rebanadas_text = tk.Text(
+            rebanadas_container,
+            bg=OUTPUT_BG,
+            fg="#AFC8E8",
+            insertbackground=WHITE,
+            selectbackground=BLUE,
+            selectforeground=WHITE,
+            bd=0,
+            highlightthickness=0,
+            font=self.font_disassembly,
+            padx=12,
+            pady=10,
+            wrap=tk.NONE,
+            undo=False
+        )
+
+        self.rebanadas_text.pack(
+            side=tk.LEFT,
+            fill=tk.BOTH,
+            expand=True
+        )
+
+        rebanadas_scroll_y = ttk.Scrollbar(
+            rebanadas_container,
+            orient=tk.VERTICAL,
+            command=self.rebanadas_text.yview
+        )
+
+        rebanadas_scroll_y.pack(
+            side=tk.RIGHT,
+            fill=tk.Y
+        )
+
+        self.rebanadas_text.configure(
+            yscrollcommand=rebanadas_scroll_y.set
         )
 
         # ====================================================
@@ -4312,6 +4608,288 @@ class KPPBootstrapStudio(tk.Tk):
             autorun_tmp.unlink(
                 missing_ok=True
             )
+
+
+    # ========================================================
+    # CONSOLA DE REBANADAS (S-1)
+    #
+    # La logica vive en consola_rebanadas.py (funciones
+    # puras que reciben la FAT, la imagen y el log como
+    # parametros); aqui solo estan los manejadores finos de
+    # la pestana REBANADAS.
+    #
+    # La guarda de un solo escritor del panel es la
+    # ampliada del modulo (QEMU + VirtualBox). La vieja de
+    # move_binary queda como esta: divergencia declarada,
+    # a unificar en S-4 si se ordena.
+    # ========================================================
+
+    def _rebanadas_elegir_carpeta(self):
+
+        carpeta = filedialog.askdirectory(
+            title="Carpeta de rebanada"
+        )
+
+        if not carpeta:
+
+            return
+
+        self.rebanada_dir_entry.delete(
+            0,
+            tk.END
+        )
+
+        self.rebanada_dir_entry.insert(
+            0,
+            carpeta
+        )
+
+    # ========================================================
+
+    def _switch_nombre_propuesto(self, nombre_archivo):
+
+        # Las fuentes de datos viajan con su extension
+        # (FUENTE.KPP), a diferencia de los binarios, que
+        # van sin ella: la base pasa por _kolibri_name y la
+        # extension se conserva, limpia y a 3 letras.
+        nombre = Path(
+            nombre_archivo
+        ).name
+
+        if "." in nombre:
+
+            base, ext = nombre.rsplit(".", 1)
+
+            ext_limpia = "".join(
+                c if c.isalnum() else "_"
+                for c in ext.upper()
+            )[:3]
+
+            return self._kolibri_name(base) + "." + ext_limpia
+
+        return self._kolibri_name(nombre)
+
+    # ========================================================
+
+    def _switch_elegir_archivo(self):
+
+        filename = filedialog.askopenfilename(
+            title="Fuente a meter en la imagen",
+            initialdir=str(
+                PROJECTS_DIR
+            ),
+            filetypes=[
+                (
+                    "Todos",
+                    "*.*"
+                )
+            ]
+        )
+
+        if not filename:
+
+            return
+
+        self.switch_file_entry.delete(
+            0,
+            tk.END
+        )
+
+        self.switch_file_entry.insert(
+            0,
+            filename
+        )
+
+        self.switch_name_entry.delete(
+            0,
+            tk.END
+        )
+
+        self.switch_name_entry.insert(
+            0,
+            self._switch_nombre_propuesto(filename)
+        )
+
+    # ========================================================
+
+    def _rebanadas_copiar_resumen(self):
+
+        # El patron de copy_output, sobre el resumen de la
+        # pestana: la seleccion si la hay, todo si no.
+        try:
+
+            selected = self.rebanadas_text.get(
+                tk.SEL_FIRST,
+                tk.SEL_LAST
+            )
+
+        except tk.TclError:
+
+            selected = self.rebanadas_text.get(
+                "1.0",
+                "end-1c"
+            )
+
+        if not selected:
+
+            return
+
+        self.clipboard_clear()
+
+        self.clipboard_append(
+            selected
+        )
+
+    # ========================================================
+
+    def _rebanadas_mostrar_resumen(self, lineas, ok):
+
+        self.rebanadas_text.delete(
+            "1.0",
+            tk.END
+        )
+
+        self.rebanadas_text.insert(
+            "1.0",
+            "\n".join(lineas)
+        )
+
+        self.output_notebook.select(
+            self.rebanadas_tab
+        )
+
+        for linea in lineas:
+
+            self.log(
+                linea,
+                "ok" if ok else "error"
+            )
+
+    # ========================================================
+
+    def _switch_ejecutar(self):
+
+        ruta_local = self.switch_file_entry.get().strip()
+
+        nombre = self.switch_name_entry.get().strip().upper()
+
+        if not ruta_local or not nombre:
+
+            self.log(
+                "[ERROR] SWITCH: falta la fuente local o el nombre destino.",
+                "error"
+            )
+
+            return
+
+        if self.process is not None:
+
+            self.log(
+                "[WARNING] Ya existe una compilacion en ejecucion.",
+                "warning"
+            )
+
+            return
+
+        # Guarda de un solo escritor (QEMU + VirtualBox):
+        # la ampliada de consola_rebanadas.
+        en_vm = consola_rebanadas.vm_con_imagen(
+            str(KOLIBRIOS_IMAGE)
+        )
+
+        if en_vm is not None:
+
+            lineas = [
+                f"[ERROR] SWITCH detenido: {en_vm} esta usando la imagen.",
+                "  Con KolibriOS en marcha no se toca la imagen desde fuera: la FAT no admite dos escritores.",
+                "  Apaga KolibriOS desde su propio menu y vuelve a pulsar SWITCH."
+            ]
+
+            self._rebanadas_mostrar_resumen(
+                lineas,
+                False
+            )
+
+            return
+
+        local_path = Path(ruta_local)
+
+        if not local_path.is_file():
+
+            self.log(
+                f"[ERROR] SWITCH: no existe la fuente local: {local_path}",
+                "error"
+            )
+
+            return
+
+        # Si la fuente a meter es la abierta en el editor y
+        # el buffer difiere del disco, guardar primero: el
+        # mismo orden que compile_program (save_source
+        # antes de compilar). El Studio no lleva flag de
+        # modificado, asi que se compara buffer contra
+        # disco.
+        try:
+
+            if Path(self.current_file).resolve() == local_path.resolve():
+
+                buffer = self.editor.get(
+                    "1.0",
+                    "end-1c"
+                )
+
+                disco = Path(
+                    self.current_file
+                ).read_text(
+                    encoding="utf-8"
+                )
+
+                if buffer != disco:
+
+                    if not self.save_source():
+
+                        return
+
+        except Exception as error:
+
+            self.log(
+                f"[ERROR] SWITCH: comprobando el editor: {error}",
+                "error"
+            )
+
+            return
+
+        if not KOLIBRIOS_IMAGE.exists():
+
+            self.log(
+                "[ERROR] SWITCH: no existe la imagen persistente:",
+                "error"
+            )
+
+            self.log(
+                f"  {KOLIBRIOS_IMAGE}",
+                "error"
+            )
+
+            return
+
+        # log=None en el modulo: el resumen se vuelca una
+        # sola vez, por _rebanadas_mostrar_resumen.
+        ok, resumen = consola_rebanadas.hacer_switch(
+            KolibriFAT32,
+            KOLIBRIOS_IMAGE,
+            KOLIBRIOS_OFFSET,
+            str(local_path),
+            nombre,
+            KPP_ROOT / ".kpp_backups",
+            None
+        )
+
+        self._rebanadas_mostrar_resumen(
+            resumen,
+            ok
+        )
+
 
 
     # ========================================================
