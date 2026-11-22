@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-# CONSOLA DE REBANADAS - LOGICA PURA (S-1 Y S-2)
+# CONSOLA DE REBANADAS - LOGICA PURA (S-1, S-2 Y S-3)
 #
 # Funciones sin interfaz grafica para el circuito de
 # rebanadas de Stage 1. La pestana REBANADAS del Studio
@@ -41,12 +41,34 @@
 #   coteja_segmentos(...)- los segmentos, en orden,
 #                          contra la corriente completa.
 #
+# Contenido de S-3:
+#
+#   lee_manifiesto(texto)- el manifiesto de la rebanada
+#                          (pares CLAVE=valor) a dict.
+#   compara_corrientes() - dos corrientes de valores:
+#                          exacta, o el primer desajuste
+#                          con posicion y ambos valores.
+#   corre_puerto(...)    - corre un puerto por el
+#                          contrato (conserva/genera) y
+#                          devuelve su corriente.
+#   verifica_canario_bin()- el BIN contra el tamano y
+#                          el MD5 fijados en el
+#                          manifiesto.
+#   corre_suite(...)     - validar_test.sh --no-build
+#                          con su resumen parseado; None
+#                          si la suite no puede correr
+#                          en la maquina (sin bash, o
+#                          bin/kpp no ejecutable).
+#
 # Vive en la raiz del clon, junto a kpp_bootstrap_studio.py.
 # ============================================================
 
 import hashlib
 import os
+import re
+import shutil
 import subprocess
+import sys
 from array import array
 from datetime import datetime
 from pathlib import Path
@@ -849,3 +871,541 @@ def coteja_segmentos(lista_bytes, esperado):
     )
 
     return True, lineas
+
+
+# ============================================================
+# ORACULO - MANIFIESTO
+#
+# El manifiesto de una rebanada es un texto de pares
+# CLAVE=valor, uno por linea. Las lineas vacias y los
+# comentarios (#) se ignoran; las claves se guardan en
+# mayusculas. Es el contrato entre la carpeta de la
+# rebanada y el boton ORACULO: PUERTO,
+# ESPERADO_ANTERIOR, ESPERADO, CANARIO_BYTES,
+# CANARIO_MD5, STEM, BIN.
+# ============================================================
+
+def lee_manifiesto(texto):
+
+    datos = {}
+
+    for linea in texto.splitlines():
+
+        linea = linea.strip()
+
+        if not linea or linea.startswith("#"):
+
+            continue
+
+        if "=" not in linea:
+
+            continue
+
+        clave, valor = linea.split("=", 1)
+
+        datos[clave.strip().upper()] = valor.strip()
+
+    return datos
+
+
+# ============================================================
+# ORACULO - COMPARAR DOS CORRIENTES
+#
+# La comparacion que las fases del oraculo necesitan:
+# la corriente del puerto contra un esperado ya
+# escrito. Exacta con conteos, o el primer desajuste
+# con su posicion 1-basada y ambos valores, o la
+# diferencia de longitud (con el primer desajuste del
+# tramo comun, si lo hay).
+# ============================================================
+
+def compara_corrientes(
+    real,
+    esperado,
+    nombre_real="puerto",
+    nombre_esperado="esperado"
+):
+
+    lineas = []
+
+    lineas.append(
+        f"{nombre_real}: {len(real)} valores"
+    )
+
+    lineas.append(
+        f"{nombre_esperado}: {len(esperado)} valores"
+    )
+
+    if len(real) != len(esperado):
+
+        lineas.append(
+            f"RESULTADO: LONGITUD DIFERENTE ({nombre_real} "
+            f"{len(real)}, {nombre_esperado} {len(esperado)}, "
+            f"diferencia {len(esperado) - len(real)})"
+        )
+
+        comun = min(len(real), len(esperado))
+
+        for i in range(comun):
+
+            if real[i] != esperado[i]:
+
+                lineas.append(
+                    f"Primer desajuste dentro del tramo comun: "
+                    f"posicion {i + 1}: {nombre_real}={real[i]} "
+                    f"{nombre_esperado}={esperado[i]}"
+                )
+
+                break
+
+        return False, lineas
+
+    for i, (r, e) in enumerate(zip(real, esperado)):
+
+        if r != e:
+
+            lineas.append(
+                f"RESULTADO: DESAJUSTE en la posicion {i + 1}: "
+                f"{nombre_real}={r} {nombre_esperado}={e}"
+            )
+
+            return False, lineas
+
+    lineas.append(
+        f"RESULTADO: CORRIENTE EXACTA {len(real)}/{len(esperado)} "
+        f"({nombre_real} == {nombre_esperado})"
+    )
+
+    return True, lineas
+
+
+# ============================================================
+# ORACULO - CORRER EL PUERTO (CONTRATO DE PUERTO)
+#
+# Contrato que rige para los puertos nuevos (los
+# viejos no se reescriben):
+#
+#   python puerto.py conserva
+#       imprime su corriente a stdout, exit 0.
+#   python puerto.py genera <ruta>
+#       escribe su corriente al archivo dado, exit 0.
+#   cualquier otro uso: exit != 0.
+#
+# En conserva se captura stdout y se trocea a valores;
+# en genera se exige el archivo de salida y se lee a
+# valores. Devuelve (ok, lineas, valores|None). Los
+# errores del puerto (codigo de salida, tiempo
+# agotado, salida que no es una corriente de enteros)
+# salen como lineas claras, con el stderr recortado a
+# sus ultimas lineas.
+# ============================================================
+
+def corre_puerto(
+    ruta_puerto,
+    modo,
+    ruta_salida=None,
+    cwd=None,
+    timeout=600
+):
+
+    lineas = []
+
+    if modo not in ("conserva", "genera"):
+
+        lineas.append(
+            f"[ERROR] PUERTO: modo desconocido: {modo} "
+            "(conserva|genera)"
+        )
+
+        return False, lineas, None
+
+    ruta = Path(ruta_puerto)
+
+    if not ruta.is_file():
+
+        lineas.append(
+            f"[ERROR] PUERTO: no existe el puerto: {ruta}"
+        )
+
+        return False, lineas, None
+
+    comando = [
+        sys.executable,
+        str(ruta),
+        modo
+    ]
+
+    if modo == "genera":
+
+        if ruta_salida is None:
+
+            lineas.append(
+                "[ERROR] PUERTO: el modo genera exige "
+                "ruta de salida."
+            )
+
+            return False, lineas, None
+
+        comando.append(str(ruta_salida))
+
+    try:
+
+        r = subprocess.run(
+            comando,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=str(cwd) if cwd is not None else None,
+            timeout=timeout
+        )
+
+    except subprocess.TimeoutExpired:
+
+        lineas.append(
+            f"[ERROR] PUERTO: tiempo agotado ({timeout} s) "
+            f"en modo {modo}."
+        )
+
+        return False, lineas, None
+
+    except OSError as error:
+
+        lineas.append(
+            f"[ERROR] PUERTO: no se pudo ejecutar: {error}"
+        )
+
+        return False, lineas, None
+
+    if r.returncode != 0:
+
+        lineas.append(
+            f"[ERROR] PUERTO: salio con codigo {r.returncode} "
+            f"en modo {modo}."
+        )
+
+        stderr = r.stderr.decode(
+            "utf-8",
+            errors="replace"
+        ).strip()
+
+        if stderr:
+
+            for linea_err in stderr.splitlines()[-6:]:
+
+                lineas.append(
+                    f"  puerto: {linea_err}"
+                )
+
+        return False, lineas, None
+
+    if modo == "conserva":
+
+        datos = r.stdout
+
+        origen = "la salida del puerto"
+
+    else:
+
+        salida = Path(ruta_salida)
+
+        if not salida.is_file():
+
+            lineas.append(
+                "[ERROR] PUERTO: el modo genera no creo "
+                f"el archivo: {salida}"
+            )
+
+            return False, lineas, None
+
+        datos = salida.read_bytes()
+
+        origen = f"el archivo {salida.name}"
+
+    try:
+
+        valores = leer_valores(datos)
+
+    except ValueError:
+
+        lineas.append(
+            f"[ERROR] PUERTO: {origen} no es una "
+            "corriente de enteros."
+        )
+
+        return False, lineas, None
+
+    lineas.append(
+        f"PUERTO ({modo}): {len(valores)} valores"
+    )
+
+    return True, lineas, valores
+
+
+# ============================================================
+# ORACULO - CANARIO BIN
+#
+# El canario de una rebanada: el BIN que la pieza
+# produce debe dar el tamano y el MD5 fijados en el
+# manifiesto (CANARIO_BYTES y CANARIO_MD5). Sin esos
+# dos datos el canario esta incompleto y acusa.
+# ============================================================
+
+def verifica_canario_bin(ruta_bin, bytes_esperados, md5_esperado):
+
+    lineas = []
+
+    ruta = Path(ruta_bin)
+
+    lineas.append(
+        f"BIN: {ruta}"
+    )
+
+    if bytes_esperados is None or md5_esperado is None:
+
+        lineas.append(
+            "[ERROR] CANARIO BIN: faltan CANARIO_BYTES o "
+            "CANARIO_MD5 en el manifiesto."
+        )
+
+        return False, lineas
+
+    try:
+
+        bytes_esp = int(bytes_esperados)
+
+    except (TypeError, ValueError):
+
+        lineas.append(
+            f"[ERROR] CANARIO BIN: CANARIO_BYTES no es "
+            f"un entero: {bytes_esperados}"
+        )
+
+        return False, lineas
+
+    md5_esp = str(md5_esperado).strip().lower()
+
+    if not ruta.is_file():
+
+        lineas.append(
+            "[ERROR] CANARIO BIN: no existe el BIN."
+        )
+
+        return False, lineas
+
+    datos = ruta.read_bytes()
+
+    md5_real = _md5(datos)
+
+    ok = True
+
+    if len(datos) == bytes_esp:
+
+        lineas.append(
+            f"  tamano: {len(datos)} bytes "
+            f"(esperado {bytes_esp}) OK"
+        )
+
+    else:
+
+        lineas.append(
+            f"  tamano: {len(datos)} bytes "
+            f"(esperado {bytes_esp}) FALLO"
+        )
+
+        ok = False
+
+    if md5_real == md5_esp:
+
+        lineas.append(
+            f"  md5:    {md5_real} (esperado {md5_esp}) OK"
+        )
+
+    else:
+
+        lineas.append(
+            f"  md5:    {md5_real} (esperado {md5_esp}) FALLO"
+        )
+
+        ok = False
+
+    lineas.append(
+        "CANARIO BIN: " + ("OK" if ok else "FALLO")
+    )
+
+    return ok, lineas
+
+
+# ============================================================
+# ORACULO - SUITE DE REGRESION
+#
+# Corre validar_test.sh --no-build en la raiz del
+# repo y parsea su resumen real:
+#
+#   PASS positivos : N
+#   PASS negativos : N
+#   FAIL           : N
+#
+# Devuelve (ok, lineas); ok es True solo si FAIL es 0
+# y el script salio con codigo 0. Si la suite no puede
+# correr en la maquina devuelve (None, lineas): None
+# es "no disponible", no un fallo, y la pata se
+# declara sin bloquear a las demas. Dos casos: no hay
+# bash ni sh, o el binario que la suite prueba
+# (bin/kpp, el ELF del Stage 0) no es ejecutable aqui
+# - el de un clon de Windows.
+# ============================================================
+
+def corre_suite(ruta_raiz, timeout=1800):
+
+    lineas = []
+
+    bash = shutil.which("bash") or shutil.which("sh")
+
+    if bash is None:
+
+        lineas.append(
+            "SUITE: no disponible en esta maquina "
+            "(sin bash ni sh)."
+        )
+
+        return None, lineas
+
+    raiz = Path(ruta_raiz)
+
+    script = raiz / "validar_test.sh"
+
+    if not script.is_file():
+
+        lineas.append(
+            f"[ERROR] SUITE: no existe {script}"
+        )
+
+        return False, lineas
+
+    # La suite prueba el binario del Stage 0 (bin/kpp):
+    # donde ese binario no es ejecutable - un clon de
+    # Windows, cuyo arbol trae el ELF de Linux - la
+    # suite no puede correr y se declara no disponible,
+    # como cuando no hay bash. Se le pregunta al propio
+    # bash, que es quien la va a correr.
+    try:
+
+        sonda = subprocess.run(
+            [
+                bash,
+                "-c",
+                "test -x bin/kpp"
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(raiz),
+            timeout=30
+        )
+
+        ejecutable = sonda.returncode == 0
+
+    except (OSError, subprocess.TimeoutExpired):
+
+        ejecutable = False
+
+    if not ejecutable:
+
+        lineas.append(
+            "SUITE: no disponible en esta maquina "
+            "(bin/kpp no es ejecutable aqui; la suite "
+            "es del lado Linux)."
+        )
+
+        return None, lineas
+
+    try:
+
+        r = subprocess.run(
+            [
+                bash,
+                "validar_test.sh",
+                "--no-build"
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(raiz),
+            timeout=timeout
+        )
+
+    except subprocess.TimeoutExpired:
+
+        lineas.append(
+            f"[ERROR] SUITE: tiempo agotado ({timeout} s)."
+        )
+
+        return False, lineas
+
+    except OSError as error:
+
+        lineas.append(
+            f"[ERROR] SUITE: no se pudo ejecutar: {error}"
+        )
+
+        return False, lineas
+
+    salida = r.stdout.decode(
+        "utf-8",
+        errors="replace"
+    )
+
+    m_pos = re.search(
+        r"^PASS positivos\s*:\s*(\d+)",
+        salida,
+        re.MULTILINE
+    )
+
+    m_neg = re.search(
+        r"^PASS negativos\s*:\s*(\d+)",
+        salida,
+        re.MULTILINE
+    )
+
+    m_fail = re.search(
+        r"^FAIL\s*:\s*(\d+)",
+        salida,
+        re.MULTILINE
+    )
+
+    if m_pos is None or m_neg is None or m_fail is None:
+
+        lineas.append(
+            "[ERROR] SUITE: no se pudo parsear el resumen "
+            "de validar_test.sh."
+        )
+
+        for linea_out in salida.splitlines()[-4:]:
+
+            lineas.append(
+                f"  suite: {linea_out}"
+            )
+
+        return False, lineas
+
+    n_pos = int(m_pos.group(1))
+
+    n_neg = int(m_neg.group(1))
+
+    n_fail = int(m_fail.group(1))
+
+    lineas.append(
+        f"SUITE: PASS {n_pos} / PASS neg {n_neg} / FAIL {n_fail}"
+    )
+
+    ok = n_fail == 0 and r.returncode == 0
+
+    if r.returncode != 0 and n_fail == 0:
+
+        lineas.append(
+            f"  (validar_test.sh salio con codigo "
+            f"{r.returncode})"
+        )
+
+    lineas.append(
+        "SUITE: " + ("OK" if ok else "FALLO")
+    )
+
+    return ok, lineas

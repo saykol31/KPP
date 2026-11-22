@@ -1006,6 +1006,17 @@ class KPPBootstrapStudio(tk.Tk):
 
         self.disassembly_process = None
 
+        # ----------------------------------------------------
+        # PROCESO DEL ORACULO (CONSOLA DE REBANADAS S-3)
+        #
+        # True mientras el hilo del oraculo corre sus tres
+        # fases; el resumen vuelve por output_queue con la
+        # etiqueta "oraculo_resumen" y lo despacha el
+        # polling, como el de la compilacion.
+        # ----------------------------------------------------
+
+        self.oraculo_activo = False
+
         # ====================================================
         # DISASSEMBLY VIEWS
         #
@@ -2717,6 +2728,148 @@ class KPPBootstrapStudio(tk.Tk):
         )
 
         # ----------------------------------------------------
+        # ORACULO - MANIFIESTO Y BOTON
+        # ----------------------------------------------------
+
+        oraculo_manifiesto_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        oraculo_manifiesto_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=(8, 2)
+        )
+
+        tk.Label(
+            oraculo_manifiesto_frame,
+            text="Manifiesto (vacio = el de la carpeta):",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.oraculo_manifiesto_entry = tk.Entry(
+            oraculo_manifiesto_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        )
+
+        self.oraculo_manifiesto_entry.pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+            padx=6,
+            ipady=3
+        )
+
+        self._make_small_button(
+            oraculo_manifiesto_frame,
+            "EXAMINAR",
+            self._oraculo_elegir_manifiesto
+        ).pack(
+            side=tk.LEFT
+        )
+
+        # ----------------------------------------------------
+        # ORACULO - BIN DEL CANARIO
+        # ----------------------------------------------------
+
+        oraculo_bin_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        oraculo_bin_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        tk.Label(
+            oraculo_bin_frame,
+            text="BIN del canario (vacio = Output/<STEM>.bin):",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.oraculo_bin_entry = tk.Entry(
+            oraculo_bin_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        )
+
+        self.oraculo_bin_entry.pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+            padx=6,
+            ipady=3
+        )
+
+        self._make_small_button(
+            oraculo_bin_frame,
+            "EXAMINAR",
+            self._oraculo_elegir_bin
+        ).pack(
+            side=tk.LEFT
+        )
+
+        # ----------------------------------------------------
+        # ORACULO - BOTON (FILA PROPIA)
+        #
+        # El boton grande va en su propia fila, debajo de
+        # sus dos entradas, como SWITCH y COTEJO en las
+        # suyas: dentro de la fila del manifiesto quedaba
+        # montado tras el EXAMINAR y recortado por el
+        # borde derecho de la pestana.
+        # ----------------------------------------------------
+
+        oraculo_boton_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        oraculo_boton_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        self._make_button(
+            oraculo_boton_frame,
+            "ORACULO",
+            self._oraculo_ejecutar
+        ).pack(
+            side=tk.LEFT,
+            padx=6
+        )
+
+        # ----------------------------------------------------
         # RESUMEN
         # ----------------------------------------------------
 
@@ -4135,6 +4288,21 @@ class KPPBootstrapStudio(tk.Tk):
                         "error"
                     )
 
+                # ============================================
+                # ORACULO - RESUMEN (CONSOLA DE REBANADAS S-3)
+                # ============================================
+
+                elif kind == "oraculo_resumen":
+
+                    self.oraculo_activo = False
+
+                    ok_oraculo, lineas_oraculo = value
+
+                    self._rebanadas_mostrar_resumen(
+                        lineas_oraculo,
+                        ok_oraculo
+                    )
+
         except queue.Empty:
 
             pass
@@ -5495,6 +5663,447 @@ class KPPBootstrapStudio(tk.Tk):
             ok
         )
 
+    # ========================================================
+
+    def _oraculo_elegir_manifiesto(self):
+
+        filename = filedialog.askopenfilename(
+            title="Manifiesto de la rebanada",
+            filetypes=[
+                (
+                    "Texto",
+                    "*.txt"
+                ),
+                (
+                    "Todos",
+                    "*.*"
+                )
+            ]
+        )
+
+        if not filename:
+
+            return
+
+        self.oraculo_manifiesto_entry.delete(
+            0,
+            tk.END
+        )
+
+        self.oraculo_manifiesto_entry.insert(
+            0,
+            filename
+        )
+
+    # ========================================================
+
+    def _oraculo_elegir_bin(self):
+
+        filename = filedialog.askopenfilename(
+            title="BIN del canario",
+            filetypes=[
+                (
+                    "Binario K++",
+                    "*.bin"
+                ),
+                (
+                    "Todos",
+                    "*.*"
+                )
+            ]
+        )
+
+        if not filename:
+
+            return
+
+        self.oraculo_bin_entry.delete(
+            0,
+            tk.END
+        )
+
+        self.oraculo_bin_entry.insert(
+            0,
+            filename
+        )
+
+    # ========================================================
+
+    def _oraculo_ejecutar(self):
+
+        # Guarda mutua con la compilacion: si COMPILAR
+        # esta corriendo, el ORACULO se niega; y un
+        # segundo ORACULO tambien (su hilo es propio).
+        if self.oraculo_activo:
+
+            self.log(
+                "[WARNING] Ya existe un ORACULO en ejecucion.",
+                "warning"
+            )
+
+            return
+
+        if self.process is not None:
+
+            self.log(
+                "[WARNING] Ya existe una compilacion en ejecucion.",
+                "warning"
+            )
+
+            return
+
+        carpeta_txt = self.rebanada_dir_entry.get().strip()
+
+        if not carpeta_txt:
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    "[ERROR] ORACULO: falta la carpeta de rebanada."
+                ],
+                False
+            )
+
+            return
+
+        carpeta = Path(carpeta_txt)
+
+        if not carpeta.is_dir():
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    f"[ERROR] ORACULO: no existe la carpeta: {carpeta}"
+                ],
+                False
+            )
+
+            return
+
+        manifiesto_txt = self.oraculo_manifiesto_entry.get().strip()
+
+        if manifiesto_txt:
+
+            manifiesto_path = Path(manifiesto_txt)
+
+        else:
+
+            manifiesto_path = carpeta / "manifiesto.txt"
+
+        if not manifiesto_path.is_file():
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    f"[ERROR] ORACULO: no existe el manifiesto: {manifiesto_path}"
+                ],
+                False
+            )
+
+            return
+
+        try:
+
+            manifiesto = consola_rebanadas.lee_manifiesto(
+                manifiesto_path.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        except Exception as error:
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    f"[ERROR] ORACULO: el manifiesto no se pudo leer: {error}"
+                ],
+                False
+            )
+
+            return
+
+        def resolver(nombre):
+
+            # Las rutas del manifiesto son relativas a la
+            # carpeta de la rebanada, salvo que ya vengan
+            # absolutas.
+            valor = manifiesto.get(nombre, "")
+
+            if not valor:
+
+                return None
+
+            ruta = Path(valor)
+
+            if not ruta.is_absolute():
+
+                ruta = carpeta / ruta
+
+            return ruta
+
+        ruta_puerto = resolver("PUERTO")
+
+        if ruta_puerto is None or not ruta_puerto.is_file():
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    "[ERROR] ORACULO: el manifiesto no trae un PUERTO valido."
+                ],
+                False
+            )
+
+            return
+
+        ruta_anterior = resolver("ESPERADO_ANTERIOR")
+
+        if ruta_anterior is None or not ruta_anterior.is_file():
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    "[ERROR] ORACULO: el manifiesto no trae un ESPERADO_ANTERIOR valido."
+                ],
+                False
+            )
+
+            return
+
+        ruta_esperado = resolver("ESPERADO")
+
+        if ruta_esperado is None:
+
+            ruta_esperado = carpeta / "esperado.txt"
+
+        bin_txt = self.oraculo_bin_entry.get().strip()
+
+        if bin_txt:
+
+            ruta_bin = Path(bin_txt)
+
+        elif resolver("BIN") is not None:
+
+            ruta_bin = resolver("BIN")
+
+        elif manifiesto.get("STEM"):
+
+            ruta_bin = OUTPUT_DIR / (manifiesto["STEM"] + ".bin")
+
+        else:
+
+            ruta_bin = None
+
+        self.oraculo_activo = True
+
+        self.log(
+            "[ORACULO] Tres fases en ejecucion (hilo)...",
+            "info"
+        )
+
+        hilo = threading.Thread(
+            target=self._oraculo_worker,
+            args=(
+                carpeta,
+                manifiesto,
+                ruta_puerto,
+                ruta_anterior,
+                ruta_esperado,
+                ruta_bin
+            ),
+            daemon=True
+        )
+
+        hilo.start()
+
+    # ========================================================
+
+    def _oraculo_worker(
+        self,
+        carpeta,
+        manifiesto,
+        ruta_puerto,
+        ruta_anterior,
+        ruta_esperado,
+        ruta_bin
+    ):
+
+        # Las tres fases corren en este hilo; el resumen
+        # vuelve por output_queue con la etiqueta
+        # "oraculo_resumen" y lo muestra el polling, como
+        # manda el patron de _compile_worker. La logica
+        # es la pura de consola_rebanadas.
+        lineas = []
+
+        ok = False
+
+        try:
+
+            lineas.append(
+                "ORACULO - TRES FASES"
+            )
+
+            lineas.append(
+                f"  carpeta: {carpeta}"
+            )
+
+            lineas.append(
+                f"  puerto:  {ruta_puerto}"
+            )
+
+            lineas.append("-" * 60)
+
+            # ------------------------------------------------
+            # FASE 1 - CONSERVACION
+            # ------------------------------------------------
+
+            lineas.append(
+                "FASE 1 - CONSERVACION (el puerto contra el esperado anterior)"
+            )
+
+            ok1, lin, valores = consola_rebanadas.corre_puerto(
+                ruta_puerto,
+                "conserva",
+                cwd=carpeta
+            )
+
+            lineas.extend(lin)
+
+            if ok1:
+
+                try:
+
+                    anterior = consola_rebanadas.leer_valores(
+                        ruta_anterior.read_bytes()
+                    )
+
+                except Exception as error:
+
+                    lineas.append(
+                        f"[ERROR] ORACULO: el esperado anterior no se pudo leer: {error}"
+                    )
+
+                    ok1 = False
+
+                else:
+
+                    ok1, lin = consola_rebanadas.compara_corrientes(
+                        valores,
+                        anterior,
+                        "puerto (conserva)",
+                        "esperado anterior"
+                    )
+
+                    lineas.extend(lin)
+
+            lineas.append(
+                "FASE 1: " + ("OK" if ok1 else "FALLO")
+            )
+
+            lineas.append("-" * 60)
+
+            # ------------------------------------------------
+            # FASE 2 - GENERACION
+            #
+            # Solo con la conservacion exacta: si la fase 1
+            # falla, el esperado NO se sobrescribe - el
+            # esperado anterior es la red.
+            # ------------------------------------------------
+
+            lineas.append(
+                "FASE 2 - GENERACION (el puerto escribe el esperado nuevo)"
+            )
+
+            if ok1:
+
+                ok2, lin, _valores2 = consola_rebanadas.corre_puerto(
+                    ruta_puerto,
+                    "genera",
+                    ruta_salida=ruta_esperado,
+                    cwd=carpeta
+                )
+
+                lineas.extend(lin)
+
+                if ok2:
+
+                    lineas.append(
+                        f"  esperado escrito: {ruta_esperado}"
+                    )
+
+            else:
+
+                ok2 = False
+
+                lineas.append(
+                    "  no ejecutada: la conservacion fallo y "
+                    "el esperado queda como estaba (la red)."
+                )
+
+            lineas.append(
+                "FASE 2: " + ("OK" if ok2 else "FALLO")
+            )
+
+            lineas.append("-" * 60)
+
+            # ------------------------------------------------
+            # FASE 3 - CANARIO (suite + BIN)
+            #
+            # La suite puede no estar disponible (None):
+            # se declara y no bloquea; un FALLO de suite
+            # o de BIN si bloquea la fase.
+            # ------------------------------------------------
+
+            lineas.append(
+                "FASE 3 - CANARIO (suite de regresion y BIN)"
+            )
+
+            ok_suite, lin = consola_rebanadas.corre_suite(
+                str(KPP_ROOT)
+            )
+
+            lineas.extend(lin)
+
+            if ruta_bin is not None:
+
+                ok_bin, lin = consola_rebanadas.verifica_canario_bin(
+                    ruta_bin,
+                    manifiesto.get("CANARIO_BYTES"),
+                    manifiesto.get("CANARIO_MD5")
+                )
+
+                lineas.extend(lin)
+
+            else:
+
+                ok_bin = False
+
+                lineas.append(
+                    "[ERROR] CANARIO BIN: sin BIN (ni campo, "
+                    "ni BIN ni STEM en el manifiesto)."
+                )
+
+            ok3 = (ok_suite is not False) and ok_bin
+
+            lineas.append(
+                "FASE 3: " + ("OK" if ok3 else "FALLO")
+            )
+
+            lineas.append("-" * 60)
+
+            ok = ok1 and ok2 and ok3
+
+            lineas.append(
+                "VEREDICTO ORACULO: " + ("OK" if ok else "FALLO")
+            )
+
+        except Exception as error:
+
+            ok = False
+
+            lineas.append(
+                f"[ERROR] ORACULO: {error}"
+            )
+
+        self.output_queue.put(
+            (
+                "oraculo_resumen",
+                (ok, lineas)
+            )
+        )
 
 
     # ========================================================
