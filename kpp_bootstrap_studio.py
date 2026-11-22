@@ -2432,6 +2432,291 @@ class KPPBootstrapStudio(tk.Tk):
         )
 
         # ----------------------------------------------------
+        # COTEJO - VOLCADO EN LA IMAGEN Y BOTON
+        # ----------------------------------------------------
+
+        cotejo_name_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        cotejo_name_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=(8, 2)
+        )
+
+        tk.Label(
+            cotejo_name_frame,
+            text="Volcado en la imagen (8.3):",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.cotejo_name_entry = tk.Entry(
+            cotejo_name_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            ),
+            width=18
+        )
+
+        self.cotejo_name_entry.pack(
+            side=tk.LEFT,
+            padx=6,
+            ipady=3
+        )
+
+        self._make_button(
+            cotejo_name_frame,
+            "COTEJO",
+            self._cotejo_ejecutar
+        ).pack(
+            side=tk.LEFT,
+            padx=6
+        )
+
+        # ----------------------------------------------------
+        # COTEJO - MODO (COLA / SEGMENTOS)
+        # ----------------------------------------------------
+
+        cotejo_modo_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        cotejo_modo_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        tk.Label(
+            cotejo_modo_frame,
+            text="Modo:",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.cotejo_modo_var = tk.StringVar(
+            value="cola"
+        )
+
+        tk.Radiobutton(
+            cotejo_modo_frame,
+            text="Cola",
+            variable=self.cotejo_modo_var,
+            value="cola",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            activebackground=OUTPUT_BG,
+            activeforeground=TEXT,
+            selectcolor=PANEL,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT,
+            padx=6
+        )
+
+        tk.Radiobutton(
+            cotejo_modo_frame,
+            text="Segmentos",
+            variable=self.cotejo_modo_var,
+            value="segmentos",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            activebackground=OUTPUT_BG,
+            activeforeground=TEXT,
+            selectcolor=PANEL,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        # ----------------------------------------------------
+        # COTEJO - SEGMENTOS EN ORDEN
+        # ----------------------------------------------------
+
+        cotejo_segs_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        cotejo_segs_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        tk.Label(
+            cotejo_segs_frame,
+            text="Segmentos en orden (8.3, por espacios):",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.cotejo_segs_entry = tk.Entry(
+            cotejo_segs_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        )
+
+        self.cotejo_segs_entry.pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+            padx=6,
+            ipady=3
+        )
+
+        # ----------------------------------------------------
+        # COTEJO - ESPERADO
+        # ----------------------------------------------------
+
+        cotejo_esperado_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        cotejo_esperado_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        tk.Label(
+            cotejo_esperado_frame,
+            text="Esperado (vacio = el de la carpeta):",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.cotejo_esperado_entry = tk.Entry(
+            cotejo_esperado_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        )
+
+        self.cotejo_esperado_entry.pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+            padx=6,
+            ipady=3
+        )
+
+        self._make_small_button(
+            cotejo_esperado_frame,
+            "EXAMINAR",
+            self._cotejo_elegir_esperado
+        ).pack(
+            side=tk.LEFT
+        )
+
+        # ----------------------------------------------------
+        # COTEJO - RANGOS (OPCIONAL)
+        # ----------------------------------------------------
+
+        cotejo_rangos_frame = tk.Frame(
+            self.rebanadas_tab,
+            bg=OUTPUT_BG
+        )
+
+        cotejo_rangos_frame.pack(
+            fill=tk.X,
+            padx=8,
+            pady=2
+        )
+
+        tk.Label(
+            cotejo_rangos_frame,
+            text="Rangos (vacio = rangos.txt de la carpeta):",
+            bg=OUTPUT_BG,
+            fg=TEXT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        ).pack(
+            side=tk.LEFT
+        )
+
+        self.cotejo_rangos_entry = tk.Entry(
+            cotejo_rangos_frame,
+            bg=EDITOR_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief=tk.FLAT,
+            font=(
+                "DejaVu Sans",
+                9
+            )
+        )
+
+        self.cotejo_rangos_entry.pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+            padx=6,
+            ipady=3
+        )
+
+        self._make_small_button(
+            cotejo_rangos_frame,
+            "EXAMINAR",
+            self._cotejo_elegir_rangos
+        ).pack(
+            side=tk.LEFT
+        )
+
+        # ----------------------------------------------------
         # RESUMEN
         # ----------------------------------------------------
 
@@ -4887,6 +5172,326 @@ class KPPBootstrapStudio(tk.Tk):
 
         self._rebanadas_mostrar_resumen(
             resumen,
+            ok
+        )
+
+    # ========================================================
+
+    def _cotejo_elegir_esperado(self):
+
+        filename = filedialog.askopenfilename(
+            title="Esperado de la rebanada",
+            filetypes=[
+                (
+                    "Texto",
+                    "*.txt"
+                ),
+                (
+                    "Todos",
+                    "*.*"
+                )
+            ]
+        )
+
+        if not filename:
+
+            return
+
+        self.cotejo_esperado_entry.delete(
+            0,
+            tk.END
+        )
+
+        self.cotejo_esperado_entry.insert(
+            0,
+            filename
+        )
+
+    # ========================================================
+
+    def _cotejo_elegir_rangos(self):
+
+        filename = filedialog.askopenfilename(
+            title="Rangos de movimientos (opcional)",
+            filetypes=[
+                (
+                    "Texto",
+                    "*.txt"
+                ),
+                (
+                    "Todos",
+                    "*.*"
+                )
+            ]
+        )
+
+        if not filename:
+
+            return
+
+        self.cotejo_rangos_entry.delete(
+            0,
+            tk.END
+        )
+
+        self.cotejo_rangos_entry.insert(
+            0,
+            filename
+        )
+
+    # ========================================================
+
+    def _cotejo_ejecutar(self):
+
+        if self.process is not None:
+
+            self.log(
+                "[WARNING] Ya existe una compilacion en ejecucion.",
+                "warning"
+            )
+
+            return
+
+        carpeta_txt = self.rebanada_dir_entry.get().strip()
+
+        if not carpeta_txt:
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    "[ERROR] COTEJO: falta la carpeta de rebanada."
+                ],
+                False
+            )
+
+            return
+
+        carpeta = Path(carpeta_txt)
+
+        if not carpeta.is_dir():
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    f"[ERROR] COTEJO: no existe la carpeta: {carpeta}"
+                ],
+                False
+            )
+
+            return
+
+        esperado_txt = self.cotejo_esperado_entry.get().strip()
+
+        if esperado_txt:
+
+            esperado_path = Path(esperado_txt)
+
+        else:
+
+            esperado_path = carpeta / "esperado.txt"
+
+        if not esperado_path.is_file():
+
+            self._rebanadas_mostrar_resumen(
+                [
+                    f"[ERROR] COTEJO: no existe el esperado: {esperado_path}"
+                ],
+                False
+            )
+
+            return
+
+        modo = self.cotejo_modo_var.get()
+
+        if modo == "segmentos":
+
+            nombres = self.cotejo_segs_entry.get().strip().upper().split()
+
+            if not nombres:
+
+                self._rebanadas_mostrar_resumen(
+                    [
+                        "[ERROR] COTEJO: modo segmentos sin nombres de volcado."
+                    ],
+                    False
+                )
+
+                return
+
+        else:
+
+            nombre = self.cotejo_name_entry.get().strip().upper()
+
+            if not nombre:
+
+                self._rebanadas_mostrar_resumen(
+                    [
+                        "[ERROR] COTEJO: falta el nombre del volcado en la imagen."
+                    ],
+                    False
+                )
+
+                return
+
+            nombres = [nombre]
+
+        # Guarda de un solo escritor (QEMU + VirtualBox):
+        # con la VM abierta no se toca la imagen ni para
+        # leer - la FAT no admite dos manos encima.
+        en_vm = consola_rebanadas.vm_con_imagen(
+            str(KOLIBRIOS_IMAGE)
+        )
+
+        if en_vm is not None:
+
+            lineas = [
+                f"[ERROR] COTEJO detenido: {en_vm} esta usando la imagen.",
+                "  Con KolibriOS en marcha no se toca la imagen desde fuera: la FAT no admite dos escritores.",
+                "  Apaga KolibriOS desde su propio menu y vuelve a pulsar COTEJO."
+            ]
+
+            self._rebanadas_mostrar_resumen(
+                lineas,
+                False
+            )
+
+            return
+
+        if not KOLIBRIOS_IMAGE.exists():
+
+            self.log(
+                "[ERROR] COTEJO: no existe la imagen persistente:",
+                "error"
+            )
+
+            self.log(
+                f"  {KOLIBRIOS_IMAGE}",
+                "error"
+            )
+
+            return
+
+        lineas = []
+
+        lista_datos = []
+
+        dir_volcado = carpeta / "volcado"
+
+        for nom in nombres:
+
+            datos, lin = consola_rebanadas.extrae_volcado(
+                KolibriFAT32,
+                KOLIBRIOS_IMAGE,
+                KOLIBRIOS_OFFSET,
+                nom
+            )
+
+            lineas.extend(lin)
+
+            if datos is None:
+
+                self._rebanadas_mostrar_resumen(
+                    lineas,
+                    False
+                )
+
+                return
+
+            dir_volcado.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+
+            destino = dir_volcado / nom
+
+            destino.write_bytes(datos)
+
+            lineas.append(
+                f"  guardado en {destino}"
+            )
+
+            lista_datos.append(datos)
+
+        try:
+
+            esperado = consola_rebanadas.leer_valores(
+                esperado_path.read_bytes()
+            )
+
+        except Exception as error:
+
+            lineas.append(
+                f"[ERROR] COTEJO: el esperado no se pudo leer: {error}"
+            )
+
+            self._rebanadas_mostrar_resumen(
+                lineas,
+                False
+            )
+
+            return
+
+        if modo == "segmentos":
+
+            ok, lin = consola_rebanadas.coteja_segmentos(
+                lista_datos,
+                esperado
+            )
+
+        else:
+
+            rangos = None
+
+            rangos_txt = self.cotejo_rangos_entry.get().strip()
+
+            if rangos_txt:
+
+                rangos_path = Path(rangos_txt)
+
+            else:
+
+                rangos_path = carpeta / "rangos.txt"
+
+            if rangos_path.is_file():
+
+                lista_rangos = []
+
+                for linea_r in rangos_path.read_text(
+                    encoding="utf-8"
+                ).splitlines():
+
+                    partes = linea_r.split()
+
+                    if len(partes) != 3:
+
+                        continue
+
+                    try:
+
+                        lista_rangos.append(
+                            (
+                                partes[0],
+                                int(partes[1]),
+                                int(partes[2])
+                            )
+                        )
+
+                    except ValueError:
+
+                        continue
+
+                if lista_rangos:
+
+                    rangos = lista_rangos
+
+            ok, lin = consola_rebanadas.coteja_cola(
+                lista_datos[0],
+                esperado,
+                rangos
+            )
+
+        lineas.extend(lin)
+
+        self._rebanadas_mostrar_resumen(
+            lineas,
             ok
         )
 
