@@ -1,4 +1,4 @@
-// Runtime.kpp — Stage 1, runtime, rebanada R-4.
+// Runtime.kpp — Stage 1, runtime, rebanada R-5.
 // El runtime propio de K++ (KolibriRuntime de Stage 0): rutinas x86 que
 // el backend EMITE dentro de cada programa — no es una biblioteca
 // externa ni un interprete. La pieza emite el PREFIJO GRAFICO entero
@@ -52,10 +52,15 @@
 // a cero y la seleccion apagada), y las seis islas de EDIT
 // (58, 63, 58, 48, 42, 58: abrir o cerrar el menu y, tras la
 // guarda del menu abierto y la seleccion activa, copiar,
-// cortar, seleccionar todo, pegar y eliminar). Quedan en
-// hueco: DIBUJA_FILE (267) y las cuatro islas de FILE (58,
-// 42, 42, 42), de R-5. El runtime de archivos
-// (emitFileIoRuntime) es R-6.
+// cortar, seleccionar todo, pegar y eliminar). R-5 porta
+// DIBUJA_FILE (267: el boton FILE con su rotulo y, si el
+// menu esta abierto con estado 2, el panel con los tres
+// renglones OPEN, SAVE y CLOSE como botones 9 a 11) y las
+// cuatro islas de FILE (58, 42, 42, 42: abrir o cerrar el
+// menu y las tres acciones, que en el oraculo solo
+// cierran el menu y redibujan). Con R-5 el prefijo
+// grafico queda portado entero: no queda ningun hueco.
+// El runtime de archivos (emitFileIoRuntime) es R-6.
 // PARCHES INTERNOS: cada salto o llamada entre regiones se
 // registra al emitirse — posicion, clase de destino y rebanada
 // duena (la ultima de las dos orillas) — y lo cierra la pasada de
@@ -76,8 +81,15 @@
 // rutina del menu), los seis saltos del despacho a las islas
 // de EDIT (registrados en R-1) y los diecinueve registros de
 // las propias islas: sus llamadas a la ventana, al bucle, a
-// COPIAR, a PEGAR y a VACIAR. La del refresco a DIBUJA_FILE
-// queda con duena R-5 (la lista fileCall del oraculo). Las catorce listas de direcciones DATA
+// COPIAR, a PEGAR y a VACIAR. rellena_registro(5) cierra
+// en esta rebanada la llamada del refresco a DIBUJA_FILE
+// (registrada en R-2: la lista fileCall del oraculo), la
+// de DRAW_WINDOW a la misma rutina (registrada en R-1),
+// los cuatro saltos del despacho a las islas de FILE
+// (registrados en R-1) y los trece registros de las
+// propias islas: sus llamadas a la ventana y sus saltos
+// al bucle. Con la duena 5 no queda ningun parche
+// interno abierto. Las catorce listas de direcciones DATA
 // del oraculo quedan declaradas como listas de la pieza: el
 // dibujo anota en seis de ellas (lineBuffer una vez, lineCount
 // dos, lineHead una, firstVisible dos, repaintCursor cuatro y
@@ -90,10 +102,12 @@
 // lineBuffer una y clipLen dos), PEGAR en tres (clipLen dos,
 // clipBuffer una y menuTexto una), VACIAR en cuatro (una en
 // cada contador y en la seleccion) y las islas en dos
-// (menuAbierto trece entre las seis y seleccion tres); las
-// llamadas al refresco nacen en las emisiones de Print del
+// (menuAbierto trece entre las seis y seleccion tres),
+// DIBUJA_FILE en dos (menuTexto cuatro y menuAbierto una)
+// y las islas de FILE en una (menuAbierto nueve entre las
+// cuatro); las llamadas al refresco nacen en las emisiones de Print del
 // backend (la costura de B-9), no en esta pieza.
-// CORRECCION de esta rebanada: la constante del
+// CORRECCION de R-4: la constante del
 // color de texto de DIBUJA_LINEAS quedo mal
 // copiada del hex del oraculo en R-2 (-2130771969
 // es 0x80FEFFFF: el byte blanco perdido de las
@@ -101,6 +115,12 @@
 // -2130706433 (0x80FFFFFF) y aqui se restaura, asi
 // que la corriente de R-4 vuelve a ser exacta sin
 // salvedad.
+// NOTA de R-5: las funciones de sonda de esta
+// rebanada leen el buffer con bytebuffer_get, como
+// todas las de la pieza; celda_get es el accesor de
+// celdas de la arena y sobre dcod barre las celdas
+// vecinas (la leccion del cotejo de campo de R-4,
+// cuya sonda nueva lo usaba por error).
 // ABI interna de las rutinas de archivo:
 //   WRITE: EAX = ruta, EBX = arreglo, ECX = cantidad, EDX = capacidad
 //   READ:  EAX = ruta, EBX = arreglo, ECX = capacidad
@@ -2822,6 +2842,179 @@ void emite_vaciar()
     em_ret();
 }
 
+void emite_file()
+{
+    // emitDibujaFile del oraculo: el boton FILE
+    // (funcion 8, id 8) y su rotulo (funcion 4,
+    // menuTexto + 63, longitud 4); si el menu
+    // esta abierto con estado 2, el panel
+    // (funcion 13) y los tres renglones como
+    // botones 9 a 11 con sus rotulos: los
+    // desplazamientos y longitudes de
+    // menuTexto son constantes que el oraculo
+    // parchea en el sitio.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 983105);
+    em_mov_reg_imm(185, 1310737);
+    em_mov_reg_imm(186, 8);
+    em_mov_reg_imm(190, 3166320);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 1966104);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(63);
+    em_byte(190);
+    em_dword(4);
+    em_int(64);
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(2);
+    int no_file = em_jne_hueco();
+    em_mov_eax_imm(13);
+    em_mov_reg_imm(187, 983150);
+    em_mov_reg_imm(185, 2424876);
+    em_mov_reg_imm(186, 1579032);
+    em_int(64);
+    // Renglon 1: y 37, boton 9, texto +68, largo 4.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 983150);
+    em_mov_reg_imm(185, 2424846);
+    em_mov_reg_imm(186, 9);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 1376296);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(68);
+    em_byte(190);
+    em_dword(4);
+    em_int(64);
+    // Renglon 2: y 51, boton 10, texto +73, largo 4.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 983150);
+    em_mov_reg_imm(185, 3342350);
+    em_mov_reg_imm(186, 10);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 1376310);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(73);
+    em_byte(190);
+    em_dword(4);
+    em_int(64);
+    // Renglon 3: y 65, boton 11, texto +78, largo 5.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 983150);
+    em_mov_reg_imm(185, 4259854);
+    em_mov_reg_imm(186, 11);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 1376324);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(78);
+    em_byte(190);
+    em_dword(5);
+    em_int(64);
+    parche32(no_file,
+             bytebuffer_get_size(dcod) - (no_file + 4));
+    em_ret();
+}
+
+void emite_isla_file()
+{
+    // La isla del boton FILE: si su menu esta
+    // abierto (estado 2) lo cierra; si no, lo
+    // abre con estado 2. En ambos casos
+    // redibuja y vuelve al bucle (las llamadas
+    // y el salto se registran con duena 5).
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(2);
+    int cerrar = em_je_hueco();
+    em_mov_eax_imm(2);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 5);
+    registra_parche(em_jmp_hueco(), 1, 5);
+    parche32(cerrar,
+             bytebuffer_get_size(dcod) - (cerrar + 4));
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 5);
+    registra_parche(em_jmp_hueco(), 1, 5);
+}
+
+void emite_isla_open()
+{
+    // OPEN: con el menu FILE abierto
+    // (estado 2), lo cierra y redibuja; si la
+    // guarda falla, vuelve al bucle sin
+    // actuar. En el oraculo la accion solo
+    // cierra el menu: los dialogos reales
+    // quedan fuera de esta pieza.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(2);
+    int g1 = em_jne_hueco();
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 5);
+    registra_parche(em_jmp_hueco(), 1, 5);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    registra_parche(em_jmp_hueco(), 1, 5);
+}
+
+void emite_isla_save()
+{
+    // SAVE: con el menu FILE abierto
+    // (estado 2), lo cierra y redibuja; si la
+    // guarda falla, vuelve al bucle sin
+    // actuar. En el oraculo la accion solo
+    // cierra el menu: los dialogos reales
+    // quedan fuera de esta pieza.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(2);
+    int g1 = em_jne_hueco();
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 5);
+    registra_parche(em_jmp_hueco(), 1, 5);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    registra_parche(em_jmp_hueco(), 1, 5);
+}
+
+void emite_isla_close()
+{
+    // CLOSE: con el menu FILE abierto
+    // (estado 2), lo cierra y redibuja; si la
+    // guarda falla, vuelve al bucle sin
+    // actuar. En el oraculo la accion solo
+    // cierra el menu: los dialogos reales
+    // quedan fuera de esta pieza.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(2);
+    int g1 = em_jne_hueco();
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 5);
+    registra_parche(em_jmp_hueco(), 1, 5);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    registra_parche(em_jmp_hueco(), 1, 5);
+}
+
 void emite_grafico()
 {
     int p;
@@ -2958,9 +3151,9 @@ void emite_grafico()
     // DIBUJA_EDIT: portado en R-4.
     dir_edit = bytebuffer_get_size(dcod);
     emite_edit();
-    // DIBUJA_FILE: hueco de R-5.
+    // DIBUJA_FILE: portado en R-5.
     dir_file = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_file);
+    emite_file();
     // COPIAR, PEGAR y VACIAR: portados en R-4.
     dir_copiar = bytebuffer_get_size(dcod);
     emite_copiar();
@@ -2981,27 +3174,28 @@ void emite_grafico()
     emite_isla_pegar();
     dir_ieliminar = bytebuffer_get_size(dcod);
     emite_isla_eliminar();
-    // ISLAS DE FILE: huecos de R-5.
+    // ISLAS DE FILE: portadas en R-5.
     dir_ifile = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_ifile);
+    emite_isla_file();
     dir_iopen = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_iopen);
+    emite_isla_open();
     dir_isave = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_isave);
+    emite_isla_save();
     dir_iclose = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_iclose);
+    emite_isla_close();
     // PASADAS INTERNAS: la de R-1, la de R-2, la
-    // de R-3 y la de R-4.
+    // de R-3, la de R-4 y la de R-5.
     rellena_registro(1);
     rellena_registro(2);
     rellena_registro(3);
     rellena_registro(4);
+    rellena_registro(5);
 }
 
 // ============================================================
 // SONDA DE LA REBANADA.
 //
-// Veinte bloques cerrados, en el orden de la
+// Veinticinco bloques cerrados, en el orden de la
 // corriente: (a) la emision hasta START — la cuenta
 // de bytes, los bytes y los dos campos del Result
 // que alli nacen; (b) el bucle y el despacho — la
@@ -3029,22 +3223,29 @@ void emite_grafico()
 // cuerpo de COPIAR; (m) el de PEGAR; (n) el de
 // VACIAR; (o) a (t) los cuerpos de las seis islas
 // de EDIT, en su orden — cada uno la cuenta y sus
-// bytes. Ningun bloque
+// bytes; (u) el cuerpo de DIBUJA_FILE — la cuenta y
+// sus bytes; (v) a (y) los cuerpos de las cuatro
+// islas de FILE, en su orden. En esta rebanada el
+// bloque (e) queda en dos valores: cero huecos y
+// el tamano total del prefijo. Ningun bloque
 // pasa de 512 valores: el empaquetado en segmentos
-// lo fija el plan de la rebanada — siete
-// segmentos: el primero con los bloques (a) a (e),
-// 486 valores; el segundo con (f) y (g), 303; el
-// tercero con (h) e (i), 427; el cuarto con (j),
-// 359; el quinto con (k), 379; el sexto con (l),
-// (m) y (n), 316; y el septimo con (o) a (t), 333.
+// lo fija el plan de la rebanada — diez
+// segmentos: el primero con los bloques (a) a (c),
+// 307 valores; el segundo con (d), (e) y (f), 271;
+// el tercero con (g) y (h), 509; el cuarto con
+// (i), 158; el quinto con (j), 359; el sexto con
+// (k), 379; el septimo con (l), (m) y (n), 316;
+// el octavo con (o) a (t), 333; el noveno con (u)
+// y (v), 327; y el decimo con (w), (x) e (y), 129.
 // Como el historial circular de la Konsole
 // retiene 512 registros, cada corrida de la sonda
 // imprime UN segmento y se copia antes de correr el
 // siguiente: segmento_sonda lee el archivo
 // SONDA.TXT de la raiz de la imagen — si no esta,
 // la corrida imprime el segmento 1; si su primer
-// byte es el digito 2, 3, 4, 5, 6 o 7, imprime ese
-// segmento.
+// byte es el digito 2, 3, 4, 5, 6, 7, 8 o 9,
+// imprime ese segmento; si es el digito 0,
+// imprime el segmento 10.
 // ============================================================
 
 void sonda_hasta_start()
@@ -3123,17 +3324,7 @@ void sonda_parches()
 
 void sonda_huecos()
 {
-    print_int(5);
-    print_int(dir_file);
-    print_int(tam_file);
-    print_int(dir_ifile);
-    print_int(tam_ifile);
-    print_int(dir_iopen);
-    print_int(tam_iopen);
-    print_int(dir_isave);
-    print_int(tam_isave);
-    print_int(dir_iclose);
-    print_int(tam_iclose);
+    print_int(0);
     print_int(bytebuffer_get_size(dcod));
 }
 
@@ -3246,6 +3437,67 @@ void sonda_isla_eliminar()
         i = i + 1;
     }
 }
+
+void sonda_file()
+{
+    int i;
+    print_int(tam_file);
+    i = dir_file;
+    while (i < dir_copiar)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_file()
+{
+    int i;
+    print_int(tam_ifile);
+    i = dir_ifile;
+    while (i < dir_iopen)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_open()
+{
+    int i;
+    print_int(tam_iopen);
+    i = dir_iopen;
+    while (i < dir_isave)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_save()
+{
+    int i;
+    print_int(tam_isave);
+    i = dir_isave;
+    while (i < dir_iclose)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_close()
+{
+    int i;
+    print_int(tam_iclose);
+    i = dir_iclose;
+    while (i < bytebuffer_get_size(dcod))
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
 
 void sonda_refresco()
 {
@@ -3386,6 +3638,18 @@ int segmento_sonda()
     {
         return 7;
     }
+    if (datos[0] == 56)
+    {
+        return 8;
+    }
+    if (datos[0] == 57)
+    {
+        return 9;
+    }
+    if (datos[0] == 48)
+    {
+        return 10;
+    }
     return 1;
 }
 
@@ -3411,29 +3675,34 @@ int main()
     seg = segmento_sonda();
     if (seg == 2)
     {
+        sonda_parches();
+        sonda_huecos();
         sonda_refresco();
-        sonda_lineas();
     }
     if (seg == 3)
     {
+        sonda_lineas();
         sonda_visibles();
-        sonda_barra();
     }
     if (seg == 4)
     {
-        sonda_raton();
+        sonda_barra();
     }
     if (seg == 5)
     {
-        sonda_edit();
+        sonda_raton();
     }
     if (seg == 6)
+    {
+        sonda_edit();
+    }
+    if (seg == 7)
     {
         sonda_copiar();
         sonda_pegar();
         sonda_vaciar();
     }
-    if (seg == 7)
+    if (seg == 8)
     {
         sonda_isla_edit();
         sonda_isla_cortar();
@@ -3442,13 +3711,22 @@ int main()
         sonda_isla_pegar();
         sonda_isla_eliminar();
     }
+    if (seg == 9)
+    {
+        sonda_file();
+        sonda_isla_file();
+    }
+    if (seg == 10)
+    {
+        sonda_isla_open();
+        sonda_isla_save();
+        sonda_isla_close();
+    }
     if (seg == 1)
     {
         sonda_hasta_start();
         sonda_bucle_despacho();
         sonda_ventana();
-        sonda_parches();
-        sonda_huecos();
     }
     return 0;
 }
