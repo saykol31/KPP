@@ -1,11 +1,14 @@
-// Runtime.kpp — Stage 1, runtime, rebanada R-5.
+// Runtime.kpp — Stage 1, runtime, rebanada R-6.
 // El runtime propio de K++ (KolibriRuntime de Stage 0): rutinas x86 que
 // el backend EMITE dentro de cada programa — no es una biblioteca
 // externa ni un interprete. La pieza emite el PREFIJO GRAFICO entero
 // en su orden final (2587 bytes: mascara de eventos, START, bucle y
 // despacho, la salida, DRAW_WINDOW, los cuerpos de las rutinas de la
-// Konsole y las islas de los menus), y devuelve el Result y las
-// listas de parches que quien ensambla rellena con DATA.
+// Konsole y las islas de los menus) y, tras el, el RUNTIME DE
+// ARCHIVOS (763 bytes: las rutinas de la funcion 70 que el backend
+// emite cuando el programa usa archivos), y devuelve los dos
+// Result y las listas de parches que quien ensambla rellena
+// con DATA.
 // Fidelidad (fallo de Esequiel del 2026-11-22): byte a byte, como el
 // Backend. Los tamanos y las direcciones de esta rebanada estan
 // medidos por el puerto emitiendo el oraculo entero, y la
@@ -60,7 +63,16 @@
 // menu y las tres acciones, que en el oraculo solo
 // cierran el menu y redibujan). Con R-5 el prefijo
 // grafico queda portado entero: no queda ningun hueco.
-// El runtime de archivos (emitFileIoRuntime) es R-6.
+// R-6 porta el runtime de archivos (emitFileIoRuntime:
+// ESCRITURA, 355 bytes, y LECTURA, 408): las rutinas
+// internas de file_write y file_read de los programas
+// generados — validan, cargan las bases del scratch y
+// del bloque de parametros, y transfieren en bloques
+// de 65536 convirtiendo entre celdas int32 y bytes.
+// Son autocontenidas: ningun registro de parche
+// interno, y sus unicas direcciones pendientes son
+// las cuatro de DATA de su Result. El cierre de la
+// costura (ensamblar Backend y Runtime) es R-7.
 // PARCHES INTERNOS: cada salto o llamada entre regiones se
 // registra al emitirse — posicion, clase de destino y rebanada
 // duena (la ultima de las dos orillas) — y lo cierra la pasada de
@@ -89,7 +101,11 @@
 // (registrados en R-1) y los trece registros de las
 // propias islas: sus llamadas a la ventana y sus saltos
 // al bucle. Con la duena 5 no queda ningun parche
-// interno abierto. Las catorce listas de direcciones DATA
+// interno abierto. La duena 6 no registra ninguna
+// fila — las rutinas de archivo no llaman ni saltan
+// a ninguna region del prefijo — y
+// rellena_registro(6) queda como cierre formal de
+// su pasada. Las catorce listas de direcciones DATA
 // del oraculo quedan declaradas como listas de la pieza: el
 // dibujo anota en seis de ellas (lineBuffer una vez, lineCount
 // dos, lineHead una, firstVisible dos, repaintCursor cuatro y
@@ -121,6 +137,13 @@
 // celdas de la arena y sobre dcod barre las celdas
 // vecinas (la leccion del cotejo de campo de R-4,
 // cuya sonda nueva lo usaba por error).
+// NOTA de R-6: el plan pasa a doce segmentos; los
+// dos nuevos se piden con las letras a (el 11) y b
+// (el 12) en SONDA.TXT, porque los diez digitos ya
+// nombran los segmentos del prefijo. La sonda de
+// la isla CLOSE acota su region en dir_escritura:
+// el tamano total ya no es su tope, porque tras
+// ella viven las rutinas de archivo.
 // ABI interna de las rutinas de archivo:
 //   WRITE: EAX = ruta, EBX = arreglo, ECX = cantidad, EDX = capacidad
 //   READ:  EAX = ruta, EBX = arreglo, ECX = capacidad
@@ -1144,6 +1167,8 @@ int tam_ifile;
 int tam_iopen;
 int tam_isave;
 int tam_iclose;
+int tam_escritura;
+int tam_lectura;
 int dir_bucle;
 int dir_redraw;
 int dir_tecla;
@@ -1168,12 +1193,18 @@ int dir_ifile;
 int dir_iopen;
 int dir_isave;
 int dir_iclose;
+int dir_escritura;
+int dir_lectura;
 int res_draw;
 int res_main;
 int res_bucle;
 int res_titulo;
 int res_cap;
 int res_refresco;
+int res_esc_scratch;
+int res_esc_params;
+int res_lec_scratch;
+int res_lec_params;
 
 // ============================================================
 // REINICIA EL RUNTIME.
@@ -1224,6 +1255,8 @@ void reinicia_rt()
     tam_iopen = 42;
     tam_isave = 42;
     tam_iclose = 42;
+    tam_escritura = 355;
+    tam_lectura = 408;
     dir_bucle = 0;
     dir_redraw = 0;
     dir_tecla = 0;
@@ -1254,6 +1287,12 @@ void reinicia_rt()
     res_titulo = 0;
     res_cap = 0;
     res_refresco = 0;
+    dir_escritura = 0;
+    dir_lectura = 0;
+    res_esc_scratch = 0;
+    res_esc_params = 0;
+    res_lec_scratch = 0;
+    res_lec_params = 0;
     dcod = bytebuffer_create(region_backend);
     dreg_pos = da_create(region_backend, 256);
     dreg_clase = da_create(region_backend, 256);
@@ -1782,6 +1821,132 @@ int em_cmp_ebx_mem(int cual)
     pos = em_hueco();
     anota_lista(cual, pos);
     return pos;
+}
+
+// Operandos de las rutinas de archivo (R-6): el
+// salto JL que faltaba, las cargas y guardas de
+// pila [ESP + d], el CMP de registro con
+// inmediato, los dos placeholders de direcciones
+// DATA (su posicion va a los res_ de archivos, no
+// a las catorce listas) y el prologo y el epilogo
+// comunes de las dos rutinas.
+
+int em_jl_hueco()
+{
+    em_byte(15);
+    em_byte(140);
+    return em_hueco();
+}
+
+void em_carga_eax_esp(int d)
+{
+    em_byte(139);
+    em_byte(68);
+    em_byte(36);
+    em_byte(d);
+}
+
+void em_carga_ecx_esp(int d)
+{
+    em_byte(139);
+    em_byte(76);
+    em_byte(36);
+    em_byte(d);
+}
+
+void em_carga_edx_esp(int d)
+{
+    em_byte(139);
+    em_byte(84);
+    em_byte(36);
+    em_byte(d);
+}
+
+void em_carga_ebx_esp(int d)
+{
+    em_byte(139);
+    em_byte(92);
+    em_byte(36);
+    em_byte(d);
+}
+
+void em_guarda_eax_esp(int d)
+{
+    em_byte(137);
+    em_byte(68);
+    em_byte(36);
+    em_byte(d);
+}
+
+void em_guarda_ebx_esp(int d)
+{
+    em_byte(137);
+    em_byte(92);
+    em_byte(36);
+    em_byte(d);
+}
+
+void em_guarda_imm_esp(int d, int v)
+{
+    em_byte(199);
+    em_byte(68);
+    em_byte(36);
+    em_byte(d);
+    em_dword(v);
+}
+
+void em_cmp_reg_imm(int modrm, int v)
+{
+    em_byte(129);
+    em_byte(modrm);
+    em_dword(v);
+}
+
+int em_mov_esi_hueco()
+{
+    em_byte(190);
+    return em_hueco();
+}
+
+int em_mov_edi_hueco()
+{
+    em_byte(191);
+    return em_hueco();
+}
+
+void em_mov_esi_dword(int d, int v)
+{
+    em_byte(199);
+    em_byte(70);
+    em_byte(d);
+    em_dword(v);
+}
+
+void em_prologo_io()
+{
+    em_byte(83);
+    em_byte(86);
+    em_byte(87);
+    em_byte(80);
+    em_byte(81);
+    em_byte(82);
+    em_byte(131);
+    em_byte(236);
+    em_byte(24);
+}
+
+void em_epilogo_io()
+{
+    em_byte(131);
+    em_byte(196);
+    em_byte(24);
+    em_byte(131);
+    em_byte(196);
+    em_byte(12);
+    em_byte(95);
+    em_byte(94);
+    em_byte(91);
+    em_ret();
 }
 
 // ============================================================
@@ -3015,6 +3180,349 @@ void emite_isla_close()
     registra_parche(em_jmp_hueco(), 1, 5);
 }
 
+void emite_escritura()
+{
+    int f1;
+    int f2;
+    int f3;
+    int f4;
+    int f5;
+    int f6;
+    int f7;
+    int s1;
+    int bucle;
+    int terminado;
+    int usa_resto;
+    int conv;
+    int conv_vuelta;
+    int vuelta;
+    int exito;
+    int fracaso;
+    int epilogo;
+    // FILE_WRITE de emitFileIoRuntime: valida
+    // (ruta y arreglo no nulos, cantidad y
+    // capacidad no negativas, cantidad <=
+    // capacidad), carga las bases ESI =
+    // parametros y EDI = scratch (anotadas en
+    // los res_ de archivos: las rellena quien
+    // ensambla con DATA), crea/reescribe una
+    // sola vez con la subfuncion 2 y escribe en
+    // bloques de 65536 con la 3, convirtiendo
+    // cada celda int32 en un byte del scratch.
+    // Devuelve 0 o -1. Los saltos se parchean
+    // en el sitio, como en el oraculo.
+    em_prologo_io();
+    em_carga_eax_esp(32);
+    em_cmp_eax_imm(0);
+    f1 = em_je_hueco();
+    em_carga_eax_esp(44);
+    em_cmp_eax_imm(0);
+    f2 = em_je_hueco();
+    em_carga_ecx_esp(28);
+    em_cmp_reg_imm(249, 0);
+    f3 = em_jl_hueco();
+    em_carga_edx_esp(24);
+    em_cmp_reg_imm(250, 0);
+    f4 = em_jl_hueco();
+    em_carga_ecx_esp(28);
+    em_carga_edx_esp(24);
+    em_byte(57);
+    em_byte(209);
+    f5 = em_ja_hueco();
+    em_guarda_imm_esp(0, 0);
+    em_carga_eax_esp(28);
+    em_guarda_eax_esp(4);
+    em_carga_eax_esp(44);
+    em_guarda_eax_esp(12);
+    res_esc_params = em_mov_esi_hueco();
+    res_esc_scratch = em_mov_edi_hueco();
+    em_mov_esi_dword(0, 2);
+    em_mov_esi_dword(4, 0);
+    em_mov_esi_dword(8, 0);
+    em_mov_esi_dword(12, 0);
+    em_mov_esi_dword(16, 0);
+    em_byte(198);
+    em_byte(70);
+    em_byte(20);
+    em_byte(0);
+    em_carga_eax_esp(32);
+    em_byte(137);
+    em_byte(70);
+    em_byte(21);
+    em_byte(137);
+    em_byte(243);
+    em_mov_eax_imm(70);
+    em_int(64);
+    em_cmp_eax_imm(0);
+    f6 = em_jne_hueco();
+    bucle = bytebuffer_get_size(dcod);
+    em_carga_eax_esp(4);
+    em_byte(133);
+    em_byte(192);
+    terminado = em_jle_hueco();
+    em_carga_eax_esp(4);
+    em_cmp_reg_imm(248, 65536);
+    usa_resto = em_jbe_hueco();
+    em_mov_eax_imm(65536);
+    parche32(usa_resto,
+             bytebuffer_get_size(dcod) - (usa_resto + 4));
+    em_guarda_eax_esp(8);
+    em_carga_ebx_esp(12);
+    em_byte(137);
+    em_byte(250);
+    em_carga_ecx_esp(8);
+    conv = bytebuffer_get_size(dcod);
+    em_byte(139);
+    em_byte(3);
+    em_byte(136);
+    em_byte(2);
+    em_byte(131);
+    em_byte(195);
+    em_byte(4);
+    em_byte(66);
+    em_byte(73);
+    conv_vuelta = em_jne_hueco();
+    parche32(conv_vuelta, conv - (conv_vuelta + 4));
+    em_guarda_ebx_esp(12);
+    em_mov_esi_dword(0, 3);
+    em_carga_eax_esp(0);
+    em_byte(137);
+    em_byte(70);
+    em_byte(4);
+    em_mov_esi_dword(8, 0);
+    em_carga_eax_esp(8);
+    em_byte(137);
+    em_byte(70);
+    em_byte(12);
+    em_byte(137);
+    em_byte(126);
+    em_byte(16);
+    em_byte(137);
+    em_byte(243);
+    em_mov_eax_imm(70);
+    em_int(64);
+    em_cmp_eax_imm(0);
+    f7 = em_jne_hueco();
+    em_carga_eax_esp(0);
+    em_byte(3);
+    em_byte(68);
+    em_byte(36);
+    em_byte(8);
+    em_guarda_eax_esp(0);
+    em_carga_eax_esp(4);
+    em_byte(43);
+    em_byte(68);
+    em_byte(36);
+    em_byte(8);
+    em_guarda_eax_esp(4);
+    vuelta = em_jmp_hueco();
+    parche32(vuelta, bucle - (vuelta + 4));
+    exito = bytebuffer_get_size(dcod);
+    em_byte(49);
+    em_byte(192);
+    s1 = em_jmp_hueco();
+    fracaso = bytebuffer_get_size(dcod);
+    em_mov_eax_imm(-1);
+    epilogo = bytebuffer_get_size(dcod);
+    em_epilogo_io();
+    parche32(terminado, exito - (terminado + 4));
+    parche32(f1, fracaso - (f1 + 4));
+    parche32(f2, fracaso - (f2 + 4));
+    parche32(f3, fracaso - (f3 + 4));
+    parche32(f4, fracaso - (f4 + 4));
+    parche32(f5, fracaso - (f5 + 4));
+    parche32(f6, fracaso - (f6 + 4));
+    parche32(f7, fracaso - (f7 + 4));
+    parche32(s1, epilogo - (s1 + 4));
+}
+
+void emite_lectura()
+{
+    int f1;
+    int f2;
+    int f3;
+    int s1;
+    int bucle;
+    int terminado;
+    int usa_resto;
+    int conv;
+    int conv_vuelta;
+    int vuelta;
+    int estado_eof;
+    int estado_error;
+    int estado_normal;
+    int eof;
+    int continua_eof;
+    int error;
+    int parcial;
+    int sin_datos;
+    int proceso;
+    int invalido;
+    int cero;
+    int eof_tras_copia;
+    int bloque_corto;
+    int exito;
+    int fracaso;
+    int epilogo;
+    // FILE_READ de emitFileIoRuntime: valida
+    // (ruta y arreglo no nulos, capacidad
+    // positiva), carga las bases como la
+    // escritura y lee con la subfuncion 0 en
+    // bloques de 65536, convirtiendo cada byte
+    // del scratch en una celda int32. El EOF
+    // (6) es exito corto y un error con datos
+    // devuelve el total parcial; sin datos,
+    // -1. Los saltos se parchean en el sitio,
+    // como en el oraculo.
+    em_prologo_io();
+    em_carga_eax_esp(32);
+    em_cmp_eax_imm(0);
+    f1 = em_je_hueco();
+    em_carga_eax_esp(44);
+    em_cmp_eax_imm(0);
+    f2 = em_je_hueco();
+    em_carga_ecx_esp(28);
+    em_cmp_reg_imm(249, 0);
+    f3 = em_jle_hueco();
+    em_guarda_imm_esp(0, 0);
+    em_carga_eax_esp(28);
+    em_guarda_eax_esp(4);
+    em_carga_eax_esp(44);
+    em_guarda_eax_esp(12);
+    em_guarda_imm_esp(16, 0);
+    res_lec_params = em_mov_esi_hueco();
+    res_lec_scratch = em_mov_edi_hueco();
+    em_mov_esi_dword(0, 0);
+    em_mov_esi_dword(4, 0);
+    em_mov_esi_dword(8, 0);
+    em_mov_esi_dword(12, 0);
+    em_byte(137);
+    em_byte(126);
+    em_byte(16);
+    em_byte(198);
+    em_byte(70);
+    em_byte(20);
+    em_byte(0);
+    em_carga_eax_esp(32);
+    em_byte(137);
+    em_byte(70);
+    em_byte(21);
+    bucle = bytebuffer_get_size(dcod);
+    em_carga_eax_esp(4);
+    em_byte(133);
+    em_byte(192);
+    terminado = em_jle_hueco();
+    em_carga_eax_esp(4);
+    em_cmp_reg_imm(248, 65536);
+    usa_resto = em_jbe_hueco();
+    em_mov_eax_imm(65536);
+    parche32(usa_resto,
+             bytebuffer_get_size(dcod) - (usa_resto + 4));
+    em_guarda_eax_esp(8);
+    em_guarda_eax_esp(20);
+    em_carga_eax_esp(0);
+    em_byte(137);
+    em_byte(70);
+    em_byte(4);
+    em_mov_esi_dword(8, 0);
+    em_carga_eax_esp(8);
+    em_byte(137);
+    em_byte(70);
+    em_byte(12);
+    em_guarda_imm_esp(16, 0);
+    em_byte(137);
+    em_byte(243);
+    em_mov_eax_imm(70);
+    em_int(64);
+    em_cmp_eax_imm(6);
+    estado_eof = em_je_hueco();
+    em_cmp_eax_imm(0);
+    estado_error = em_jne_hueco();
+    estado_normal = em_jmp_hueco();
+    eof = bytebuffer_get_size(dcod);
+    em_guarda_imm_esp(16, 1);
+    continua_eof = em_jmp_hueco();
+    error = bytebuffer_get_size(dcod);
+    em_carga_eax_esp(0);
+    em_byte(133);
+    em_byte(192);
+    parcial = em_jne_hueco();
+    sin_datos = em_jmp_hueco();
+    proceso = bytebuffer_get_size(dcod);
+    em_carga_eax_esp(8);
+    em_byte(57);
+    em_byte(195);
+    invalido = em_ja_hueco();
+    em_guarda_ebx_esp(8);
+    em_byte(133);
+    em_byte(219);
+    cero = em_je_hueco();
+    em_byte(137);
+    em_byte(250);
+    em_carga_ebx_esp(12);
+    em_carga_ecx_esp(8);
+    conv = bytebuffer_get_size(dcod);
+    em_byte(15);
+    em_byte(182);
+    em_byte(2);
+    em_byte(137);
+    em_byte(3);
+    em_byte(66);
+    em_byte(131);
+    em_byte(195);
+    em_byte(4);
+    em_byte(73);
+    conv_vuelta = em_jne_hueco();
+    parche32(conv_vuelta, conv - (conv_vuelta + 4));
+    em_guarda_ebx_esp(12);
+    em_carga_eax_esp(0);
+    em_byte(3);
+    em_byte(68);
+    em_byte(36);
+    em_byte(8);
+    em_guarda_eax_esp(0);
+    em_carga_eax_esp(4);
+    em_byte(43);
+    em_byte(68);
+    em_byte(36);
+    em_byte(8);
+    em_guarda_eax_esp(4);
+    em_carga_eax_esp(16);
+    em_byte(133);
+    em_byte(192);
+    eof_tras_copia = em_jne_hueco();
+    em_carga_eax_esp(8);
+    em_byte(59);
+    em_byte(68);
+    em_byte(36);
+    em_byte(20);
+    bloque_corto = em_jb_hueco();
+    vuelta = em_jmp_hueco();
+    parche32(vuelta, bucle - (vuelta + 4));
+    exito = bytebuffer_get_size(dcod);
+    em_carga_eax_esp(0);
+    s1 = em_jmp_hueco();
+    fracaso = bytebuffer_get_size(dcod);
+    em_mov_eax_imm(-1);
+    epilogo = bytebuffer_get_size(dcod);
+    em_epilogo_io();
+    parche32(terminado, exito - (terminado + 4));
+    parche32(estado_eof, eof - (estado_eof + 4));
+    parche32(continua_eof, proceso - (continua_eof + 4));
+    parche32(estado_normal, proceso - (estado_normal + 4));
+    parche32(estado_error, error - (estado_error + 4));
+    parche32(parcial, exito - (parcial + 4));
+    parche32(sin_datos, fracaso - (sin_datos + 4));
+    parche32(invalido, error - (invalido + 4));
+    parche32(cero, exito - (cero + 4));
+    parche32(eof_tras_copia, exito - (eof_tras_copia + 4));
+    parche32(bloque_corto, exito - (bloque_corto + 4));
+    parche32(f1, fracaso - (f1 + 4));
+    parche32(f2, fracaso - (f2 + 4));
+    parche32(f3, fracaso - (f3 + 4));
+    parche32(s1, epilogo - (s1 + 4));
+}
+
 void emite_grafico()
 {
     int p;
@@ -3183,19 +3691,29 @@ void emite_grafico()
     emite_isla_save();
     dir_iclose = bytebuffer_get_size(dcod);
     emite_isla_close();
+    // RUTINAS DE ARCHIVO: portadas en R-6, tras
+    // el prefijo grafico, donde el backend las
+    // emite cuando el programa usa archivos.
+    dir_escritura = bytebuffer_get_size(dcod);
+    emite_escritura();
+    dir_lectura = bytebuffer_get_size(dcod);
+    emite_lectura();
     // PASADAS INTERNAS: la de R-1, la de R-2, la
-    // de R-3, la de R-4 y la de R-5.
+    // de R-3, la de R-4, la de R-5 y la de R-6
+    // (sin filas: las rutinas de archivo no
+    // registran parches).
     rellena_registro(1);
     rellena_registro(2);
     rellena_registro(3);
     rellena_registro(4);
     rellena_registro(5);
+    rellena_registro(6);
 }
 
 // ============================================================
 // SONDA DE LA REBANADA.
 //
-// Veinticinco bloques cerrados, en el orden de la
+// Veintiocho bloques cerrados, en el orden de la
 // corriente: (a) la emision hasta START — la cuenta
 // de bytes, los bytes y los dos campos del Result
 // que alli nacen; (b) el bucle y el despacho — la
@@ -3225,18 +3743,24 @@ void emite_grafico()
 // de EDIT, en su orden — cada uno la cuenta y sus
 // bytes; (u) el cuerpo de DIBUJA_FILE — la cuenta y
 // sus bytes; (v) a (y) los cuerpos de las cuatro
-// islas de FILE, en su orden. En esta rebanada el
+// islas de FILE, en su orden; (z) el Result de
+// archivos — las dos entradas y los cuatro
+// parches de direcciones —; (aa) el cuerpo de
+// ESCRITURA y (ab) el de LECTURA — cada uno la
+// cuenta y sus bytes. En esta rebanada el
 // bloque (e) queda en dos valores: cero huecos y
-// el tamano total del prefijo. Ningun bloque
+// el tamano total del layout. Ningun bloque
 // pasa de 512 valores: el empaquetado en segmentos
-// lo fija el plan de la rebanada — diez
+// lo fija el plan de la rebanada — doce
 // segmentos: el primero con los bloques (a) a (c),
 // 307 valores; el segundo con (d), (e) y (f), 271;
 // el tercero con (g) y (h), 509; el cuarto con
 // (i), 158; el quinto con (j), 359; el sexto con
 // (k), 379; el septimo con (l), (m) y (n), 316;
 // el octavo con (o) a (t), 333; el noveno con (u)
-// y (v), 327; y el decimo con (w), (x) e (y), 129.
+// y (v), 327; el decimo con (w), (x) e (y), 129;
+// el once con (z) y (aa), 362; y el doce con
+// (ab), 409.
 // Como el historial circular de la Konsole
 // retiene 512 registros, cada corrida de la sonda
 // imprime UN segmento y se copia antes de correr el
@@ -3245,7 +3769,8 @@ void emite_grafico()
 // la corrida imprime el segmento 1; si su primer
 // byte es el digito 2, 3, 4, 5, 6, 7, 8 o 9,
 // imprime ese segmento; si es el digito 0,
-// imprime el segmento 10.
+// imprime el segmento 10; si es la letra a,
+// imprime el segmento 11, y si es la b, el 12.
 // ============================================================
 
 void sonda_hasta_start()
@@ -3491,6 +4016,40 @@ void sonda_isla_close()
     int i;
     print_int(tam_iclose);
     i = dir_iclose;
+    while (i < dir_escritura)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_resultado_io()
+{
+    print_int(dir_escritura);
+    print_int(dir_lectura);
+    print_int(res_esc_scratch);
+    print_int(res_esc_params);
+    print_int(res_lec_scratch);
+    print_int(res_lec_params);
+}
+
+void sonda_escritura()
+{
+    int i;
+    print_int(tam_escritura);
+    i = dir_escritura;
+    while (i < dir_lectura)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_lectura()
+{
+    int i;
+    print_int(tam_lectura);
+    i = dir_lectura;
     while (i < bytebuffer_get_size(dcod))
     {
         print_int(bytebuffer_get(dcod, i));
@@ -3650,6 +4209,14 @@ int segmento_sonda()
     {
         return 10;
     }
+    if (datos[0] == 97)
+    {
+        return 11;
+    }
+    if (datos[0] == 98)
+    {
+        return 12;
+    }
     return 1;
 }
 
@@ -3721,6 +4288,15 @@ int main()
         sonda_isla_open();
         sonda_isla_save();
         sonda_isla_close();
+    }
+    if (seg == 11)
+    {
+        sonda_resultado_io();
+        sonda_escritura();
+    }
+    if (seg == 12)
+    {
+        sonda_lectura();
     }
     if (seg == 1)
     {
