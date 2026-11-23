@@ -1,4 +1,4 @@
-// Runtime.kpp — Stage 1, runtime, rebanada R-3.
+// Runtime.kpp — Stage 1, runtime, rebanada R-4.
 // El runtime propio de K++ (KolibriRuntime de Stage 0): rutinas x86 que
 // el backend EMITE dentro de cada programa — no es una biblioteca
 // externa ni un interprete. La pieza emite el PREFIJO GRAFICO entero
@@ -42,11 +42,20 @@
 // (157 bytes: el carril con la funcion 13, el pulgar que lo
 // llena si lineCount <= 41 y, si no, su alto 410*41/lineCount
 // y su posicion proporcional a firstVisible, dibujado con la
-// geometria guardada). Quedan en hueco: DIBUJA_EDIT (378, R-4),
-// DIBUJA_FILE (267, R-5), COPIAR (189, R-4), PEGAR (94, R-4),
-// VACIAR (30, R-4) y las diez islas de los menus (58, 63, 58,
-// 48, 42, 58 de EDIT, R-4; 58, 42, 42, 42 de FILE, R-5). El
-// runtime de archivos (emitFileIoRuntime) es R-6.
+// geometria guardada). R-4 porta DIBUJA_EDIT (378 bytes: el
+// boton EDIT con su rotulo y, si el menu esta abierto, el
+// panel con los cinco renglones como botones), COPIAR (189:
+// el historial al bloque del portapapeles con CR LF entre
+// lineas y la puesta al sistema con la funcion 54.2), PEGAR
+// (94: el bloque de la funcion 70 en la pila y la escritura
+// del texto en KONSOLE.TXT) y VACIAR (30: los tres contadores
+// a cero y la seleccion apagada), y las seis islas de EDIT
+// (58, 63, 58, 48, 42, 58: abrir o cerrar el menu y, tras la
+// guarda del menu abierto y la seleccion activa, copiar,
+// cortar, seleccionar todo, pegar y eliminar). Quedan en
+// hueco: DIBUJA_FILE (267) y las cuatro islas de FILE (58,
+// 42, 42, 42), de R-5. El runtime de archivos
+// (emitFileIoRuntime) es R-6.
 // PARCHES INTERNOS: cada salto o llamada entre regiones se
 // registra al emitirse — posicion, clase de destino y rebanada
 // duena (la ultima de las dos orillas) — y lo cierra la pasada de
@@ -60,20 +69,38 @@
 // los dos registros del propio raton: su llamada al REFRESCO —
 // el oraculo la parchea contra refreshOutputAddress, no contra
 // DRAW_WINDOW, contra lo que dice el comentario de su cuerpo —
-// y su salto de salida al bucle. Las del refresco a DIBUJA_EDIT
-// y DIBUJA_FILE quedan con duenas R-4 y R-5: en el oraculo esas
-// dos llamadas van a las listas editCall y fileCall, que la
-// pasada interna de emitGraphicsRuntime rellena contra las
-// rutinas de los menus. Las catorce listas de direcciones DATA
+// y su salto de salida al bucle. rellena_registro(4) cierra en
+// esta rebanada la llamada del refresco a DIBUJA_EDIT
+// (registrada en R-2: en el oraculo va a la lista editCall, que
+// la pasada interna de emitGraphicsRuntime rellena contra la
+// rutina del menu), los seis saltos del despacho a las islas
+// de EDIT (registrados en R-1) y los diecinueve registros de
+// las propias islas: sus llamadas a la ventana, al bucle, a
+// COPIAR, a PEGAR y a VACIAR. La del refresco a DIBUJA_FILE
+// queda con duena R-5 (la lista fileCall del oraculo). Las catorce listas de direcciones DATA
 // del oraculo quedan declaradas como listas de la pieza: el
 // dibujo anota en seis de ellas (lineBuffer una vez, lineCount
 // dos, lineHead una, firstVisible dos, repaintCursor cuatro y
 // seleccion una), la barra en cuatro (lineCount tres,
 // thumbHeight tres, thumbTop tres y firstVisible una) y el
 // raton en seis (dragState tres, firstVisible cuatro, thumbTop
-// tres, dragGrab dos, thumbHeight dos y lineCount dos); las
+// tres, dragGrab dos, thumbHeight dos y lineCount dos), el
+// menu EDIT en dos (menuTexto seis y menuAbierto una), COPIAR
+// en cinco (clipBuffer tres, lineCount tres, lineHead una,
+// lineBuffer una y clipLen dos), PEGAR en tres (clipLen dos,
+// clipBuffer una y menuTexto una), VACIAR en cuatro (una en
+// cada contador y en la seleccion) y las islas en dos
+// (menuAbierto trece entre las seis y seleccion tres); las
 // llamadas al refresco nacen en las emisiones de Print del
 // backend (la costura de B-9), no en esta pieza.
+// CORRECCION de esta rebanada: la constante del
+// color de texto de DIBUJA_LINEAS quedo mal
+// copiada del hex del oraculo en R-2 (-2130771969
+// es 0x80FEFFFF: el byte blanco perdido de las
+// salvedades de R-2 y R-3); su decimal correcto es
+// -2130706433 (0x80FFFFFF) y aqui se restaura, asi
+// que la corriente de R-4 vuelve a ser exacta sin
+// salvedad.
 // ABI interna de las rutinas de archivo:
 //   WRITE: EAX = ruta, EBX = arreglo, ECX = cantidad, EDX = capacidad
 //   READ:  EAX = ruta, EBX = arreglo, ECX = capacidad
@@ -1260,7 +1287,13 @@ void reinicia_rt()
 // em_jge_hueco y em_jns_hueco) y los operandos de
 // memoria de sus cuentas (em_mov_ecx_mem,
 // em_sub_ebx_mem, em_cmp_eax_mem, em_add_ecx_mem,
-// em_div_mem y em_mul_mem).
+// em_div_mem y em_mul_mem). R-4 suma los
+// operandos con la direccion DATA como
+// inmediato (em_mov_edi_dir, em_mov_edx_dir,
+// em_mov_esi_dir, em_mov_eax_dir, em_add_eax_dir
+// y em_sub_eax_dir: el opcode y un imm32
+// anotado en su lista) y em_cmp_ebx_mem
+// (cmp ebx, [dir]).
 // ============================================================
 
 void em_byte(int b)
@@ -1667,6 +1700,70 @@ int em_mul_mem(int cual)
     return pos;
 }
 
+int em_mov_edi_dir(int cual)
+{
+    int pos;
+    em_byte(191);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_mov_edx_dir(int cual)
+{
+    int pos;
+    em_byte(186);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_mov_esi_dir(int cual)
+{
+    int pos;
+    em_byte(190);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_mov_eax_dir(int cual)
+{
+    int pos;
+    em_byte(184);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_add_eax_dir(int cual)
+{
+    int pos;
+    em_byte(5);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_sub_eax_dir(int cual)
+{
+    int pos;
+    em_byte(45);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_cmp_ebx_mem(int cual)
+{
+    int pos;
+    em_byte(59);
+    em_byte(29);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
 // ============================================================
 // REGISTRO DE PARCHES INTERNOS.
 //
@@ -1679,8 +1776,8 @@ int em_mul_mem(int cual)
 // de una pasada todos los parches de una duena con
 // el rel32 del oraculo: destino - (posicion + 4).
 // En R-1 se cierra la duena 1, en R-2 la duena
-// 2 y en R-3 la duena 3; las demas pasadas nacen
-// con sus rebanadas.
+// 2, en R-3 la duena 3 y en R-4 la duena 4; las
+// demas pasadas nacen con sus rebanadas.
 // ============================================================
 
 void registra_parche(int pos, int clase, int dueno)
@@ -1992,7 +2089,7 @@ void emite_lineas()
     em_byte(4);
     // EBX = cursor de repintado; ECX = el color.
     em_mov_ebx_mem(4);
-    em_mov_reg_imm(185, -2130771969);
+    em_mov_reg_imm(185, -2130706433);
     // Dibujar la linea (funcion 4).
     em_mov_eax_imm(4);
     em_int(64);
@@ -2040,6 +2137,128 @@ void emite_lineas()
     em_byte(95);
     em_byte(94);
     em_byte(91);
+    em_ret();
+}
+
+void emite_edit()
+{
+    // emitDibujaEdit del oraculo: el boton EDIT
+    // (funcion 8, id 2) y su rotulo (funcion 4,
+    // menuTexto + 0, longitud 4); si el menu
+    // esta abierto (menuAbierto = 1), el panel
+    // (funcion 13) y los cinco renglones como
+    // botones 3 a 7 con sus rotulos: los
+    // desplazamientos y longitudes de
+    // menuTexto son constantes que el oraculo
+    // parchea en el sitio.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 5570625);
+    em_mov_reg_imm(185, 1310737);
+    em_mov_reg_imm(186, 2);
+    em_mov_reg_imm(190, 3166320);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 6881304);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(190);
+    em_dword(4);
+    em_int(64);
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(1);
+    int cerrado = em_jne_hueco();
+    em_mov_eax_imm(13);
+    em_mov_reg_imm(187, 5570698);
+    em_mov_reg_imm(185, 2424906);
+    em_mov_reg_imm(186, 1579032);
+    em_int(64);
+    // Renglon 1: y 37, boton 3, texto +5, largo 6.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 5570698);
+    em_mov_reg_imm(185, 2424846);
+    em_mov_reg_imm(186, 3);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 5963816);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(5);
+    em_byte(190);
+    em_dword(6);
+    em_int(64);
+    // Renglon 2: y 51, boton 4, texto +12, largo 6.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 5570698);
+    em_mov_reg_imm(185, 3342350);
+    em_mov_reg_imm(186, 4);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 5963830);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(12);
+    em_byte(190);
+    em_dword(6);
+    em_int(64);
+    // Renglon 3: y 65, boton 5, texto +19, largo 16.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 5570698);
+    em_mov_reg_imm(185, 4259854);
+    em_mov_reg_imm(186, 5);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 5963844);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(19);
+    em_byte(190);
+    em_dword(16);
+    em_int(64);
+    // Renglon 4: y 79, boton 6, texto +36, largo 5.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 5570698);
+    em_mov_reg_imm(185, 5177358);
+    em_mov_reg_imm(186, 6);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 5963858);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(36);
+    em_byte(190);
+    em_dword(5);
+    em_int(64);
+    // Renglon 5: y 93, boton 7, texto +42, largo 8.
+    em_mov_eax_imm(8);
+    em_mov_reg_imm(187, 5570698);
+    em_mov_reg_imm(185, 6094862);
+    em_mov_reg_imm(186, 7);
+    em_mov_reg_imm(190, 2631720);
+    em_int(64);
+    em_mov_eax_imm(4);
+    em_mov_reg_imm(187, 5963872);
+    em_mov_reg_imm(185, -2130706433);
+    em_mov_edx_dir(13);
+    em_byte(131);
+    em_byte(194);
+    em_byte(42);
+    em_byte(190);
+    em_dword(8);
+    em_int(64);
+    parche32(cerrado,
+             bytebuffer_get_size(dcod) - (cerrado + 4));
     em_ret();
 }
 
@@ -2297,6 +2516,312 @@ void emite_raton()
     registra_parche(p, 1, 3);
 }
 
+void emite_isla_edit()
+{
+    // La isla del boton EDIT: si su menu esta
+    // abierto lo cierra; si no, lo abre. En
+    // ambos casos redibuja y vuelve al bucle
+    // (las llamadas y el salto se registran
+    // con duena 4).
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(1);
+    int cerrar = em_je_hueco();
+    em_mov_eax_imm(1);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 4);
+    registra_parche(em_jmp_hueco(), 1, 4);
+    parche32(cerrar,
+             bytebuffer_get_size(dcod) - (cerrar + 4));
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 4);
+    registra_parche(em_jmp_hueco(), 1, 4);
+}
+
+void emite_isla_cortar()
+{
+    // CORTAR: con el menu EDIT abierto y la
+    // seleccion activa, copia y vacia, cierra
+    // el menu y redibuja; si la guarda falla,
+    // vuelve al bucle sin actuar.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(1);
+    int g1 = em_jne_hueco();
+    em_mov_eax_mem(10);
+    em_cmp_eax_imm(0);
+    int g2 = em_je_hueco();
+    registra_parche(em_call_hueco(), 11, 4);
+    registra_parche(em_call_hueco(), 13, 4);
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 4);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    parche32(g2, salir - (g2 + 4));
+    registra_parche(em_jmp_hueco(), 1, 4);
+}
+
+void emite_isla_copiar()
+{
+    // COPIAR: la misma guarda; copia, cierra
+    // el menu y redibuja.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(1);
+    int g1 = em_jne_hueco();
+    em_mov_eax_mem(10);
+    em_cmp_eax_imm(0);
+    int g2 = em_je_hueco();
+    registra_parche(em_call_hueco(), 11, 4);
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 4);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    parche32(g2, salir - (g2 + 4));
+    registra_parche(em_jmp_hueco(), 1, 4);
+}
+
+void emite_isla_sel()
+{
+    // SELECCIONAR TODO: con el menu abierto,
+    // seleccion = 1, menu cerrado y redibujo.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(1);
+    int g1 = em_jne_hueco();
+    em_mov_eax_imm(1);
+    em_mov_mem_eax(10);
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 4);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    registra_parche(em_jmp_hueco(), 1, 4);
+}
+
+void emite_isla_pegar()
+{
+    // PEGAR: con el menu abierto, pega, cierra
+    // el menu y redibuja.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(1);
+    int g1 = em_jne_hueco();
+    registra_parche(em_call_hueco(), 12, 4);
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 4);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    registra_parche(em_jmp_hueco(), 1, 4);
+}
+
+void emite_isla_eliminar()
+{
+    // ELIMINAR: la guarda de CORTAR; vacia sin
+    // copiar, cierra el menu y redibuja.
+    em_mov_eax_mem(9);
+    em_cmp_eax_imm(1);
+    int g1 = em_jne_hueco();
+    em_mov_eax_mem(10);
+    em_cmp_eax_imm(0);
+    int g2 = em_je_hueco();
+    registra_parche(em_call_hueco(), 13, 4);
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(9);
+    registra_parche(em_call_hueco(), 0, 4);
+    int salir = bytebuffer_get_size(dcod);
+    parche32(g1, salir - (g1 + 4));
+    parche32(g2, salir - (g2 + 4));
+    registra_parche(em_jmp_hueco(), 1, 4);
+}
+
+void emite_copiar()
+{
+    // emitCopiar del oraculo: vuelca el
+    // historial al bloque del portapapeles
+    // (clipBuffer + 12) con CR LF entre lineas,
+    // fija clipLen y, si no es cero, pone el
+    // bloque al sistema (funcion 54.2) con su
+    // encabezado de 12 bytes.
+    em_byte(83);
+    em_byte(86);
+    em_byte(87);
+    em_mov_edi_dir(12);
+    em_byte(131);
+    em_byte(199);
+    em_byte(12);
+    em_byte(49);
+    em_byte(219);
+    int bucle = bytebuffer_get_size(dcod);
+    em_cmp_ebx_mem(1);
+    int fin = em_je_hueco();
+    em_mov_eax_mem(2);
+    em_sub_eax_mem(1);
+    em_byte(1);
+    em_byte(216);
+    em_and_eax_imm(511);
+    em_byte(193);
+    em_byte(224);
+    em_byte(6);
+    em_add_eax_dir(0);
+    em_byte(137);
+    em_byte(198);
+    em_byte(139);
+    em_byte(14);
+    em_byte(131);
+    em_byte(198);
+    em_byte(4);
+    int copia = bytebuffer_get_size(dcod);
+    em_byte(131);
+    em_byte(249);
+    em_byte(0);
+    int agota = em_je_hueco();
+    em_byte(138);
+    em_byte(6);
+    em_byte(60);
+    em_byte(0);
+    int nulo = em_je_hueco();
+    em_byte(136);
+    em_byte(7);
+    em_byte(70);
+    em_byte(71);
+    em_byte(73);
+    int otra = em_jmp_hueco();
+    parche32(otra, copia - (otra + 4));
+    int salto = bytebuffer_get_size(dcod);
+    parche32(agota, salto - (agota + 4));
+    parche32(nulo, salto - (nulo + 4));
+    em_mov_eax_mem(1);
+    em_byte(72);
+    em_byte(59);
+    em_byte(216);
+    int sin_sep = em_jae_hueco();
+    em_byte(102);
+    em_byte(199);
+    em_byte(7);
+    em_byte(13);
+    em_byte(10);
+    em_byte(131);
+    em_byte(199);
+    em_byte(2);
+    parche32(sin_sep,
+             bytebuffer_get_size(dcod) - (sin_sep + 4));
+    em_byte(67);
+    int sigue = em_jmp_hueco();
+    parche32(sigue, bucle - (sigue + 4));
+    parche32(fin,
+             bytebuffer_get_size(dcod) - (fin + 4));
+    em_byte(198);
+    em_byte(7);
+    em_byte(0);
+    em_byte(137);
+    em_byte(248);
+    em_sub_eax_dir(12);
+    em_byte(131);
+    em_byte(232);
+    em_byte(12);
+    em_mov_mem_eax(11);
+    em_cmp_eax_imm(0);
+    int puesto = em_je_hueco();
+    em_mov_esi_dir(12);
+    em_mov_eax_mem(11);
+    em_byte(131);
+    em_byte(192);
+    em_byte(12);
+    em_byte(137);
+    em_byte(6);
+    em_byte(49);
+    em_byte(192);
+    em_byte(137);
+    em_byte(70);
+    em_byte(4);
+    em_byte(64);
+    em_byte(137);
+    em_byte(70);
+    em_byte(8);
+    em_byte(139);
+    em_byte(14);
+    em_byte(137);
+    em_byte(242);
+    em_mov_eax_imm(54);
+    em_mov_reg_imm(187, 2);
+    em_int(64);
+    parche32(puesto,
+             bytebuffer_get_size(dcod) - (puesto + 4));
+    em_byte(95);
+    em_byte(94);
+    em_byte(91);
+    em_ret();
+}
+
+void emite_pegar()
+{
+    // emitPegar del oraculo: con clipLen = 0
+    // vuelve sin escribir; si no, construye en
+    // la pila el bloque de la funcion 70 y
+    // escribe el texto del portapapeles en
+    // KONSOLE.TXT (la ruta es menuTexto + 51).
+    em_mov_eax_mem(11);
+    em_cmp_eax_imm(0);
+    int vacio = em_je_hueco();
+    em_byte(131);
+    em_byte(236);
+    em_byte(28);
+    em_byte(199);
+    em_byte(4);
+    em_byte(36);
+    em_dword(2);
+    em_byte(199);
+    em_byte(68);
+    em_byte(36);
+    em_byte(4);
+    em_dword(0);
+    em_byte(199);
+    em_byte(68);
+    em_byte(36);
+    em_byte(8);
+    em_dword(0);
+    em_mov_eax_mem(11);
+    em_byte(137);
+    em_byte(68);
+    em_byte(36);
+    em_byte(12);
+    em_mov_eax_dir(12);
+    em_add_eax_imm(12);
+    em_byte(137);
+    em_byte(68);
+    em_byte(36);
+    em_byte(16);
+    em_mov_eax_dir(13);
+    em_add_eax_imm(51);
+    em_byte(137);
+    em_byte(68);
+    em_byte(36);
+    em_byte(20);
+    em_byte(137);
+    em_byte(227);
+    em_mov_eax_imm(70);
+    em_int(64);
+    em_byte(131);
+    em_byte(196);
+    em_byte(28);
+    parche32(vacio,
+             bytebuffer_get_size(dcod) - (vacio + 4));
+    em_ret();
+}
+
+void emite_vaciar()
+{
+    // emitVaciar del oraculo: lineCount,
+    // lineHead y firstVisible a cero y la
+    // seleccion apagada.
+    em_mov_eax_imm(0);
+    em_mov_mem_eax(1);
+    em_mov_mem_eax(2);
+    em_mov_mem_eax(3);
+    em_mov_mem_eax(10);
+    em_ret();
+}
+
 void emite_grafico()
 {
     int p;
@@ -2430,32 +2955,32 @@ void emite_grafico()
     // BARRA: portada en R-3.
     dir_barra = bytebuffer_get_size(dcod);
     emite_barra();
-    // DIBUJA_EDIT: hueco de R-4.
+    // DIBUJA_EDIT: portado en R-4.
     dir_edit = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_edit);
+    emite_edit();
     // DIBUJA_FILE: hueco de R-5.
     dir_file = bytebuffer_get_size(dcod);
     em_hueco_cero(tam_file);
-    // COPIAR, PEGAR y VACIAR: huecos de R-4.
+    // COPIAR, PEGAR y VACIAR: portados en R-4.
     dir_copiar = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_copiar);
+    emite_copiar();
     dir_pegar = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_pegar);
+    emite_pegar();
     dir_vaciar = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_vaciar);
-    // ISLAS DE EDIT: huecos de R-4.
+    emite_vaciar();
+    // ISLAS DE EDIT: portadas en R-4.
     dir_iedit = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_iedit);
+    emite_isla_edit();
     dir_icortar = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_icortar);
+    emite_isla_cortar();
     dir_icopiar = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_icopiar);
+    emite_isla_copiar();
     dir_isel = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_isel);
+    emite_isla_sel();
     dir_ipegar = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_ipegar);
+    emite_isla_pegar();
     dir_ieliminar = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_ieliminar);
+    emite_isla_eliminar();
     // ISLAS DE FILE: huecos de R-5.
     dir_ifile = bytebuffer_get_size(dcod);
     em_hueco_cero(tam_ifile);
@@ -2465,17 +2990,18 @@ void emite_grafico()
     em_hueco_cero(tam_isave);
     dir_iclose = bytebuffer_get_size(dcod);
     em_hueco_cero(tam_iclose);
-    // PASADAS INTERNAS: la de R-1, la de R-2 y
-    // la de R-3.
+    // PASADAS INTERNAS: la de R-1, la de R-2, la
+    // de R-3 y la de R-4.
     rellena_registro(1);
     rellena_registro(2);
     rellena_registro(3);
+    rellena_registro(4);
 }
 
 // ============================================================
 // SONDA DE LA REBANADA.
 //
-// Diez bloques cerrados, en el orden de la
+// Veinte bloques cerrados, en el orden de la
 // corriente: (a) la emision hasta START — la cuenta
 // de bytes, los bytes y los dos campos del Result
 // que alli nacen; (b) el bucle y el despacho — la
@@ -2498,19 +3024,27 @@ void emite_grafico()
 // filas que se dibujan, el alto del tinte y, por
 // fila, su ranura circular y su Y; (i) el cuerpo de
 // la BARRA — la cuenta y sus bytes; (j) el cuerpo
-// del RATON — la cuenta y sus bytes. Ningun bloque
+// del RATON — la cuenta y sus bytes; (k) el cuerpo
+// de DIBUJA_EDIT — la cuenta y sus bytes; (l) el
+// cuerpo de COPIAR; (m) el de PEGAR; (n) el de
+// VACIAR; (o) a (t) los cuerpos de las seis islas
+// de EDIT, en su orden — cada uno la cuenta y sus
+// bytes. Ningun bloque
 // pasa de 512 valores: el empaquetado en segmentos
-// lo fija el plan de la rebanada — cuatro
+// lo fija el plan de la rebanada — siete
 // segmentos: el primero con los bloques (a) a (e),
-// 449 valores; el segundo con (f) y (g), 303; el
-// tercero con (h) e (i), 427; y el cuarto con (j),
-// 359. Como el historial circular de la Konsole
+// 486 valores; el segundo con (f) y (g), 303; el
+// tercero con (h) e (i), 427; el cuarto con (j),
+// 359; el quinto con (k), 379; el sexto con (l),
+// (m) y (n), 316; y el septimo con (o) a (t), 333.
+// Como el historial circular de la Konsole
 // retiene 512 registros, cada corrida de la sonda
 // imprime UN segmento y se copia antes de correr el
 // siguiente: segmento_sonda lee el archivo
 // SONDA.TXT de la raiz de la imagen — si no esta,
 // la corrida imprime el segmento 1; si su primer
-// byte es el digito 2, 3 o 4, imprime ese segmento.
+// byte es el digito 2, 3, 4, 5, 6 o 7, imprime ese
+// segmento.
 // ============================================================
 
 void sonda_hasta_start()
@@ -2589,29 +3123,9 @@ void sonda_parches()
 
 void sonda_huecos()
 {
-    print_int(15);
-    print_int(dir_edit);
-    print_int(tam_edit);
+    print_int(5);
     print_int(dir_file);
     print_int(tam_file);
-    print_int(dir_copiar);
-    print_int(tam_copiar);
-    print_int(dir_pegar);
-    print_int(tam_pegar);
-    print_int(dir_vaciar);
-    print_int(tam_vaciar);
-    print_int(dir_iedit);
-    print_int(tam_iedit);
-    print_int(dir_icortar);
-    print_int(tam_icortar);
-    print_int(dir_icopiar);
-    print_int(tam_icopiar);
-    print_int(dir_isel);
-    print_int(tam_isel);
-    print_int(dir_ipegar);
-    print_int(tam_ipegar);
-    print_int(dir_ieliminar);
-    print_int(tam_ieliminar);
     print_int(dir_ifile);
     print_int(tam_ifile);
     print_int(dir_iopen);
@@ -2621,6 +3135,116 @@ void sonda_huecos()
     print_int(dir_iclose);
     print_int(tam_iclose);
     print_int(bytebuffer_get_size(dcod));
+}
+
+void sonda_edit()
+{
+    print_int(tam_edit);
+    int i = dir_edit;
+    while (i < dir_file)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_copiar()
+{
+    print_int(tam_copiar);
+    int i = dir_copiar;
+    while (i < dir_pegar)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_pegar()
+{
+    print_int(tam_pegar);
+    int i = dir_pegar;
+    while (i < dir_vaciar)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_vaciar()
+{
+    print_int(tam_vaciar);
+    int i = dir_vaciar;
+    while (i < dir_iedit)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_edit()
+{
+    print_int(tam_iedit);
+    int i = dir_iedit;
+    while (i < dir_icortar)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_cortar()
+{
+    print_int(tam_icortar);
+    int i = dir_icortar;
+    while (i < dir_icopiar)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_copiar()
+{
+    print_int(tam_icopiar);
+    int i = dir_icopiar;
+    while (i < dir_isel)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_sel()
+{
+    print_int(tam_isel);
+    int i = dir_isel;
+    while (i < dir_ipegar)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_pegar()
+{
+    print_int(tam_ipegar);
+    int i = dir_ipegar;
+    while (i < dir_ieliminar)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_isla_eliminar()
+{
+    print_int(tam_ieliminar);
+    int i = dir_ieliminar;
+    while (i < dir_ifile)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
 }
 
 void sonda_refresco()
@@ -2750,6 +3374,18 @@ int segmento_sonda()
     {
         return 4;
     }
+    if (datos[0] == 53)
+    {
+        return 5;
+    }
+    if (datos[0] == 54)
+    {
+        return 6;
+    }
+    if (datos[0] == 55)
+    {
+        return 7;
+    }
     return 1;
 }
 
@@ -2786,6 +3422,25 @@ int main()
     if (seg == 4)
     {
         sonda_raton();
+    }
+    if (seg == 5)
+    {
+        sonda_edit();
+    }
+    if (seg == 6)
+    {
+        sonda_copiar();
+        sonda_pegar();
+        sonda_vaciar();
+    }
+    if (seg == 7)
+    {
+        sonda_isla_edit();
+        sonda_isla_cortar();
+        sonda_isla_copiar();
+        sonda_isla_sel();
+        sonda_isla_pegar();
+        sonda_isla_eliminar();
     }
     if (seg == 1)
     {
