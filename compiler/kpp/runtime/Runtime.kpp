@@ -1,14 +1,49 @@
-// Runtime.kpp — Stage 1, runtime, arranque.
+// Runtime.kpp — Stage 1, runtime, rebanada R-1.
 // El runtime propio de K++ (KolibriRuntime de Stage 0): rutinas x86 que
 // el backend EMITE dentro de cada programa — no es una biblioteca
-// externa ni un interprete. Sus piezas:
-//   START y el bucle de eventos de KolibriOS (dibujar ventana, tecla,
-//   boton, redibujo), print de texto, print de enteros (EAX a decimal),
-//   salida del programa, y las rutinas internas de archivos
-//   kpp_file_write / kpp_file_read.
-// Como el backend, devuelve PARCHES: 5 del runtime grafico, las
-// entradas de file_read/file_write con 4 parches de direcciones
-// (scratch y bloque de parametros), y la lista de parches del cursor.
+// externa ni un interprete. La pieza emite el PREFIJO GRAFICO entero
+// en su orden final (2587 bytes: mascara de eventos, START, bucle y
+// despacho, la salida, DRAW_WINDOW, los cuerpos de las rutinas de la
+// Konsole y las islas de los menus), y devuelve el Result y las
+// listas de parches que quien ensambla rellena con DATA.
+// Fidelidad (fallo de Esequiel del 2026-11-22): byte a byte, como el
+// Backend. Los tamanos y las direcciones de esta rebanada estan
+// medidos por el puerto emitiendo el oraculo entero, y la
+// transcripcion quedo probada byte a byte contra el BIN que Stage 0
+// produce para el programa minimo (57.086 bytes: 36 de cabecera,
+// 2622 de codigo — 2587 del prefijo y 35 del cuerpo de main — y
+// 54.428 de DATA).
+// El RESULT copia campo a campo el KolibriRuntimeResult del oraculo,
+// seis campos: drawWindowCallPatch (el CALL de START a DRAW_WINDOW,
+// lo cierra la pasada interna de la pieza), mainEntryPatch (el JMP
+// de START al cuerpo principal: lo rellena quien ensambla, es la
+// costura con el backend), eventLoopAddress, titleAddressPatch y
+// titleCaptionPatch (las dos referencias al titulo: las rellena
+// quien ensambla con su direccion en DATA) y refreshOutputAddress
+// (la direccion de la region del refresco: en R-1 la region aun es
+// hueco, pero su direccion ya es la definitiva, y con ella el
+// backend de B-9 tiene por fin destino para los huecos de Print).
+// HUECOS: cada region aun no portada se emite como ceros de su
+// tamano final — medido del oraculo, nunca puesto a mano — y su
+// rebanada duena la sustituye sin mover un solo offset. R-1 porta
+// la mascara, START, el bucle y el despacho, la salida y
+// DRAW_WINDOW. Quedan en hueco: el raton (358, R-3), el refresco
+// (62, R-2), el dibujo de lineas (239, R-2), la barra (157, R-3),
+// DIBUJA_EDIT (378, R-4), DIBUJA_FILE (267, R-5), COPIAR (189,
+// R-4), PEGAR (94, R-4), VACIAR (30, R-4) y las diez islas de los
+// menus (58, 63, 58, 48, 42, 58 de EDIT, R-4; 58, 42, 42, 42 de
+// FILE, R-5). El runtime de archivos (emitFileIoRuntime) es R-6.
+// PARCHES INTERNOS: cada salto o llamada entre regiones se
+// registra al emitirse — posicion, clase de destino y rebanada
+// duena (la ultima de las dos orillas) — y lo cierra la pasada de
+// su duena: rellena_registro(1) cierra en esta rebanada los de la
+// cabecera y la ventana entre si; los demas quedan registrados con
+// su duena nombrada y su hueco a cero. Las catorce listas de
+// direcciones DATA del oraculo quedan declaradas como listas de la
+// pieza: en R-1 ninguna region portada anota en ellas (la cabecera
+// y la ventana no tocan DATA) y sus contadores nacen a cero; las
+// llamadas al refresco nacen en las emisiones de Print del backend
+// (la costura de B-9), no en esta pieza.
 // ABI interna de las rutinas de archivo:
 //   WRITE: EAX = ruta, EBX = arreglo, ECX = cantidad, EDX = capacidad
 //   READ:  EAX = ruta, EBX = arreglo, ECX = capacidad
@@ -50,7 +85,1741 @@ enum FileIoParams
     OffPathAddress = 21
 };
 
+// ============================================================
+// LA BIBLIOTECA DE LA ARENA.
+//
+// La biblioteca que sigue es la de Arena.kpp (M-0,
+// sellada en campo) sin su sonda ni su main, con los
+// ajustes de dimension ya declarados en X86Backend.kpp
+// y heredados tal cual: el bloque B se declara a 32768
+// celdas, el bucle de cero de inicia_arena se parte en
+// dos y el comentario de tamanos de inicia_arena dice
+// los de la pieza. El texto se copia mecanicamente de
+// X86Backend.kpp (lineas 417 a 1302) al construir esta
+// rebanada: ni una firma ni una mecanica cambian.
+// ============================================================
+
+// ============================================================
+// ESTADO COMPARTIDO.
+//
+// Los contadores de la biblioteca y los handles de las
+// cinco regiones, compartidos por nombre como en las
+// demas piezas. El driver guarda en region_source ..
+// region_output el handle de cada region al crearla.
+// errores_arena es la guarda comun: suma 1 por cada
+// operacion que la biblioteca no pudo cumplir, y ninguna
+// operacion fallida escribe fuera ni a medias.
+// ============================================================
+
+int errores_arena;
+int nest;
+int prov_nacq;
+int region_source;
+int region_frontend;
+int region_compiler;
+int region_backend;
+int region_output;
+
+// ============================================================
+// INICIA LA BIBLIOTECA.
+//
+// Pone a cero la contabilidad y los tres bloques, y
+// escribe el plan de solape: la region 1 (Source) vive
+// en el bloque 0 (A), la 2 (Frontend) en el 1 (B), la 3
+// (Compiler) en el 2 (C), la 4 (Backend) en el 1 (B, su
+// segunda vida) y la 5 (Output) en el 0 (A, su segunda
+// vida). Los tamanos de bloque de esta pieza: A con
+// 1024 celdas, B con 32768, C con 512.
+// ============================================================
+
+void inicia_arena()
+{
+    int bloque_a[1024];
+    int bloque_b[32768];
+    int bloque_c[512];
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int i;
+    i = 0;
+    while (i < 1024)
+    {
+        bloque_a[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 32768)
+    {
+        bloque_b[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 512)
+    {
+        bloque_c[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 6)
+    {
+        reg_bloque[i] = 0;
+        reg_reserva[i] = 0;
+        reg_usado[i] = 0;
+        reg_viva[i] = 0;
+        plan_bloque[i] = 0;
+        i = i + 1;
+    }
+    plan_bloque[1] = 0;
+    plan_bloque[2] = 1;
+    plan_bloque[3] = 2;
+    plan_bloque[4] = 1;
+    plan_bloque[5] = 0;
+    tam_bloque[0] = 1024;
+    tam_bloque[1] = 32768;
+    tam_bloque[2] = 512;
+    i = 0;
+    while (i < 3)
+    {
+        bloque_dueno[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 129)
+    {
+        est_region[i] = 0;
+        est_base[i] = 0;
+        est_cuenta[i] = 0;
+        est_cap[i] = 0;
+        est_tipo[i] = 0;
+        est_viva[i] = 0;
+        i = i + 1;
+    }
+    errores_arena = 0;
+    nest = 0;
+    prov_nacq = 0;
+    region_source = 0;
+    region_frontend = 0;
+    region_compiler = 0;
+    region_backend = 0;
+    region_output = 0;
+}
+
+// ============================================================
+// MEMORY PROVIDER.
+//
+// La puerta entre la biblioteca y la memoria fisica.
+// En V2 son subrutinas ordinarias: memory_acquire entrega
+// el bloque fisico que el plan de solape asigna a la
+// siguiente region por nacer (las regiones nacen en
+// orden: Source, Frontend, Compiler, Backend, Output) y
+// devuelve bloque + 1, o 0 si el bloque no alcanza o
+// sigue ocupado por su vida anterior. Nunca un bloque
+// invalido, nunca un valor a medias. memory_release
+// devuelve el bloque; memory_available da el tamano del
+// bloque libre mayor, en celdas.
+// ============================================================
+
+int memory_available()
+{
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int m;
+    int b;
+    m = 0;
+    b = 0;
+    while (b < 3)
+    {
+        if (bloque_dueno[b] == 0)
+        {
+            if (tam_bloque[b] > m)
+            {
+                m = tam_bloque[b];
+            }
+        }
+        b = b + 1;
+    }
+    return m;
+}
+
+int memory_acquire(int size)
+{
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int n;
+    int blk;
+    n = prov_nacq + 1;
+    if (n > 5)
+    {
+        return 0;
+    }
+    blk = plan_bloque[n];
+    if (size > tam_bloque[blk])
+    {
+        return 0;
+    }
+    if (bloque_dueno[blk] != 0)
+    {
+        return 0;
+    }
+    bloque_dueno[blk] = n;
+    prov_nacq = n;
+    return blk + 1;
+}
+
+void memory_release(int block)
+{
+    int bloque_dueno[3];
+    bloque_dueno[block - 1] = 0;
+}
+
+// ============================================================
+// MEMORY MANAGER.
+//
+// arena_create reserva el bloque inicial de la region y
+// devuelve su handle (0 = fallo, acusado en
+// errores_arena). El handle de la region es su numero de
+// nacimiento: 1 Source, 2 Frontend, 3 Compiler,
+// 4 Backend, 5 Output.
+// arena_alloc entrega un offset dentro de la region: el
+// espacio se entrega por avance (bump) con la alineacion
+// pedida en celdas; si no cabe en lo reservado, acusa y
+// devuelve -1 sin tocar nada. Ningun offset ya entregado
+// cambia jamas de significado.
+// arena_reset devuelve la region a vacia sin liberarla:
+// es la liberacion por fase, y de paso invalida las
+// estructuras que vivian en ella. arena_destroy la
+// libera del todo: el bloque vuelve al Provider y la
+// region muerta acusa si la llaman (la disciplina del
+// mapa contra handles de regiones muertas).
+// ============================================================
+
+int region_activa(int arena)
+{
+    int reg_viva[6];
+    int r;
+    r = 0;
+    if (arena >= 1)
+    {
+        if (arena <= 5)
+        {
+            if (reg_viva[arena] == 1)
+            {
+                r = 1;
+            }
+        }
+    }
+    return r;
+}
+
+int arena_create(int initial_size)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int b;
+    int r;
+    if (initial_size < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    b = memory_acquire(initial_size);
+    if (b == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    r = prov_nacq;
+    reg_bloque[r] = b - 1;
+    reg_reserva[r] = initial_size;
+    reg_usado[r] = 0;
+    reg_viva[r] = 1;
+    return r;
+}
+
+int arena_alloc(int arena, int size, int alignment)
+{
+    int reg_reserva[6];
+    int reg_usado[6];
+    int off;
+    int resto;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (size < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (alignment < 1)
+    {
+        alignment = 1;
+    }
+    off = reg_usado[arena];
+    resto = off - (off / alignment) * alignment;
+    if (resto != 0)
+    {
+        off = off + (alignment - resto);
+    }
+    if (off + size > reg_reserva[arena])
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    reg_usado[arena] = off + size;
+    return off;
+}
+
+void invalida_estructuras(int arena)
+{
+    int est_region[129];
+    int est_viva[129];
+    int e;
+    e = 1;
+    while (e <= nest)
+    {
+        if (est_region[e] == arena)
+        {
+            est_viva[e] = 0;
+        }
+        e = e + 1;
+    }
+}
+
+void arena_reset(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+}
+
+void arena_destroy(int arena)
+{
+    int reg_bloque[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+    reg_viva[arena] = 0;
+    memory_release(reg_bloque[arena] + 1);
+}
+
+int arena_get_used(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_usado[arena];
+}
+
+int arena_get_reserved(int arena)
+{
+    int reg_reserva[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_reserva[arena];
+}
+
+// ============================================================
+// ACCESO A CELDAS.
+//
+// La capa de acceso interna de la via V2: cada bloque es
+// un arreglo declarado y estas dos subrutinas son las
+// unicas que lo indexan por numero de bloque. Si un dia
+// se migra a la via V1, este es el interior que se
+// reescribe por peek/poke; la API publica no se entera.
+// ============================================================
+
+int celda_get(int bloque, int off)
+{
+    int bloque_a[1024];
+    int bloque_b[32768];
+    int bloque_c[512];
+    int r;
+    r = 0;
+    if (bloque == 0)
+    {
+        r = bloque_a[off];
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            r = bloque_b[off];
+        }
+        else
+        {
+            r = bloque_c[off];
+        }
+    }
+    return r;
+}
+
+void celda_set(int bloque, int off, int v)
+{
+    int bloque_a[1024];
+    int bloque_b[32768];
+    int bloque_c[512];
+    if (bloque == 0)
+    {
+        bloque_a[off] = v;
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            bloque_b[off] = v;
+        }
+        else
+        {
+            bloque_c[off] = v;
+        }
+    }
+}
+
+// ============================================================
+// LA CONTABILIDAD DE ESTRUCTURAS.
+//
+// DynamicArray, StringPool y ByteBuffer comparten la
+// misma contabilidad: por estructura, su region, la base
+// (offset de su bloque actual en la region), la cuenta,
+// la capacidad, el tipo (1 DynamicArray, 2 StringPool,
+// 3 ByteBuffer) y si vive. Los arreglos van indexados por
+// el handle de la estructura (1..128); el 0 es el fallo.
+// est_crece es el crecimiento geometrico x2, el mismo
+// para las tres clases: extension en el sitio si el
+// bloque de la estructura es el ultimo asignado de su
+// arena; si no, bloque nuevo al doble y copia, y el
+// bloque viejo queda como hueco hasta el reset de la
+// fase. La base puede cambiar al crecer con copia; los
+// handles de los datos no, porque un dato se referencia
+// por su indice dentro de la estructura, no por su
+// offset en la arena.
+// est_agrega es la unica puerta de registro: agrega al
+// final y devuelve el indice del elemento, o -1 si la
+// arena no pudo crecer (error ya acusado, una sola vez
+// por operacion fallida).
+// ============================================================
+
+int est_crea(int arena, int tipo, int capini)
+{
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int off;
+    int e;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (capini < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (nest >= 128)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(arena, capini, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    nest = nest + 1;
+    e = nest;
+    est_region[e] = arena;
+    est_base[e] = off;
+    est_cuenta[e] = 0;
+    est_cap[e] = capini;
+    est_tipo[e] = tipo;
+    est_viva[e] = 1;
+    return e;
+}
+
+int est_valida(int e, int tipo)
+{
+    int est_tipo[129];
+    int est_viva[129];
+    int r;
+    r = 0;
+    if (e >= 1)
+    {
+        if (e <= nest)
+        {
+            if (est_viva[e] == 1)
+            {
+                if (tipo == 0)
+                {
+                    r = 1;
+                }
+                else
+                {
+                    if (est_tipo[e] == tipo)
+                    {
+                        r = 1;
+                    }
+                }
+            }
+        }
+    }
+    return r;
+}
+
+int est_crece(int e)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int region;
+    int base;
+    int cap;
+    int nuevacap;
+    int off;
+    int blk;
+    int i;
+    region = est_region[e];
+    base = est_base[e];
+    cap = est_cap[e];
+    nuevacap = cap * 2;
+    if (base + cap == reg_usado[region])
+    {
+        if (reg_usado[region] + (nuevacap - cap) <= reg_reserva[region])
+        {
+            reg_usado[region] = reg_usado[region] + (nuevacap - cap);
+            est_cap[e] = nuevacap;
+            return 1;
+        }
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(region, nuevacap, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    blk = reg_bloque[region];
+    i = 0;
+    while (i < est_cuenta[e])
+    {
+        celda_set(blk, off + i, celda_get(blk, base + i));
+        i = i + 1;
+    }
+    est_base[e] = off;
+    est_cap[e] = nuevacap;
+    return 1;
+}
+
+int est_agrega(int e, int v)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int idx;
+    if (est_valida(e, 0) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (est_cuenta[e] == est_cap[e])
+    {
+        if (est_crece(e) == 0)
+        {
+            return -1;
+        }
+    }
+    idx = est_cuenta[e];
+    celda_set(reg_bloque[est_region[e]], est_base[e] + idx, v);
+    est_cuenta[e] = idx + 1;
+    return idx;
+}
+
+// ============================================================
+// DYNAMICARRAY.
+//
+// da_create nace con la capacidad inicial pedida (en
+// elementos) y devuelve el handle del arreglo (0 = fallo
+// acusado). da_add agrega al final creciendo como manda
+// est_crece y devuelve el indice del elemento o -1.
+// da_get / da_set leen y escriben por indice, con el
+// intervalo validado antes de tocar memoria: fuera de la
+// cuenta, acusan y no tocan nada. da_count, da_capacity
+// y da_base consultan la contabilidad (valen para las
+// tres clases de estructura); handle invalido da -1.
+// ============================================================
+
+int da_create(int arena, int initial_capacity)
+{
+    return est_crea(arena, 1, initial_capacity);
+}
+
+int da_add(int arr, int value)
+{
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(arr, value);
+}
+
+int da_get(int arr, int index)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[arr]], est_base[arr] + index);
+}
+
+void da_set(int arr, int index, int value)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[arr]], est_base[arr] + index, value);
+}
+
+int da_count(int arr)
+{
+    int est_cuenta[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[arr];
+}
+
+int da_capacity(int arr)
+{
+    int est_cap[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cap[arr];
+}
+
+int da_base(int arr)
+{
+    int est_base[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_base[arr];
+}
+
+// ============================================================
+// STRINGPOOL.
+//
+// La piscina dinamica: un buffer de caracteres que crece
+// en la region pedida. string_pool_add_char agrega un
+// caracter (guardado como byte, 0..255) y devuelve su
+// offset dentro de la piscina: ese offset es el ini de
+// las referencias. El formato de la referencia no
+// cambia: ini * 128 + largo, el de la piscina de hoy;
+// string_pool_len desempaqueta el largo y
+// string_pool_get_char lee el caracter ini + i. Los
+// handles son offsets: estables hasta la muerte de la
+// region, crezca lo que crezca la piscina.
+// ============================================================
+
+int string_pool_create(int arena)
+{
+    return est_crea(arena, 2, 4);
+}
+
+int string_pool_add_char(int pool, int ch)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(pool, ch & 255);
+}
+
+int string_pool_get_char(int pool, int ini, int i)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int idx;
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    idx = ini + i;
+    if (idx < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (idx >= est_cuenta[pool])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[pool]], est_base[pool] + idx);
+}
+
+int string_pool_len(int pool, int ref)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return ref - (ref / 128) * 128;
+}
+
+// ============================================================
+// BYTEBUFFER.
+//
+// El buffer de bytes que crece: el codigo del Emitter y
+// la imagen de los Writers. Una celda por byte, como
+// hoy, y cada byte guardado en 0..255.
+// bytebuffer_append agrega un byte al final y devuelve
+// su offset — la semantica de los placeholders del
+// Emitter, que ya devuelven el offset de su hueco.
+// bytebuffer_patch escribe en un offset ya entregado y
+// dentro de la cuenta: es el patch32 / patchRel32 de hoy
+// sin guarda de 256. bytebuffer_write copia count bytes
+// desde otro ByteBuffer (desde su src_offset) y los
+// agrega al final de este: lo que los Writers hacen al
+// ensamblar cabecera + codigo + datos; el intervalo de
+// origen se valida entero antes de copiar, asi que una
+// copia invalida acusa y no escribe nada.
+// bytebuffer_get lee un byte por offset, validado.
+// ============================================================
+
+int bytebuffer_create(int arena)
+{
+    return est_crea(arena, 3, 8);
+}
+
+int bytebuffer_append(int bb, int byte)
+{
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(bb, byte & 255);
+}
+
+void bytebuffer_patch(int bb, int offset, int byte)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[bb]], est_base[bb] + offset, byte & 255);
+}
+
+void bytebuffer_write(int bb, int src, int src_offset, int count)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int blk;
+    int i;
+    int v;
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (est_valida(src, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (count < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset + count > est_cuenta[src])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    blk = reg_bloque[est_region[src]];
+    i = 0;
+    while (i < count)
+    {
+        v = celda_get(blk, est_base[src] + src_offset + i);
+        if (est_agrega(bb, v) < 0)
+        {
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+int bytebuffer_get(int bb, int offset)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[bb]], est_base[bb] + offset);
+}
+
+int bytebuffer_get_size(int bb)
+{
+    int est_cuenta[129];
+    if (est_valida(bb, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[bb];
+}
+// ============================================================
+// ESTADO COMPARTIDO.
+//
+// Los escalares de la pieza: el contador de errores
+// (errores_rt: suma 1 por cada registro que la arena
+// no pudo cumplir o cada clase de destino invalida),
+// el ByteBuffer dcod con el prefijo modelado, el
+// registro de parches internos (tres arreglos
+// paralelos: posicion, clase de destino y rebanada
+// duena, con su contador nreg), las catorce listas de
+// direcciones DATA del oraculo (un DynamicArray y un
+// contador por lista, con el prefijo dpl_/npl_), los
+// tamanos finales de las diecinueve regiones en hueco
+// (tam_: medidos por el puerto emitiendo el oraculo
+// entero, probados byte a byte; la rebanada que porte
+// una region debe emitir exactamente su tam_ o la
+// conservacion lo acusa), las direcciones de las
+// veinticuatro regiones (dir_: las fija emite_grafico
+// al pasar) y los seis campos del Result (res_).
+// Las clases de destino del registro: 0 ventana,
+// 1 bucle, 2 redraw, 3 tecla, 4 boton, 5 raton,
+// 6 refresco, 7 lineas, 8 barra, 9 DIBUJA_EDIT,
+// 10 DIBUJA_FILE, 11 COPIAR, 12 PEGAR, 13 VACIAR,
+// 14 isla EDIT, 15 isla CORTAR, 16 isla COPIAR,
+// 17 isla SELECCIONAR, 18 isla PEGAR, 19 isla
+// ELIMINAR, 20 isla FILE, 21 isla OPEN, 22 isla SAVE
+// y 23 isla CLOSE.
+// ============================================================
+
+int errores_rt;
+int dcod;
+int nreg;
+int dreg_pos;
+int dreg_clase;
+int dreg_dueno;
+int dpl_buf;
+int dpl_cnt;
+int dpl_cab;
+int dpl_vis;
+int dpl_cur;
+int dpl_top;
+int dpl_alt;
+int dpl_est;
+int dpl_agr;
+int dpl_men;
+int dpl_sel;
+int dpl_len;
+int dpl_clip;
+int dpl_txt;
+int npl_buf;
+int npl_cnt;
+int npl_cab;
+int npl_vis;
+int npl_cur;
+int npl_top;
+int npl_alt;
+int npl_est;
+int npl_agr;
+int npl_men;
+int npl_sel;
+int npl_len;
+int npl_clip;
+int npl_txt;
+int tam_raton;
+int tam_refresco;
+int tam_lineas;
+int tam_barra;
+int tam_edit;
+int tam_file;
+int tam_copiar;
+int tam_pegar;
+int tam_vaciar;
+int tam_iedit;
+int tam_icortar;
+int tam_icopiar;
+int tam_isel;
+int tam_ipegar;
+int tam_ieliminar;
+int tam_ifile;
+int tam_iopen;
+int tam_isave;
+int tam_iclose;
+int dir_bucle;
+int dir_redraw;
+int dir_tecla;
+int dir_boton;
+int dir_raton;
+int dir_ventana;
+int dir_refresco;
+int dir_lineas;
+int dir_barra;
+int dir_edit;
+int dir_file;
+int dir_copiar;
+int dir_pegar;
+int dir_vaciar;
+int dir_iedit;
+int dir_icortar;
+int dir_icopiar;
+int dir_isel;
+int dir_ipegar;
+int dir_ieliminar;
+int dir_ifile;
+int dir_iopen;
+int dir_isave;
+int dir_iclose;
+int res_draw;
+int res_main;
+int res_bucle;
+int res_titulo;
+int res_cap;
+int res_refresco;
+
+// ============================================================
+// REINICIA EL RUNTIME.
+//
+// Pone a cero el estado, fija los tamanos medidos de
+// las regiones en hueco y crea las estructuras en
+// BackendArena: el ByteBuffer del prefijo, los tres
+// arreglos del registro de parches y las catorce
+// listas DATA, nacidos a 256 como manda la norma de
+// la casa. El llamador crea BackendArena antes
+// (region_backend), como en las demas piezas.
+// ============================================================
+
+void reinicia_rt()
+{
+    errores_rt = 0;
+    nreg = 0;
+    npl_buf = 0;
+    npl_cnt = 0;
+    npl_cab = 0;
+    npl_vis = 0;
+    npl_cur = 0;
+    npl_top = 0;
+    npl_alt = 0;
+    npl_est = 0;
+    npl_agr = 0;
+    npl_men = 0;
+    npl_sel = 0;
+    npl_len = 0;
+    npl_clip = 0;
+    npl_txt = 0;
+    tam_raton = 358;
+    tam_refresco = 62;
+    tam_lineas = 239;
+    tam_barra = 157;
+    tam_edit = 378;
+    tam_file = 267;
+    tam_copiar = 189;
+    tam_pegar = 94;
+    tam_vaciar = 30;
+    tam_iedit = 58;
+    tam_icortar = 63;
+    tam_icopiar = 58;
+    tam_isel = 48;
+    tam_ipegar = 42;
+    tam_ieliminar = 58;
+    tam_ifile = 58;
+    tam_iopen = 42;
+    tam_isave = 42;
+    tam_iclose = 42;
+    dir_bucle = 0;
+    dir_redraw = 0;
+    dir_tecla = 0;
+    dir_boton = 0;
+    dir_raton = 0;
+    dir_ventana = 0;
+    dir_refresco = 0;
+    dir_lineas = 0;
+    dir_barra = 0;
+    dir_edit = 0;
+    dir_file = 0;
+    dir_copiar = 0;
+    dir_pegar = 0;
+    dir_vaciar = 0;
+    dir_iedit = 0;
+    dir_icortar = 0;
+    dir_icopiar = 0;
+    dir_isel = 0;
+    dir_ipegar = 0;
+    dir_ieliminar = 0;
+    dir_ifile = 0;
+    dir_iopen = 0;
+    dir_isave = 0;
+    dir_iclose = 0;
+    res_draw = 0;
+    res_main = 0;
+    res_bucle = 0;
+    res_titulo = 0;
+    res_cap = 0;
+    res_refresco = 0;
+    dcod = bytebuffer_create(region_backend);
+    dreg_pos = da_create(region_backend, 256);
+    dreg_clase = da_create(region_backend, 256);
+    dreg_dueno = da_create(region_backend, 256);
+    dpl_buf = da_create(region_backend, 256);
+    dpl_cnt = da_create(region_backend, 256);
+    dpl_cab = da_create(region_backend, 256);
+    dpl_vis = da_create(region_backend, 256);
+    dpl_cur = da_create(region_backend, 256);
+    dpl_top = da_create(region_backend, 256);
+    dpl_alt = da_create(region_backend, 256);
+    dpl_est = da_create(region_backend, 256);
+    dpl_agr = da_create(region_backend, 256);
+    dpl_men = da_create(region_backend, 256);
+    dpl_sel = da_create(region_backend, 256);
+    dpl_len = da_create(region_backend, 256);
+    dpl_clip = da_create(region_backend, 256);
+    dpl_txt = da_create(region_backend, 256);
+}
+
+// ============================================================
+// EMISORES.
+//
+// La base de emision de la casa sobre el ByteBuffer
+// dcod: em_byte anota un byte, em_dword un dword
+// little-endian, em_hueco reserva el dword de un
+// parche y devuelve su posicion (la semantica de los
+// placeholders del Emitter) y parche32 escribe un
+// dword en un offset ya entregado. Encima, las
+// primitivas del prefijo: las mismas codificaciones
+// de X86Emitter.cpp de Stage 0, en decimal como en
+// las demas piezas. Los huecos con retorno devuelven
+// la posicion del rel32 o del imm32. em_hueco_cero
+// emite la region en hueco: n bytes a cero.
+// ============================================================
+
+void em_byte(int b)
+{
+    bytebuffer_append(dcod, b & 255);
+}
+
+void em_dword(int v)
+{
+    em_byte(v & 255);
+    em_byte((v >> 8) & 255);
+    em_byte((v >> 16) & 255);
+    em_byte((v >> 24) & 255);
+}
+
+int em_hueco()
+{
+    int pos;
+    pos = bytebuffer_get_size(dcod);
+    em_dword(0);
+    return pos;
+}
+
+void parche32(int pos, int v)
+{
+    bytebuffer_patch(dcod, pos, v & 255);
+    bytebuffer_patch(dcod, pos + 1, (v >> 8) & 255);
+    bytebuffer_patch(dcod, pos + 2, (v >> 16) & 255);
+    bytebuffer_patch(dcod, pos + 3, (v >> 24) & 255);
+}
+
+void em_mov_eax_imm(int v)
+{
+    em_byte(184);
+    em_dword(v);
+}
+
+void em_mov_reg_imm(int op, int v)
+{
+    em_byte(op);
+    em_dword(v);
+}
+
+void em_int(int n)
+{
+    em_byte(205);
+    em_byte(n);
+}
+
+void em_cmp_eax_imm(int v)
+{
+    em_byte(61);
+    em_dword(v);
+}
+
+void em_cmp_ah_imm8(int v)
+{
+    em_byte(128);
+    em_byte(252);
+    em_byte(v);
+}
+
+int em_je_hueco()
+{
+    em_byte(15);
+    em_byte(132);
+    return em_hueco();
+}
+
+int em_jne_hueco()
+{
+    em_byte(15);
+    em_byte(133);
+    return em_hueco();
+}
+
+int em_call_hueco()
+{
+    em_byte(232);
+    return em_hueco();
+}
+
+int em_jmp_hueco()
+{
+    em_byte(233);
+    return em_hueco();
+}
+
+void em_ret()
+{
+    em_byte(195);
+}
+
+void em_hueco_cero(int n)
+{
+    int i;
+    i = 0;
+    while (i < n)
+    {
+        em_byte(0);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// REGISTRO DE PARCHES INTERNOS.
+//
+// Cada salto o llamada entre regiones se anota al
+// emitirse con su posicion, su clase de destino y
+// su rebanada duena. destino_de traduce la clase a
+// la direccion que emite_grafico fijo para esa
+// region (una clase invalida acusa en errores_rt y
+// devuelve el centinela -1). rellena_registro cierra
+// de una pasada todos los parches de una duena con
+// el rel32 del oraculo: destino - (posicion + 4).
+// En R-1 se cierra la duena 1; las demas pasadas
+// nacen con sus rebanadas.
+// ============================================================
+
+void registra_parche(int pos, int clase, int dueno)
+{
+    int r;
+    r = da_add(dreg_pos, pos);
+    if (r < 0)
+    {
+        errores_rt = errores_rt + 1;
+        return;
+    }
+    r = da_add(dreg_clase, clase);
+    r = da_add(dreg_dueno, dueno);
+    nreg = nreg + 1;
+}
+
+int destino_de(int clase)
+{
+    if (clase == 0)
+    {
+        return dir_ventana;
+    }
+    if (clase == 1)
+    {
+        return dir_bucle;
+    }
+    if (clase == 2)
+    {
+        return dir_redraw;
+    }
+    if (clase == 3)
+    {
+        return dir_tecla;
+    }
+    if (clase == 4)
+    {
+        return dir_boton;
+    }
+    if (clase == 5)
+    {
+        return dir_raton;
+    }
+    if (clase == 6)
+    {
+        return dir_refresco;
+    }
+    if (clase == 7)
+    {
+        return dir_lineas;
+    }
+    if (clase == 8)
+    {
+        return dir_barra;
+    }
+    if (clase == 9)
+    {
+        return dir_edit;
+    }
+    if (clase == 10)
+    {
+        return dir_file;
+    }
+    if (clase == 11)
+    {
+        return dir_copiar;
+    }
+    if (clase == 12)
+    {
+        return dir_pegar;
+    }
+    if (clase == 13)
+    {
+        return dir_vaciar;
+    }
+    if (clase == 14)
+    {
+        return dir_iedit;
+    }
+    if (clase == 15)
+    {
+        return dir_icortar;
+    }
+    if (clase == 16)
+    {
+        return dir_icopiar;
+    }
+    if (clase == 17)
+    {
+        return dir_isel;
+    }
+    if (clase == 18)
+    {
+        return dir_ipegar;
+    }
+    if (clase == 19)
+    {
+        return dir_ieliminar;
+    }
+    if (clase == 20)
+    {
+        return dir_ifile;
+    }
+    if (clase == 21)
+    {
+        return dir_iopen;
+    }
+    if (clase == 22)
+    {
+        return dir_isave;
+    }
+    if (clase == 23)
+    {
+        return dir_iclose;
+    }
+    errores_rt = errores_rt + 1;
+    return -1;
+}
+
+void rellena_registro(int dueno)
+{
+    int i;
+    int pos;
+    int destino;
+    i = 0;
+    while (i < nreg)
+    {
+        if (da_get(dreg_dueno, i) == dueno)
+        {
+            pos = da_get(dreg_pos, i);
+            destino = destino_de(da_get(dreg_clase, i));
+            if (destino >= 0)
+            {
+                parche32(pos, destino - (pos + 4));
+            }
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// EMISION DEL PREFIJO GRAFICO.
+//
+// La transcripcion de emitGraphicsRuntime del
+// oraculo en su orden de emision, con las regiones
+// aun no portadas como huecos de su tamano final.
+// Las direcciones dir_ se fijan al pasar y el Result
+// queda en los res_. La pasada interna de esta
+// rebanada cierra los parches de duena 1 (la
+// cabecera y la ventana entre si, incluido el CALL
+// de START a DRAW_WINDOW del Result); el JMP al
+// cuerpo principal no se registra: es la costura
+// con el backend y su hueco queda a cero.
+// ============================================================
+
+void emite_salida()
+{
+    em_mov_eax_imm(-1);
+    em_int(64);
+}
+
+void emite_grafico()
+{
+    int p;
+    // MASCARA DE EVENTOS (funcion 40, 0x27).
+    em_mov_eax_imm(40);
+    em_mov_reg_imm(187, 39);
+    em_int(64);
+    // START: call DRAW_WINDOW, jmp al cuerpo.
+    res_draw = em_call_hueco();
+    registra_parche(res_draw, 0, 1);
+    res_main = em_jmp_hueco();
+    // BUCLE DE EVENTOS (funcion 10).
+    dir_bucle = bytebuffer_get_size(dcod);
+    res_bucle = dir_bucle;
+    em_mov_eax_imm(10);
+    em_int(64);
+    // DESPACHO: 1 redraw, 2 tecla, 3 boton, 6 raton.
+    em_cmp_eax_imm(1);
+    p = em_je_hueco();
+    registra_parche(p, 2, 1);
+    em_cmp_eax_imm(2);
+    p = em_je_hueco();
+    registra_parche(p, 3, 1);
+    em_cmp_eax_imm(3);
+    p = em_je_hueco();
+    registra_parche(p, 4, 1);
+    em_cmp_eax_imm(6);
+    p = em_je_hueco();
+    registra_parche(p, 5, 3);
+    // Evento desconocido: volver al bucle.
+    p = em_jmp_hueco();
+    registra_parche(p, 1, 1);
+    // REDRAW: call DRAW_WINDOW y volver al bucle.
+    dir_redraw = bytebuffer_get_size(dcod);
+    p = em_call_hueco();
+    registra_parche(p, 0, 1);
+    p = em_jmp_hueco();
+    registra_parche(p, 1, 1);
+    // TECLA: funcion 2 y volver al bucle.
+    dir_tecla = bytebuffer_get_size(dcod);
+    em_mov_eax_imm(2);
+    em_int(64);
+    p = em_jmp_hueco();
+    registra_parche(p, 1, 1);
+    // BOTON: funcion 17; el id llega en AH. Las
+    // islas del menu se registran con su duena: los
+    // renglones de EDIT en R-4 y los de FILE en R-5.
+    dir_boton = bytebuffer_get_size(dcod);
+    em_mov_eax_imm(17);
+    em_int(64);
+    em_cmp_ah_imm8(2);
+    p = em_je_hueco();
+    registra_parche(p, 14, 4);
+    em_cmp_ah_imm8(8);
+    p = em_je_hueco();
+    registra_parche(p, 20, 5);
+    em_cmp_ah_imm8(9);
+    p = em_je_hueco();
+    registra_parche(p, 21, 5);
+    em_cmp_ah_imm8(10);
+    p = em_je_hueco();
+    registra_parche(p, 22, 5);
+    em_cmp_ah_imm8(11);
+    p = em_je_hueco();
+    registra_parche(p, 23, 5);
+    em_cmp_ah_imm8(3);
+    p = em_je_hueco();
+    registra_parche(p, 15, 4);
+    em_cmp_ah_imm8(4);
+    p = em_je_hueco();
+    registra_parche(p, 16, 4);
+    em_cmp_ah_imm8(5);
+    p = em_je_hueco();
+    registra_parche(p, 17, 4);
+    em_cmp_ah_imm8(6);
+    p = em_je_hueco();
+    registra_parche(p, 18, 4);
+    em_cmp_ah_imm8(7);
+    p = em_je_hueco();
+    registra_parche(p, 19, 4);
+    // Boton 1 = cerrar (cae a la salida); otro
+    // cualquiera vuelve al bucle.
+    em_cmp_ah_imm8(1);
+    p = em_jne_hueco();
+    registra_parche(p, 1, 1);
+    // SALIDA.
+    emite_salida();
+    // RATON: hueco de R-3.
+    dir_raton = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_raton);
+    // DRAW WINDOW: begin redraw, la ventana de
+    // 500 x 220 en (100, 100) con su titulo, las
+    // llamadas a las rutinas de dibujo registradas
+    // con sus duenas, el titulo reafirmado con la
+    // funcion 71.1 y end redraw.
+    dir_ventana = bytebuffer_get_size(dcod);
+    em_mov_eax_imm(12);
+    em_mov_reg_imm(187, 1);
+    em_int(64);
+    em_mov_eax_imm(0);
+    em_mov_reg_imm(187, 6554100);
+    em_mov_reg_imm(185, 6554100);
+    em_mov_reg_imm(186, 335544320);
+    em_mov_reg_imm(190, -2138531329);
+    em_byte(191);
+    res_titulo = em_hueco();
+    em_int(64);
+    p = em_call_hueco();
+    registra_parche(p, 7, 2);
+    p = em_call_hueco();
+    registra_parche(p, 9, 4);
+    p = em_call_hueco();
+    registra_parche(p, 10, 5);
+    em_mov_eax_imm(71);
+    em_mov_reg_imm(187, 1);
+    em_byte(185);
+    res_cap = em_hueco();
+    em_int(64);
+    em_mov_eax_imm(12);
+    em_mov_reg_imm(187, 2);
+    em_int(64);
+    em_ret();
+    // REFRESCO: hueco de R-2. Su direccion es el
+    // refreshOutputAddress del Result.
+    dir_refresco = bytebuffer_get_size(dcod);
+    res_refresco = dir_refresco;
+    em_hueco_cero(tam_refresco);
+    // DIBUJO DE LINEAS: hueco de R-2.
+    dir_lineas = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_lineas);
+    // BARRA: hueco de R-3.
+    dir_barra = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_barra);
+    // DIBUJA_EDIT: hueco de R-4.
+    dir_edit = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_edit);
+    // DIBUJA_FILE: hueco de R-5.
+    dir_file = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_file);
+    // COPIAR, PEGAR y VACIAR: huecos de R-4.
+    dir_copiar = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_copiar);
+    dir_pegar = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_pegar);
+    dir_vaciar = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_vaciar);
+    // ISLAS DE EDIT: huecos de R-4.
+    dir_iedit = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_iedit);
+    dir_icortar = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_icortar);
+    dir_icopiar = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_icopiar);
+    dir_isel = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_isel);
+    dir_ipegar = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_ipegar);
+    dir_ieliminar = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_ieliminar);
+    // ISLAS DE FILE: huecos de R-5.
+    dir_ifile = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_ifile);
+    dir_iopen = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_iopen);
+    dir_isave = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_isave);
+    dir_iclose = bytebuffer_get_size(dcod);
+    em_hueco_cero(tam_iclose);
+    // PASADA INTERNA DE R-1.
+    rellena_registro(1);
+}
+
+// ============================================================
+// SONDA DE LA REBANADA.
+//
+// Cinco bloques cerrados, en el orden de la
+// corriente: (a) la emision hasta START — la cuenta
+// de bytes, los bytes y los dos campos del Result
+// que alli nacen; (b) el bucle y el despacho — la
+// cuenta y los bytes hasta la region del raton;
+// (c) DRAW_WINDOW — la cuenta y sus bytes; (d) el
+// registro de parches entero (cuenta y filas de
+// posicion, clase y duena), los seis campos del
+// Result, los contadores de las catorce listas DATA
+// y los dos contadores de errores; (e) el registro
+// de huecos: la cuenta de regiones y, por region,
+// su direccion y su tamano, y el tamano total del
+// prefijo. Ningun bloque pasa de 512 valores: el
+// empaquetado en segmentos lo fija el plan de la
+// rebanada.
+// ============================================================
+
+void sonda_hasta_start()
+{
+    int i;
+    print_int(dir_bucle);
+    i = 0;
+    while (i < dir_bucle)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+    print_int(res_draw);
+    print_int(res_main);
+}
+
+void sonda_bucle_despacho()
+{
+    int i;
+    print_int(dir_raton - dir_bucle);
+    i = dir_bucle;
+    while (i < dir_raton)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_ventana()
+{
+    int i;
+    print_int(dir_refresco - dir_ventana);
+    i = dir_ventana;
+    while (i < dir_refresco)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_parches()
+{
+    int i;
+    print_int(nreg);
+    i = 0;
+    while (i < nreg)
+    {
+        print_int(da_get(dreg_pos, i));
+        print_int(da_get(dreg_clase, i));
+        print_int(da_get(dreg_dueno, i));
+        i = i + 1;
+    }
+    print_int(res_draw);
+    print_int(res_main);
+    print_int(res_bucle);
+    print_int(res_titulo);
+    print_int(res_cap);
+    print_int(res_refresco);
+    print_int(npl_buf);
+    print_int(npl_cnt);
+    print_int(npl_cab);
+    print_int(npl_vis);
+    print_int(npl_cur);
+    print_int(npl_top);
+    print_int(npl_alt);
+    print_int(npl_est);
+    print_int(npl_agr);
+    print_int(npl_men);
+    print_int(npl_sel);
+    print_int(npl_len);
+    print_int(npl_clip);
+    print_int(npl_txt);
+    print_int(errores_rt);
+    print_int(errores_arena);
+}
+
+void sonda_huecos()
+{
+    print_int(19);
+    print_int(dir_raton);
+    print_int(tam_raton);
+    print_int(dir_refresco);
+    print_int(tam_refresco);
+    print_int(dir_lineas);
+    print_int(tam_lineas);
+    print_int(dir_barra);
+    print_int(tam_barra);
+    print_int(dir_edit);
+    print_int(tam_edit);
+    print_int(dir_file);
+    print_int(tam_file);
+    print_int(dir_copiar);
+    print_int(tam_copiar);
+    print_int(dir_pegar);
+    print_int(tam_pegar);
+    print_int(dir_vaciar);
+    print_int(tam_vaciar);
+    print_int(dir_iedit);
+    print_int(tam_iedit);
+    print_int(dir_icortar);
+    print_int(tam_icortar);
+    print_int(dir_icopiar);
+    print_int(tam_icopiar);
+    print_int(dir_isel);
+    print_int(tam_isel);
+    print_int(dir_ipegar);
+    print_int(tam_ipegar);
+    print_int(dir_ieliminar);
+    print_int(tam_ieliminar);
+    print_int(dir_ifile);
+    print_int(tam_ifile);
+    print_int(dir_iopen);
+    print_int(tam_iopen);
+    print_int(dir_isave);
+    print_int(tam_isave);
+    print_int(dir_iclose);
+    print_int(tam_iclose);
+    print_int(bytebuffer_get_size(dcod));
+}
+
 int main()
 {
+    int rs;
+    int rf;
+    int rc;
+    int rb;
+    inicia_arena();
+    rs = arena_create(256);
+    region_source = rs;
+    rf = arena_create(256);
+    region_frontend = rf;
+    rc = arena_create(256);
+    region_compiler = rc;
+    arena_destroy(rf);
+    rb = arena_create(32768);
+    region_backend = rb;
+    reinicia_rt();
+    emite_grafico();
+    sonda_hasta_start();
+    sonda_bucle_despacho();
+    sonda_ventana();
+    sonda_parches();
+    sonda_huecos();
     return 0;
 }
