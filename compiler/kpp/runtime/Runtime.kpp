@@ -1,4 +1,4 @@
-// Runtime.kpp — Stage 1, runtime, rebanada R-1.
+// Runtime.kpp — Stage 1, runtime, rebanada R-2.
 // El runtime propio de K++ (KolibriRuntime de Stage 0): rutinas x86 que
 // el backend EMITE dentro de cada programa — no es una biblioteca
 // externa ni un interprete. La pieza emite el PREFIJO GRAFICO entero
@@ -20,30 +20,44 @@
 // costura con el backend), eventLoopAddress, titleAddressPatch y
 // titleCaptionPatch (las dos referencias al titulo: las rellena
 // quien ensambla con su direccion en DATA) y refreshOutputAddress
-// (la direccion de la region del refresco: en R-1 la region aun es
-// hueco, pero su direccion ya es la definitiva, y con ella el
-// backend de B-9 tiene por fin destino para los huecos de Print).
+// (la direccion de la region del refresco: final desde R-1, y con
+// ella el backend de B-9 tiene destino para los huecos de Print).
 // HUECOS: cada region aun no portada se emite como ceros de su
 // tamano final — medido del oraculo, nunca puesto a mano — y su
-// rebanada duena la sustituye sin mover un solo offset. R-1 porta
+// rebanada duena la sustituye sin mover un solo offset. R-1 porto
 // la mascara, START, el bucle y el despacho, la salida y
-// DRAW_WINDOW. Quedan en hueco: el raton (358, R-3), el refresco
-// (62, R-2), el dibujo de lineas (239, R-2), la barra (157, R-3),
-// DIBUJA_EDIT (378, R-4), DIBUJA_FILE (267, R-5), COPIAR (189,
-// R-4), PEGAR (94, R-4), VACIAR (30, R-4) y las diez islas de los
-// menus (58, 63, 58, 48, 42, 58 de EDIT, R-4; 58, 42, 42, 42 de
-// FILE, R-5). El runtime de archivos (emitFileIoRuntime) es R-6.
+// DRAW_WINDOW. R-2 porta el REFRESCO (62 bytes: begin redraw, la
+// limpieza del area de texto con la funcion 13, las llamadas a
+// DIBUJA_LINEAS, DIBUJA_EDIT y DIBUJA_FILE, y end redraw) y el
+// DIBUJO DE LINEAS (239 bytes: las filas visibles — lineCount
+// menos firstVisible, con tope de 41 —, el tinte de la seleccion,
+// la ranura inicial circular y el bucle que dibuja cada fila
+// bajando el cursor de repintado de 10 en 10). Quedan en hueco:
+// el raton (358, R-3), la barra (157, R-3), DIBUJA_EDIT (378,
+// R-4), DIBUJA_FILE (267, R-5), COPIAR (189, R-4), PEGAR (94,
+// R-4), VACIAR (30, R-4) y las diez islas de los menus (58, 63,
+// 58, 48, 42, 58 de EDIT, R-4; 58, 42, 42, 42 de FILE, R-5). El
+// runtime de archivos (emitFileIoRuntime) es R-6.
 // PARCHES INTERNOS: cada salto o llamada entre regiones se
 // registra al emitirse — posicion, clase de destino y rebanada
 // duena (la ultima de las dos orillas) — y lo cierra la pasada de
-// su duena: rellena_registro(1) cierra en esta rebanada los de la
-// cabecera y la ventana entre si; los demas quedan registrados con
-// su duena nombrada y su hueco a cero. Las catorce listas de
-// direcciones DATA del oraculo quedan declaradas como listas de la
-// pieza: en R-1 ninguna region portada anota en ellas (la cabecera
-// y la ventana no tocan DATA) y sus contadores nacen a cero; las
-// llamadas al refresco nacen en las emisiones de Print del backend
-// (la costura de B-9), no en esta pieza.
+// su duena: rellena_registro(1) cierra los de la cabecera y la
+// ventana entre si, y rellena_registro(2) cierra en esta rebanada
+// las dos llamadas a DIBUJA_LINEAS (la de DRAW_WINDOW, registrada
+// en R-1, y la del propio refresco, que el oraculo devuelve de
+// emitRefreshOutput a su pasada). La llamada del dibujo a la
+// BARRA queda registrada con duena R-3 — su destino es la region
+// de la barra, de direccion ya final — y las del refresco a
+// DIBUJA_EDIT y DIBUJA_FILE con duenas R-4 y R-5: en el oraculo
+// esas dos llamadas van a las listas editCall y fileCall, que la
+// pasada interna de emitGraphicsRuntime rellena contra las
+// rutinas de los menus. Las catorce listas de direcciones DATA
+// del oraculo quedan declaradas como listas de la pieza: el
+// dibujo anota en seis de ellas (lineBuffer una vez, lineCount
+// dos, lineHead una, firstVisible dos, repaintCursor cuatro y
+// seleccion una) y el refresco en ninguna; las llamadas al
+// refresco nacen en las emisiones de Print del backend (la
+// costura de B-9), no en esta pieza.
 // ABI interna de las rutinas de archivo:
 //   WRITE: EAX = ruta, EBX = arreglo, ECX = cantidad, EDX = capacidad
 //   READ:  EAX = ruta, EBX = arreglo, ECX = capacidad
@@ -1211,6 +1225,20 @@ void reinicia_rt()
 // las demas piezas. Los huecos con retorno devuelven
 // la posicion del rel32 o del imm32. em_hueco_cero
 // emite la region en hueco: n bytes a cero.
+// anota_lista anota la posicion de un imm32 en una
+// de las catorce listas DATA de la pieza — el indice
+// sigue el orden del estado: 0 lineBuffer, 1
+// lineCount, 2 lineHead, 3 firstVisible, 4
+// repaintCursor, 5 thumbTop, 6 thumbHeight, 7
+// dragState, 8 dragGrab, 9 menuAbierto, 10
+// seleccion, 11 clipLen, 12 clipBuffer y 13
+// menuTexto — e incrementa su contador; los
+// emisores de operando de memoria (em_mov_eax_mem,
+// em_mov_ebx_mem, em_mov_mem_eax, em_sub_eax_mem y
+// em_add_eax_mem) emiten su imm32 a cero y lo
+// anotan. em_jle_hueco y em_jbe_hueco son los
+// saltos con signo y sin signo del dibujo, y
+// em_and_eax_imm y em_add_eax_imm sus inmediatos.
 // ============================================================
 
 void em_byte(int b)
@@ -1240,6 +1268,138 @@ void parche32(int pos, int v)
     bytebuffer_patch(dcod, pos + 1, (v >> 8) & 255);
     bytebuffer_patch(dcod, pos + 2, (v >> 16) & 255);
     bytebuffer_patch(dcod, pos + 3, (v >> 24) & 255);
+}
+
+void anota_lista(int cual, int pos)
+{
+    int r;
+    if (cual < 0)
+    {
+        errores_rt = errores_rt + 1;
+        return;
+    }
+    if (cual > 13)
+    {
+        errores_rt = errores_rt + 1;
+        return;
+    }
+    r = 0;
+    if (cual == 0)
+    {
+        r = da_add(dpl_buf, pos);
+        if (r >= 0)
+        {
+            npl_buf = npl_buf + 1;
+        }
+    }
+    if (cual == 1)
+    {
+        r = da_add(dpl_cnt, pos);
+        if (r >= 0)
+        {
+            npl_cnt = npl_cnt + 1;
+        }
+    }
+    if (cual == 2)
+    {
+        r = da_add(dpl_cab, pos);
+        if (r >= 0)
+        {
+            npl_cab = npl_cab + 1;
+        }
+    }
+    if (cual == 3)
+    {
+        r = da_add(dpl_vis, pos);
+        if (r >= 0)
+        {
+            npl_vis = npl_vis + 1;
+        }
+    }
+    if (cual == 4)
+    {
+        r = da_add(dpl_cur, pos);
+        if (r >= 0)
+        {
+            npl_cur = npl_cur + 1;
+        }
+    }
+    if (cual == 5)
+    {
+        r = da_add(dpl_top, pos);
+        if (r >= 0)
+        {
+            npl_top = npl_top + 1;
+        }
+    }
+    if (cual == 6)
+    {
+        r = da_add(dpl_alt, pos);
+        if (r >= 0)
+        {
+            npl_alt = npl_alt + 1;
+        }
+    }
+    if (cual == 7)
+    {
+        r = da_add(dpl_est, pos);
+        if (r >= 0)
+        {
+            npl_est = npl_est + 1;
+        }
+    }
+    if (cual == 8)
+    {
+        r = da_add(dpl_agr, pos);
+        if (r >= 0)
+        {
+            npl_agr = npl_agr + 1;
+        }
+    }
+    if (cual == 9)
+    {
+        r = da_add(dpl_men, pos);
+        if (r >= 0)
+        {
+            npl_men = npl_men + 1;
+        }
+    }
+    if (cual == 10)
+    {
+        r = da_add(dpl_sel, pos);
+        if (r >= 0)
+        {
+            npl_sel = npl_sel + 1;
+        }
+    }
+    if (cual == 11)
+    {
+        r = da_add(dpl_len, pos);
+        if (r >= 0)
+        {
+            npl_len = npl_len + 1;
+        }
+    }
+    if (cual == 12)
+    {
+        r = da_add(dpl_clip, pos);
+        if (r >= 0)
+        {
+            npl_clip = npl_clip + 1;
+        }
+    }
+    if (cual == 13)
+    {
+        r = da_add(dpl_txt, pos);
+        if (r >= 0)
+        {
+            npl_txt = npl_txt + 1;
+        }
+    }
+    if (r < 0)
+    {
+        errores_rt = errores_rt + 1;
+    }
 }
 
 void em_mov_eax_imm(int v)
@@ -1273,6 +1433,19 @@ void em_cmp_ah_imm8(int v)
     em_byte(v);
 }
 
+void em_and_eax_imm(int v)
+{
+    em_byte(37);
+    em_dword(v);
+}
+
+void em_add_eax_imm(int v)
+{
+    em_byte(129);
+    em_byte(192);
+    em_dword(v);
+}
+
 int em_je_hueco()
 {
     em_byte(15);
@@ -1284,6 +1457,20 @@ int em_jne_hueco()
 {
     em_byte(15);
     em_byte(133);
+    return em_hueco();
+}
+
+int em_jle_hueco()
+{
+    em_byte(15);
+    em_byte(142);
+    return em_hueco();
+}
+
+int em_jbe_hueco()
+{
+    em_byte(15);
+    em_byte(134);
     return em_hueco();
 }
 
@@ -1314,6 +1501,54 @@ void em_hueco_cero(int n)
         i = i + 1;
     }
 }
+int em_mov_eax_mem(int cual)
+{
+    int pos;
+    em_byte(161);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_mov_ebx_mem(int cual)
+{
+    int pos;
+    em_byte(139);
+    em_byte(29);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_mov_mem_eax(int cual)
+{
+    int pos;
+    em_byte(137);
+    em_byte(5);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_sub_eax_mem(int cual)
+{
+    int pos;
+    em_byte(43);
+    em_byte(5);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
+
+int em_add_eax_mem(int cual)
+{
+    int pos;
+    em_byte(3);
+    em_byte(5);
+    pos = em_hueco();
+    anota_lista(cual, pos);
+    return pos;
+}
 
 // ============================================================
 // REGISTRO DE PARCHES INTERNOS.
@@ -1326,8 +1561,8 @@ void em_hueco_cero(int n)
 // devuelve el centinela -1). rellena_registro cierra
 // de una pasada todos los parches de una duena con
 // el rel32 del oraculo: destino - (posicion + 4).
-// En R-1 se cierra la duena 1; las demas pasadas
-// nacen con sus rebanadas.
+// En R-1 se cierra la duena 1 y en R-2 la duena
+// 2; las demas pasadas nacen con sus rebanadas.
 // ============================================================
 
 void registra_parche(int pos, int clase, int dueno)
@@ -1474,18 +1709,220 @@ void rellena_registro(int dueno)
 // oraculo en su orden de emision, con las regiones
 // aun no portadas como huecos de su tamano final.
 // Las direcciones dir_ se fijan al pasar y el Result
-// queda en los res_. La pasada interna de esta
-// rebanada cierra los parches de duena 1 (la
-// cabecera y la ventana entre si, incluido el CALL
-// de START a DRAW_WINDOW del Result); el JMP al
-// cuerpo principal no se registra: es la costura
-// con el backend y su hueco queda a cero.
+// queda en los res_. Las pasadas internas cierran
+// los parches de las duenas 1 y 2 (la cabecera y la
+// ventana entre si, incluido el CALL de START a
+// DRAW_WINDOW del Result, y las dos llamadas a
+// DIBUJA_LINEAS); el JMP al cuerpo principal no se
+// registra: es la costura con el backend y su hueco
+// queda a cero.
 // ============================================================
 
 void emite_salida()
 {
     em_mov_eax_imm(-1);
     em_int(64);
+}
+
+void emite_refresco()
+{
+    int p;
+    // begin redraw (funcion 12.1).
+    em_mov_eax_imm(12);
+    em_mov_reg_imm(187, 1);
+    em_int(64);
+    // La limpieza del area de texto (funcion 13):
+    // X = 30 con ancho 440 (hasta 470; la barra
+    // vive en 478 y no se toca), Y = 38 con alto
+    // 414, y el color negro de la funcion 0.
+    em_mov_eax_imm(13);
+    em_mov_reg_imm(187, 1966520);
+    em_mov_reg_imm(185, 2490782);
+    em_mov_reg_imm(186, 0);
+    em_int(64);
+    // call DIBUJA_LINEAS: se registra con duena 2 y
+    // la cierra la pasada de esta rebanada, como el
+    // oraculo devuelve ese parche de
+    // emitRefreshOutput a la pasada interna de
+    // emitGraphicsRuntime.
+    p = em_call_hueco();
+    registra_parche(p, 7, 2);
+    // call DIBUJA_EDIT y call DIBUJA_FILE: se
+    // registran con duenas 4 y 5; en el oraculo van
+    // a las listas editCall y fileCall, que la
+    // misma pasada rellena contra las rutinas de
+    // los menus.
+    p = em_call_hueco();
+    registra_parche(p, 9, 4);
+    p = em_call_hueco();
+    registra_parche(p, 10, 5);
+    // end redraw (funcion 12.2).
+    em_mov_eax_imm(12);
+    em_mov_reg_imm(187, 2);
+    em_int(64);
+    em_ret();
+}
+
+void emite_lineas()
+{
+    int p_sin_lineas;
+    int p_cabe;
+    int p_sin_sel;
+    int p_tinte;
+    int bucle;
+    int p_fin_bucle;
+    int p_otra;
+    int p;
+    // Preserva EBX, ESI y EDI.
+    em_byte(83);
+    em_byte(86);
+    em_byte(87);
+    // filas = lineCount - firstVisible.
+    em_mov_eax_mem(1);
+    em_sub_eax_mem(3);
+    // jle fin (no hay lineas visibles).
+    p_sin_lineas = em_jle_hueco();
+    // filas = min(filas, 41).
+    em_cmp_eax_imm(41);
+    p_cabe = em_jbe_hueco();
+    em_mov_eax_imm(41);
+    parche32(p_cabe, bytebuffer_get_size(dcod) - (p_cabe + 4));
+    // mov edi, eax (EDI = filas por dibujar).
+    em_byte(137);
+    em_byte(199);
+    // El tinte de la seleccion: con la seleccion
+    // activa, el area de las filas visibles se tine
+    // (funcion 13, X = 30, ancho 440, Y = 40, alto
+    // = filas * 10) antes de dibujar los textos.
+    // EAX aun guarda las filas.
+    em_mov_eax_mem(10);
+    em_cmp_eax_imm(0);
+    // je sinSeleccion.
+    p_sin_sel = em_je_hueco();
+    // mov edx, eax (EDX = filas, la copia del *10).
+    em_byte(137);
+    em_byte(194);
+    // shl eax, 3.
+    em_byte(193);
+    em_byte(224);
+    em_byte(3);
+    // add eax, edx (dos veces: *8 + *1 + *1 = *10).
+    em_byte(1);
+    em_byte(208);
+    em_byte(1);
+    em_byte(208);
+    // mov ecx, eax; add ecx, 40 << 16.
+    em_byte(137);
+    em_byte(193);
+    em_byte(129);
+    em_byte(193);
+    p_tinte = em_hueco();
+    parche32(p_tinte, 2621440);
+    em_mov_eax_imm(13);
+    em_mov_reg_imm(187, 1966520);
+    em_mov_reg_imm(186, 1589344);
+    em_int(64);
+    parche32(p_sin_sel, bytebuffer_get_size(dcod) - (p_sin_sel + 4));
+    // ranura inicial = (lineHead - lineCount +
+    // firstVisible) & 511.
+    em_mov_eax_mem(2);
+    em_sub_eax_mem(1);
+    em_add_eax_mem(3);
+    em_and_eax_imm(511);
+    // mov esi, eax (ESI = ranura actual).
+    em_byte(137);
+    em_byte(198);
+    // El estado del bucle pasa a la pila:
+    // [ESP] = filas restantes, [ESP + 4] = ranura.
+    // push esi (la ranura) / push edi (las filas).
+    em_byte(86);
+    em_byte(87);
+    // cursor de repintado = (35, 40).
+    em_mov_eax_imm(2293800);
+    em_mov_mem_eax(4);
+    bucle = bytebuffer_get_size(dcod);
+    // ¿filas restantes == 0? -> fin del bucle.
+    // mov eax, [esp].
+    em_byte(139);
+    em_byte(68);
+    em_byte(36);
+    em_byte(0);
+    em_cmp_eax_imm(0);
+    p_fin_bucle = em_je_hueco();
+    // EAX = ranura * 64 + base del buffer:
+    // mov eax, [esp + 4]; shl eax, 6; add eax,
+    // imm32 (la base, anotada en lineBuffer).
+    em_byte(139);
+    em_byte(68);
+    em_byte(36);
+    em_byte(4);
+    em_byte(193);
+    em_byte(224);
+    em_byte(6);
+    em_byte(5);
+    p = em_hueco();
+    anota_lista(0, p);
+    // mov edx, eax (EDX = la ranura en bytes).
+    em_byte(137);
+    em_byte(194);
+    // mov esi, [eax] (ESI = longitud de dibujo).
+    em_byte(139);
+    em_byte(48);
+    // add edx, 4 (EDX = el texto).
+    em_byte(131);
+    em_byte(194);
+    em_byte(4);
+    // EBX = cursor de repintado; ECX = el color.
+    em_mov_ebx_mem(4);
+    em_mov_reg_imm(185, -2130771969);
+    // Dibujar la linea (funcion 4).
+    em_mov_eax_imm(4);
+    em_int(64);
+    // El cursor de repintado solo baja: Y += 10.
+    em_mov_eax_mem(4);
+    em_add_eax_imm(10);
+    em_mov_mem_eax(4);
+    // ranura = (ranura + 1) & 511 (circular):
+    // mov eax, [esp + 4].
+    em_byte(139);
+    em_byte(68);
+    em_byte(36);
+    em_byte(4);
+    em_add_eax_imm(1);
+    em_and_eax_imm(511);
+    // mov [esp + 4], eax.
+    em_byte(137);
+    em_byte(68);
+    em_byte(36);
+    em_byte(4);
+    // filas--: mov eax, [esp]; dec eax;
+    // mov [esp], eax.
+    em_byte(139);
+    em_byte(68);
+    em_byte(36);
+    em_byte(0);
+    em_byte(72);
+    em_byte(137);
+    em_byte(68);
+    em_byte(36);
+    em_byte(0);
+    p_otra = em_jmp_hueco();
+    parche32(p_otra, bucle - (p_otra + 4));
+    parche32(p_fin_bucle, bytebuffer_get_size(dcod) - (p_fin_bucle + 4));
+    // add esp, 8 (soltar el estado del bucle).
+    em_byte(131);
+    em_byte(196);
+    em_byte(8);
+    parche32(p_sin_lineas, bytebuffer_get_size(dcod) - (p_sin_lineas + 4));
+    // La barra de desplazamiento cierra el dibujo:
+    // call BARRA, registrada con duena R-3.
+    p = em_call_hueco();
+    registra_parche(p, 8, 3);
+    // pop edi / pop esi / pop ebx.
+    em_byte(95);
+    em_byte(94);
+    em_byte(91);
+    em_ret();
 }
 
 void emite_grafico()
@@ -1610,14 +2047,14 @@ void emite_grafico()
     em_mov_reg_imm(187, 2);
     em_int(64);
     em_ret();
-    // REFRESCO: hueco de R-2. Su direccion es el
-    // refreshOutputAddress del Result.
+    // REFRESCO: portado en R-2. Su direccion es
+    // el refreshOutputAddress del Result.
     dir_refresco = bytebuffer_get_size(dcod);
     res_refresco = dir_refresco;
-    em_hueco_cero(tam_refresco);
-    // DIBUJO DE LINEAS: hueco de R-2.
+    emite_refresco();
+    // DIBUJO DE LINEAS: portado en R-2.
     dir_lineas = bytebuffer_get_size(dcod);
-    em_hueco_cero(tam_lineas);
+    emite_lineas();
     // BARRA: hueco de R-3.
     dir_barra = bytebuffer_get_size(dcod);
     em_hueco_cero(tam_barra);
@@ -1656,14 +2093,15 @@ void emite_grafico()
     em_hueco_cero(tam_isave);
     dir_iclose = bytebuffer_get_size(dcod);
     em_hueco_cero(tam_iclose);
-    // PASADA INTERNA DE R-1.
+    // PASADAS INTERNAS: la de R-1 y la de R-2.
     rellena_registro(1);
+    rellena_registro(2);
 }
 
 // ============================================================
 // SONDA DE LA REBANADA.
 //
-// Cinco bloques cerrados, en el orden de la
+// Ocho bloques cerrados, en el orden de la
 // corriente: (a) la emision hasta START — la cuenta
 // de bytes, los bytes y los dos campos del Result
 // que alli nacen; (b) el bucle y el despacho — la
@@ -1675,9 +2113,27 @@ void emite_grafico()
 // y los dos contadores de errores; (e) el registro
 // de huecos: la cuenta de regiones y, por region,
 // su direccion y su tamano, y el tamano total del
-// prefijo. Ningun bloque pasa de 512 valores: el
-// empaquetado en segmentos lo fija el plan de la
-// rebanada.
+// prefijo; (f) el cuerpo del REFRESCO — la cuenta y
+// sus bytes; (g) el cuerpo del DIBUJO DE LINEAS —
+// la cuenta y sus bytes; (h) la logica de visibles
+// en el modelo: cinco escenarios cerrados (el
+// historial vacio, menos de 41 lineas, 41 exactas
+// con la seleccion activa, mas de 41 con
+// firstVisible desplazado y el historial lleno con
+// la cabeza envuelta), cada uno con sus datos, las
+// filas que se dibujan, el alto del tinte y, por
+// fila, su ranura circular y su Y. Ningun bloque
+// pasa de 512 valores: el empaquetado en segmentos
+// lo fija el plan de la rebanada — dos segmentos:
+// el primero con los bloques (a) a (f), 510
+// valores, y el segundo con (g) y (h), 509. Como
+// el historial circular de la Konsole retiene 512
+// registros, cada corrida de la sonda imprime UN
+// segmento y se copia antes de correr el siguiente:
+// segmento_sonda lee el archivo SONDA.TXT de la
+// raiz de la imagen — si no esta o su primer byte
+// no es el digito 2, la corrida imprime el segmento
+// 1; si es el 2, imprime el segundo.
 // ============================================================
 
 void sonda_hasta_start()
@@ -1756,13 +2212,9 @@ void sonda_parches()
 
 void sonda_huecos()
 {
-    print_int(19);
+    print_int(17);
     print_int(dir_raton);
     print_int(tam_raton);
-    print_int(dir_refresco);
-    print_int(tam_refresco);
-    print_int(dir_lineas);
-    print_int(tam_lineas);
     print_int(dir_barra);
     print_int(tam_barra);
     print_int(dir_edit);
@@ -1798,12 +2250,111 @@ void sonda_huecos()
     print_int(bytebuffer_get_size(dcod));
 }
 
+void sonda_refresco()
+{
+    int i;
+    print_int(dir_lineas - dir_refresco);
+    i = dir_refresco;
+    while (i < dir_lineas)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+void sonda_lineas()
+{
+    int i;
+    print_int(dir_barra - dir_lineas);
+    i = dir_lineas;
+    while (i < dir_barra)
+    {
+        print_int(bytebuffer_get(dcod, i));
+        i = i + 1;
+    }
+}
+
+int filas_visibles(int lc, int fv)
+{
+    int f;
+    f = lc - fv;
+    if (f <= 0)
+    {
+        return 0;
+    }
+    if (f > 41)
+    {
+        f = 41;
+    }
+    return f;
+}
+
+int ranura_inicial(int lh, int lc, int fv)
+{
+    return (lh - lc + fv) & 511;
+}
+
+void sonda_escenario(int lc, int fv, int lh, int sel)
+{
+    int filas;
+    int alto;
+    int inicial;
+    int k;
+    filas = filas_visibles(lc, fv);
+    alto = 0;
+    if (sel != 0)
+    {
+        alto = filas * 10;
+    }
+    inicial = ranura_inicial(lh, lc, fv);
+    print_int(lc);
+    print_int(fv);
+    print_int(lh);
+    print_int(sel);
+    print_int(filas);
+    print_int(alto);
+    k = 0;
+    while (k < filas)
+    {
+        print_int((inicial + k) & 511);
+        print_int(40 + 10 * k);
+        k = k + 1;
+    }
+}
+
+void sonda_visibles()
+{
+    print_int(5);
+    sonda_escenario(0, 0, 0, 0);
+    sonda_escenario(5, 0, 5, 0);
+    sonda_escenario(41, 0, 41, 1);
+    sonda_escenario(100, 59, 100, 0);
+    sonda_escenario(512, 480, 10, 0);
+}
+
+int segmento_sonda()
+{
+    int datos[4];
+    int n;
+    n = file_read("SONDA.TXT", datos);
+    if (n < 1)
+    {
+        return 1;
+    }
+    if (datos[0] == 50)
+    {
+        return 2;
+    }
+    return 1;
+}
+
 int main()
 {
     int rs;
     int rf;
     int rc;
     int rb;
+    int seg;
     inicia_arena();
     rs = arena_create(256);
     region_source = rs;
@@ -1816,10 +2367,20 @@ int main()
     region_backend = rb;
     reinicia_rt();
     emite_grafico();
-    sonda_hasta_start();
-    sonda_bucle_despacho();
-    sonda_ventana();
-    sonda_parches();
-    sonda_huecos();
+    seg = segmento_sonda();
+    if (seg == 2)
+    {
+        sonda_lineas();
+        sonda_visibles();
+    }
+    if (seg != 2)
+    {
+        sonda_hasta_start();
+        sonda_bucle_despacho();
+        sonda_ventana();
+        sonda_parches();
+        sonda_huecos();
+        sonda_refresco();
+    }
     return 0;
 }
