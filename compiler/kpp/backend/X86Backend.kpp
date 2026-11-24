@@ -411,7 +411,9 @@ enum IROpcode
 // inicia_arena se parte en dos al dejar A y B de medir
 // lo mismo, y el comentario de tamanos de inicia_arena
 // dice los de esta pieza. Nada mas cambia: ni una
-// firma, ni una mecanica.
+// firma, ni una mecanica. B-10 anade un cuarto ajuste
+// declarado: el bloque B sube a 1048576 celdas, en el
+// comentario de tamanos de inicia_arena.
 // ============================================================
 
 // ============================================================
@@ -444,13 +446,24 @@ int region_output;
 // (Compiler) en el 2 (C), la 4 (Backend) en el 1 (B, su
 // segunda vida) y la 5 (Output) en el 0 (A, su segunda
 // vida). Los tamanos de bloque de esta pieza: A con
-// 1024 celdas, B con 32768, C con 512.
+// 1024 celdas, B con 1048576, C con 512. El cuarto
+// ajuste declarado es de B-10: el bloque B crece de
+// 32768 a 1048576 celdas porque la region del
+// backend ya no nace con la reserva fija de las
+// sondas: nace dimensionada por el programa que se
+// compila (capacidad_region, mas abajo), y el
+// bloque fisico tiene que admitir la mayor de esas
+// reservas; 1048576 admite el caso de estres de la
+// rebanada (L18 bloques: reserva 909946) y acusa en
+// arena_create si un programa mayor la supera, que
+// es la senal de subir el numero y recompilar, la
+// regla de capacidades crecibles por diseno.
 // ============================================================
 
 void inicia_arena()
 {
     int bloque_a[1024];
-    int bloque_b[32768];
+    int bloque_b[1048576];
     int bloque_c[512];
     int reg_bloque[6];
     int reg_reserva[6];
@@ -473,7 +486,7 @@ void inicia_arena()
         i = i + 1;
     }
     i = 0;
-    while (i < 32768)
+    while (i < 1048576)
     {
         bloque_b[i] = 0;
         i = i + 1;
@@ -500,7 +513,7 @@ void inicia_arena()
     plan_bloque[4] = 1;
     plan_bloque[5] = 0;
     tam_bloque[0] = 1024;
-    tam_bloque[1] = 32768;
+    tam_bloque[1] = 1048576;
     tam_bloque[2] = 512;
     i = 0;
     while (i < 3)
@@ -776,7 +789,7 @@ int arena_get_reserved(int arena)
 int celda_get(int bloque, int off)
 {
     int bloque_a[1024];
-    int bloque_b[32768];
+    int bloque_b[1048576];
     int bloque_c[512];
     int r;
     r = 0;
@@ -801,7 +814,7 @@ int celda_get(int bloque, int off)
 void celda_set(int bloque, int off, int v)
 {
     int bloque_a[1024];
-    int bloque_b[32768];
+    int bloque_b[1048576];
     int bloque_c[512];
     if (bloque == 0)
     {
@@ -4399,7 +4412,219 @@ void cierra_funcion()
     cierra_marco();
 }
 
+
+// ============================================================
+// LA NECESIDAD DE DATA Y LA CAPACIDAD DE LA REGION.
+//
+// datos_del_ir() calcula, sobre el IR ya registrado
+// y antes de que genera() emita nada, cuantos bytes
+// de DATA va a construir el paseo: simula sus
+// mismas pasadas de reserva (los Declare globales a
+// 4, los arreglos compartidos al maximo por fuente
+// con alias y sombras, las rutas de archivo, los
+// textos de StringConst) y suma lo fijo de
+// construye_datos (16 de los escalares del runtime,
+// 32768 del buffer de lineas, 28 de pulgar a
+// cliplen, 21516 del portapapeles, 84 del menu y 16
+// del titulo), el buffer de impresion entera (16,
+// si hay algun PrintInteger: la cota superior, el
+// paseo lo abre solo si alguna impresion lo usa) y,
+// si el IR usa archivos, el scratch de 65536 con
+// su alineacion exacta y los 25 de parametros.
+//
+// capacidad_region() convierte la necesidad en la
+// reserva con que se crea la region del backend
+// para este programa: la DATA exacta, una cota de
+// codigo de 96 celdas por instruccion y una cota
+// de estructuras de 32768 + 128 por instruccion,
+// con el margen x2 de la casa (la banda x1.4-x3.5
+// de las capacidades diferenciadas, 2026-11-20).
+// Sin memoria dinamica: la region nace con su
+// tamano, derivado del trabajo, y no crece.
+// ============================================================
+
+int datos_del_ir()
+{
+    int n;
+    int i;
+    int f;
+    int datos;
+    int src;
+    int pos;
+    int esta;
+    int io;
+    int fsrc[512];
+    int fmax[512];
+    int nf;
+    int varr[512];
+    int nv;
+    int rsrc[512];
+    int nr;
+    n = ndir;
+    nf = 0;
+    i = dir_nglob;
+    while (i < n)
+    {
+        if (da_get(dir_op, i) == 4)
+        {
+            src = fuente_de(da_get(dir_nom, i));
+            pos = -1;
+            f = 0;
+            while (f < nf)
+            {
+                if (fsrc[f] == src)
+                {
+                    pos = f;
+                }
+                f = f + 1;
+            }
+            if (pos < 0)
+            {
+                fsrc[nf] = src;
+                fmax[nf] = da_get(dir_val, i);
+                nf = nf + 1;
+            }
+            else
+            {
+                if (da_get(dir_val, i) > fmax[pos])
+                {
+                    fmax[pos] = da_get(dir_val, i);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    datos = 0;
+    i = 0;
+    while (i < dir_nglob)
+    {
+        if (da_get(dir_op, i) == 4)
+        {
+            datos = datos + 4;
+        }
+        i = i + 1;
+    }
+    nv = 0;
+    nr = 0;
+    i = dir_nglob;
+    while (i < n)
+    {
+        if (da_get(dir_op, i) == 0)
+        {
+            nv = 0;
+        }
+        if (da_get(dir_op, i) == 4)
+        {
+            if (da_get(dir_val, i) > 0)
+            {
+                src = fuente_de(da_get(dir_nom, i));
+                esta = 0;
+                f = 0;
+                while (f < nv)
+                {
+                    if (varr[f] == src)
+                    {
+                        esta = 1;
+                    }
+                    f = f + 1;
+                }
+                if (esta == 1)
+                {
+                    datos = datos + 4 * da_get(dir_val, i);
+                }
+                else
+                {
+                    varr[nv] = src;
+                    nv = nv + 1;
+                    esta = 0;
+                    f = 0;
+                    while (f < nr)
+                    {
+                        if (rsrc[f] == src)
+                        {
+                            esta = 1;
+                        }
+                        f = f + 1;
+                    }
+                    if (esta == 0)
+                    {
+                        rsrc[nr] = src;
+                        nr = nr + 1;
+                        f = 0;
+                        while (f < nf)
+                        {
+                            if (fsrc[f] == src)
+                            {
+                                datos = datos + 4 * fmax[f];
+                            }
+                            f = f + 1;
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    io = 0;
+    i = dir_nglob;
+    while (i < n)
+    {
+        if (da_get(dir_op, i) == 9)
+        {
+            io = 1;
+            datos = datos + texto_len(da_get(dir_nom, i)) + 1;
+        }
+        if (da_get(dir_op, i) == 10)
+        {
+            io = 1;
+            datos = datos + texto_len(da_get(dir_nom, i)) + 1;
+        }
+        i = i + 1;
+    }
+    i = dir_nglob;
+    while (i < n)
+    {
+        if (da_get(dir_op, i) == 3)
+        {
+            datos = datos + texto_len(da_get(dir_nom, i)) + 1;
+        }
+        i = i + 1;
+    }
+    datos = datos + 54428;
+    esta = 0;
+    i = 0;
+    while (i < n)
+    {
+        if (da_get(dir_op, i) == 42)
+        {
+            esta = 1;
+        }
+        i = i + 1;
+    }
+    if (esta == 1)
+    {
+        datos = datos + 16;
+    }
+    if (io == 1)
+    {
+        datos = datos + 65536;
+        datos = datos + (4 - datos % 4) % 4;
+        datos = datos + 25;
+    }
+    return datos;
+}
+
+int capacidad_region()
+{
+    int d;
+    int n;
+    d = datos_del_ir();
+    n = ndir;
+    return (d + 96 * n + 32768 + 128 * n) * 2;
+}
+
 void genera()
+
 {
     int i;
     int op;
@@ -6717,6 +6942,21 @@ void mundo2()
     arena_create(256);
     arena_destroy(rf);
     rb = arena_create(32768);
+    region_backend = rb;
+    reinicia_back();
+    reinicia_ir();
+}
+
+void mundo_trabajo(int cap)
+{
+    int rf;
+    int rb;
+    inicia_arena();
+    arena_create(256);
+    rf = arena_create(256);
+    arena_create(256);
+    arena_destroy(rf);
+    rb = arena_create(cap);
     region_backend = rb;
     reinicia_back();
     reinicia_ir();
@@ -9236,6 +9476,500 @@ void sonda_errores_nativas()
     imprime_cierre();
 }
 
+
+// ============================================================
+// SONDAS DE LA REPARACION (B-10).
+//
+// Los IR reales de dos programas, volcados por el
+// frente de Stage 0 y registrados con la disciplina
+// de la piscina de la casa (el operando combinado
+// de cada binaria como un tramo, las partes por
+// subcadena): L00, el minimo, y L18 bloques, el
+// caso de estres (un arreglo de 70000 y E/S de
+// archivos). Cada sonda mide primero la capacidad
+// en un mundo de sondeo y luego corre genera() en
+// el mundo de trabajo, creado con esa capacidad;
+// el cierre imprime la DATA construida y la sonda
+// anade la capacidad calculada, la reserva y el
+// uso de la region y los dos contadores de error.
+// ============================================================
+
+void carga_ir_l00()
+{
+    int refs[1];
+    int ini;
+    ini = string_pool_add_char(dpool, 109);
+    string_pool_add_char(dpool, 97);
+    string_pool_add_char(dpool, 105);
+    string_pool_add_char(dpool, 110);
+    refs[0] = ini * 128 + 4;
+    registra_ir(0, refs[0], 0, 0, 0);
+    registra_ir(40, 0, 0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+}
+
+void sonda_b10_l00()
+{
+    int cap;
+    mundo2();
+    carga_ir_l00();
+    cap = capacidad_region();
+    mundo_trabajo(cap);
+    carga_ir_l00();
+    genera();
+    imprime_cierre();
+    print_int(cap);
+    print_int(arena_get_reserved(region_backend));
+    print_int(arena_get_used(region_backend));
+    print_int(errores_back);
+    print_int(errores_arena);
+}
+
+void carga_ir_l18()
+{
+    int refs[79];
+    int ini;
+    ini = string_pool_add_char(dpool, 109);
+    string_pool_add_char(dpool, 97);
+    string_pool_add_char(dpool, 105);
+    string_pool_add_char(dpool, 110);
+    refs[0] = ini * 128 + 4;
+    ini = string_pool_add_char(dpool, 100);
+    string_pool_add_char(dpool, 97);
+    string_pool_add_char(dpool, 116);
+    string_pool_add_char(dpool, 111);
+    string_pool_add_char(dpool, 115);
+    string_pool_add_char(dpool, 64);
+    string_pool_add_char(dpool, 48);
+    refs[1] = ini * 128 + 7;
+    ini = string_pool_add_char(dpool, 105);
+    string_pool_add_char(dpool, 64);
+    string_pool_add_char(dpool, 49);
+    refs[2] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 48);
+    refs[3] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 115);
+    string_pool_add_char(dpool, 117);
+    string_pool_add_char(dpool, 109);
+    string_pool_add_char(dpool, 97);
+    string_pool_add_char(dpool, 64);
+    string_pool_add_char(dpool, 50);
+    refs[4] = ini * 128 + 6;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    refs[5] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 48);
+    refs[6] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    refs[7] = ini * 128 + 2;
+    refs[8] = ini * 128 + 6;
+    refs[9] = (ini + 4) * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    refs[10] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 49);
+    refs[11] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 53);
+    refs[12] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 54);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 55);
+    refs[13] = ini * 128 + 2;
+    refs[14] = ini * 128 + 6;
+    refs[15] = (ini + 4) * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 56);
+    refs[16] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 57);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 49);
+    refs[17] = ini * 128 + 2;
+    refs[18] = ini * 128 + 7;
+    refs[19] = (ini + 4) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 48);
+    refs[20] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 50);
+    refs[21] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 52);
+    refs[22] = ini * 128 + 3;
+    refs[23] = ini * 128 + 8;
+    refs[24] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 53);
+    refs[25] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 119);
+    string_pool_add_char(dpool, 114);
+    string_pool_add_char(dpool, 105);
+    string_pool_add_char(dpool, 116);
+    string_pool_add_char(dpool, 101);
+    string_pool_add_char(dpool, 95);
+    string_pool_add_char(dpool, 114);
+    string_pool_add_char(dpool, 101);
+    string_pool_add_char(dpool, 115);
+    string_pool_add_char(dpool, 117);
+    string_pool_add_char(dpool, 108);
+    string_pool_add_char(dpool, 116);
+    string_pool_add_char(dpool, 64);
+    string_pool_add_char(dpool, 51);
+    refs[26] = ini * 128 + 14;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 54);
+    refs[27] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 66);
+    string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 79);
+    string_pool_add_char(dpool, 81);
+    string_pool_add_char(dpool, 85);
+    string_pool_add_char(dpool, 69);
+    string_pool_add_char(dpool, 83);
+    string_pool_add_char(dpool, 46);
+    string_pool_add_char(dpool, 84);
+    string_pool_add_char(dpool, 88);
+    string_pool_add_char(dpool, 84);
+    refs[28] = ini * 128 + 11;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 55);
+    refs[29] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 56);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 57);
+    refs[30] = ini * 128 + 3;
+    refs[31] = ini * 128 + 8;
+    refs[32] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 48);
+    refs[33] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 50);
+    refs[34] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 49);
+    refs[35] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 50);
+    refs[36] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 52);
+    refs[37] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 52);
+    refs[38] = ini * 128 + 3;
+    refs[39] = ini * 128 + 8;
+    refs[40] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 53);
+    refs[41] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 53);
+    refs[42] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 54);
+    refs[43] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 55);
+    refs[44] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 56);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 57);
+    refs[45] = ini * 128 + 3;
+    refs[46] = ini * 128 + 8;
+    refs[47] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 48);
+    refs[48] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 99);
+    string_pool_add_char(dpool, 111);
+    string_pool_add_char(dpool, 117);
+    string_pool_add_char(dpool, 110);
+    string_pool_add_char(dpool, 116);
+    string_pool_add_char(dpool, 64);
+    string_pool_add_char(dpool, 52);
+    refs[49] = ini * 128 + 7;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 49);
+    refs[50] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 51);
+    refs[51] = ini * 128 + 3;
+    refs[52] = ini * 128 + 8;
+    refs[53] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 52);
+    refs[54] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 54);
+    refs[55] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 53);
+    refs[56] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 54);
+    refs[57] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 115);
+    string_pool_add_char(dpool, 117);
+    string_pool_add_char(dpool, 109);
+    string_pool_add_char(dpool, 97);
+    string_pool_add_char(dpool, 50);
+    string_pool_add_char(dpool, 64);
+    string_pool_add_char(dpool, 53);
+    refs[58] = ini * 128 + 7;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 55);
+    refs[59] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 56);
+    refs[60] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 56);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 51);
+    string_pool_add_char(dpool, 57);
+    refs[61] = ini * 128 + 3;
+    refs[62] = ini * 128 + 8;
+    refs[63] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 48);
+    refs[64] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 76);
+    string_pool_add_char(dpool, 57);
+    refs[65] = ini * 128 + 2;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 49);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 51);
+    refs[66] = ini * 128 + 3;
+    refs[67] = ini * 128 + 8;
+    refs[68] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 50);
+    refs[69] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 52);
+    refs[70] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 53);
+    string_pool_add_char(dpool, 44);
+    string_pool_add_char(dpool, 32);
+    string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 54);
+    refs[71] = ini * 128 + 3;
+    refs[72] = ini * 128 + 8;
+    refs[73] = (ini + 5) * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 55);
+    refs[74] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 56);
+    refs[75] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 52);
+    string_pool_add_char(dpool, 57);
+    refs[76] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 53);
+    string_pool_add_char(dpool, 48);
+    refs[77] = ini * 128 + 3;
+    ini = string_pool_add_char(dpool, 37);
+    string_pool_add_char(dpool, 53);
+    string_pool_add_char(dpool, 49);
+    refs[78] = ini * 128 + 3;
+    registra_ir(0, refs[0], 0, 0, 0);
+    registra_ir(4, refs[1], 0, 0, 70000);
+    registra_ir(4, refs[2], 0, 0, 0);
+    registra_ir(2, 0, 0, refs[3], 0);
+    registra_ir(5, refs[2], refs[3], 0, 0);
+    registra_ir(4, refs[4], 0, 0, 0);
+    registra_ir(2, 0, 0, refs[5], 0);
+    registra_ir(5, refs[4], refs[5], 0, 0);
+    registra_ir(53, refs[6], 0, 0, 0);
+    registra_ir(6, refs[2], 0, refs[7], 0);
+    registra_ir(2, 0, 0, refs[9], 70000);
+    registra_ir(46, 0, refs[8], refs[10], 0);
+    registra_ir(55, refs[11], refs[10], 0, 0);
+    registra_ir(6, refs[2], 0, refs[12], 0);
+    registra_ir(6, refs[2], 0, refs[13], 0);
+    registra_ir(2, 0, 0, refs[15], 251);
+    registra_ir(15, 0, refs[14], refs[16], 0);
+    registra_ir(8, refs[1], refs[12], refs[16], 0);
+    registra_ir(6, refs[4], 0, refs[17], 0);
+    registra_ir(6, refs[2], 0, refs[20], 0);
+    registra_ir(7, refs[1], refs[20], refs[19], 0);
+    registra_ir(11, 0, refs[18], refs[21], 0);
+    registra_ir(5, refs[4], refs[21], 0, 0);
+    registra_ir(6, refs[2], 0, refs[22], 0);
+    registra_ir(2, 0, 0, refs[24], 1);
+    registra_ir(11, 0, refs[23], refs[25], 0);
+    registra_ir(5, refs[2], refs[25], 0, 0);
+    registra_ir(54, refs[6], 0, 0, 0);
+    registra_ir(53, refs[11], 0, 0, 0);
+    registra_ir(4, refs[26], 0, 0, 0);
+    registra_ir(2, 0, 0, refs[27], 70000);
+    registra_ir(10, refs[28], refs[1], refs[29], 70000);
+    registra_aux(refs[27]);
+    registra_ir(5, refs[26], refs[29], 0, 0);
+    registra_ir(6, refs[26], 0, refs[30], 0);
+    registra_ir(2, 0, 0, refs[32], 0);
+    registra_ir(45, 0, refs[31], refs[33], 0);
+    registra_ir(55, refs[34], refs[33], 0, 0);
+    registra_ir(6, refs[26], 0, refs[35], 0);
+    registra_ir(42, 0, refs[35], 0, 0);
+    registra_ir(40, 0, 0, 0, 1);
+    registra_ir(53, refs[34], 0, 0, 0);
+    registra_ir(2, 0, 0, refs[36], 0);
+    registra_ir(5, refs[2], refs[36], 0, 0);
+    registra_ir(53, refs[37], 0, 0, 0);
+    registra_ir(6, refs[2], 0, refs[38], 0);
+    registra_ir(2, 0, 0, refs[40], 70000);
+    registra_ir(46, 0, refs[39], refs[41], 0);
+    registra_ir(55, refs[42], refs[41], 0, 0);
+    registra_ir(6, refs[2], 0, refs[43], 0);
+    registra_ir(2, 0, 0, refs[44], 0);
+    registra_ir(8, refs[1], refs[43], refs[44], 0);
+    registra_ir(6, refs[2], 0, refs[45], 0);
+    registra_ir(2, 0, 0, refs[47], 1);
+    registra_ir(11, 0, refs[46], refs[48], 0);
+    registra_ir(5, refs[2], refs[48], 0, 0);
+    registra_ir(54, refs[37], 0, 0, 0);
+    registra_ir(53, refs[42], 0, 0, 0);
+    registra_ir(4, refs[49], 0, 0, 0);
+    registra_ir(9, refs[28], refs[1], refs[50], 70000);
+    registra_ir(5, refs[49], refs[50], 0, 0);
+    registra_ir(6, refs[49], 0, refs[51], 0);
+    registra_ir(2, 0, 0, refs[53], 0);
+    registra_ir(46, 0, refs[52], refs[54], 0);
+    registra_ir(55, refs[55], refs[54], 0, 0);
+    registra_ir(6, refs[49], 0, refs[56], 0);
+    registra_ir(42, 0, refs[56], 0, 0);
+    registra_ir(40, 0, 0, 0, 2);
+    registra_ir(53, refs[55], 0, 0, 0);
+    registra_ir(2, 0, 0, refs[57], 0);
+    registra_ir(5, refs[2], refs[57], 0, 0);
+    registra_ir(4, refs[58], 0, 0, 0);
+    registra_ir(2, 0, 0, refs[59], 0);
+    registra_ir(5, refs[58], refs[59], 0, 0);
+    registra_ir(53, refs[60], 0, 0, 0);
+    registra_ir(6, refs[2], 0, refs[61], 0);
+    registra_ir(2, 0, 0, refs[63], 70000);
+    registra_ir(46, 0, refs[62], refs[64], 0);
+    registra_ir(55, refs[65], refs[64], 0, 0);
+    registra_ir(6, refs[58], 0, refs[66], 0);
+    registra_ir(6, refs[2], 0, refs[69], 0);
+    registra_ir(7, refs[1], refs[69], refs[68], 0);
+    registra_ir(11, 0, refs[67], refs[70], 0);
+    registra_ir(5, refs[58], refs[70], 0, 0);
+    registra_ir(6, refs[2], 0, refs[71], 0);
+    registra_ir(2, 0, 0, refs[73], 1);
+    registra_ir(11, 0, refs[72], refs[74], 0);
+    registra_ir(5, refs[2], refs[74], 0, 0);
+    registra_ir(54, refs[60], 0, 0, 0);
+    registra_ir(53, refs[65], 0, 0, 0);
+    registra_ir(6, refs[26], 0, refs[75], 0);
+    registra_ir(42, 0, refs[75], 0, 0);
+    registra_ir(6, refs[49], 0, refs[76], 0);
+    registra_ir(42, 0, refs[76], 0, 0);
+    registra_ir(6, refs[4], 0, refs[77], 0);
+    registra_ir(42, 0, refs[77], 0, 0);
+    registra_ir(6, refs[58], 0, refs[78], 0);
+    registra_ir(42, 0, refs[78], 0, 0);
+    registra_ir(40, 0, 0, 0, 0);
+    registra_ir(1, 0, 0, 0, 0);
+}
+
+void sonda_b10_l18()
+{
+    int cap;
+    mundo2();
+    carga_ir_l18();
+    cap = capacidad_region();
+    mundo_trabajo(cap);
+    carga_ir_l18();
+    genera();
+    imprime_cierre();
+    print_int(cap);
+    print_int(arena_get_reserved(region_backend));
+    print_int(arena_get_used(region_backend));
+    print_int(errores_back);
+    print_int(errores_arena);
+}
+
 int main()
 {
     sonda_backend_b1();
@@ -9301,5 +10035,7 @@ int main()
     sonda_archivo();
     sonda_completo();
     sonda_errores_nativas();
+    sonda_b10_l00();
+    sonda_b10_l18();
     return 0;
 }
