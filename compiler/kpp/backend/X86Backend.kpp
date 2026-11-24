@@ -3643,7 +3643,7 @@ int em_print_integer_rt()
     pos_buf = bytebuffer_get_size(dcod) + 1;
     em_mov_edi_imm(0);
     em_byte(79);
-    em_byte(199);
+    em_byte(198);
     em_byte(7);
     em_byte(0);
     em_byte(49);
@@ -3678,7 +3678,7 @@ int em_print_integer_rt()
     p_fincero = em_jmp_hueco();
     parche_rel(p_cero, bytebuffer_get_size(dcod));
     em_byte(79);
-    em_byte(199);
+    em_byte(198);
     em_byte(7);
     em_byte(48);
     parche_rel(p_conv, conv);
@@ -3688,7 +3688,7 @@ int em_print_integer_rt()
     em_byte(0);
     p_sinmenos = em_je_hueco();
     em_byte(79);
-    em_byte(199);
+    em_byte(198);
     em_byte(7);
     em_byte(45);
     parche_rel(p_sinmenos, bytebuffer_get_size(dcod));
