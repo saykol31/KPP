@@ -16,7 +16,7 @@ system forked from MenuetOS. It translates `.kpp` source files into
 flat native KolibriOS executables (MENUET01 header): no interpreter,
 no virtual machine, straight from source to x86 binary. Stage 0,
 written in C++, is complete — its own lexer, parser, semantic
-analyzer, IR, x86 backend and executable writer, with an 89-test
+analyzer, IR, x86 backend and executable writer, with a 90-test
 suite fully green. Stage 1 is the self-hosting rewrite in K++
 itself: its lexer already compiles with Stage 0 and has run on
 real KolibriOS (field-approved 2026-11-11). The language manual
@@ -28,7 +28,7 @@ real KolibriOS (field-approved 2026-11-11). The language manual
 ## Estado
 
 - **Stage 0 — completo.** El compilador escrito en C++ está
-  consolidado y su batería pasa entera: 76 positivos,
+  consolidado y su batería pasa entera: 77 positivos,
   13 negativos, 0 fallos.
 - **Stage 1 — en curso.** El compilador reescrito en el propio
   K++. Pieza 1, el lexer, está en `compiler/kpp/lexer/`:
