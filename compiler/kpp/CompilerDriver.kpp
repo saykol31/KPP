@@ -1,0 +1,7373 @@
+// ============================================================
+// CompilerDriver.kpp — Stage 1, el DRIVER del compilador.
+//
+// Rebanada D-1 (2026-11-23): el nacimiento del CompilerDriver.
+// Un solo programa que unifica las cuatro piezas delanteras
+// selladas — Lexer, Parser, SemanticAnalyzer, IRGenerator —
+// bajo un main orquestador: lee FUENTE.KPP, corre las cuatro
+// etapas en el orden de src/main.cpp de Stage 0 y escribe el
+// IR en IR.TXT, en el formato exacto del imprime_ir de la
+// pieza IRGenerator (el que el Ensamblador de E-1 consume).
+//
+// REQUISITO DE NACIMIENTO: la propagacion de errores de
+// capacidad. Tras cada etapa el Driver comprueba los
+// contadores de esa pieza y los de la arena; si alguno es
+// distinto de cero, la cadena se detiene ahi, lo imprime
+// (etapa y contadores) y NO escribe el IR. Cada pieza acusa
+// en su contador: el Driver es quien escucha.
+//
+// La unificacion sigue el patron de E-1: biblioteca de apoyo
+// una sola vez, funciones reales trasplantadas byte a byte,
+// mains sonda y cargadores descartados. Las diferencias
+// declaradas con las piezas selladas son solo estas:
+//   D1  La biblioteca nace con los maximos por bloque de las
+//       cuatro piezas (A 1024, B 8192, C 131072): bloque_b
+//       pasa de 1024 a 8192 en inicia_arena, celda_get y
+//       celda_set de la copia del IRGenerator.
+//   D2  El Lexer entra por su copia en cadena (la escanea del
+//       Parser: mismo algoritmo sellado, almacenamiento en
+//       fuente[] y tok_*[] en vez de bfuente y las dt_*).
+//   D3  El enum TokenType es el del Parser (46 miembros); el
+//       del SA (41) es su prefijo exacto y no se trasplanta.
+//   D4  mismo_texto existe en tres piezas con el mismo codigo
+//       (solo difieren los comentarios): se conserva una.
+//   D5  es_file_read, es_file_write y es_void existen en el SA
+//       y en el IRGenerator con la misma semantica (variantes
+//       de estilo): se conserva una copia.
+//   D6  es_campo es DOS funciones distintas con un nombre: la
+//       del SA (sobre un nodo) se queda; la del IRGenerator
+//       (sobre una sentencia) se renombra es_campo_gen.
+//   D7  sale_ambito es DOS funciones distintas con un nombre:
+//       la del SA (su pila de simbolos) se queda; la del
+//       IRGenerator (su registro de variables) se renombra
+//       sale_ambito_gen.
+//   D8  Fuera: los mains sonda, los cargadores de tablas y
+//       los ayudantes de sonda de las cuatro piezas.
+//   D10 tok_count y nnodos se declaran en el bloque de
+//       estado de cada pieza (son los escalares del contrato
+//       compartido): en la union se conserva una sola
+//       declaracion, la del Parser.
+//   D9  Codigo nuevo del Driver: el puente de nodos (de las
+//       tablas DynamicArray del Parser a los arreglos planos
+//       del contrato AST que leen el SA y el IRGenerator),
+//       el escritor de IR a archivo y la vigilancia entre
+//       etapas. El escritor reproduce el recorrido de
+//       imprime_ir; su tabla de nombres de opcode se genera
+//       mecanicamente de imprime_op. Como el Driver no
+//       escribe IR cuando errores_ir acusa, el archivo nunca
+//       lleva el errores_ir final que imprime_ir anade.
+//
+// Techos de la cadena tal como quedo sellada (se acusan, no
+// se corrigen en esta rebanada): la fuente cabe en 1024
+// bytes, la tabla de tokens en 256 y los arreglos de nodos
+// del contrato en 256; el puente acusa si nnodos pasa de 256.
+// ============================================================
+
+// Tabla de tokens: el enum TokenType de include/kpp/Token.hpp
+// (Stage 0) traducido 1:1. Los valores salen del ORDEN de
+// declaracion (0, 1, 2, ...), igual que en C++.
+// CONTRATO: el orden es sagrado. Un token nuevo va AL FINAL,
+// nunca en el medio — mover un miembro renumera los que
+// siguen y rompe la correspondencia con el Lexer y con
+// EXPECTED.txt. Acceso con ambito: TokenType::KwIf.
+
+enum TokenType
+{
+    // CONTROL
+    EndOfFile,
+
+    // LITERALES / IDENTIFICADORES
+    Identifier,
+    Number,
+    String,
+
+    // TIPOS / PALABRAS CLAVE
+    KwInt,
+    KwString,
+    KwStruct,
+    KwEnum,
+    KwReturn,
+    KwPrint,
+    KwIf,
+    KwElse,
+    KwWhile,
+
+    // ASIGNACION
+    Assign,
+
+    // OPERADORES ARITMETICOS
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+
+    // POTENCIA / RAIZ
+    Power,
+
+    // COMPARACION
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+
+    // LOGICOS
+    LogicalAnd,
+    LogicalOr,
+    LogicalNot,
+
+    // PARENTESIS / BLOQUES
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+
+    // SEPARADORES
+    Comma,
+    Semicolon,
+    ColonColon,
+    Dot,
+
+    // AMPLIACIONES (al final, nunca en medio)
+    KwVoid,
+    KwBreak,
+    KwFor,
+    BitwiseAnd,
+    BitwiseOr,
+    ShiftLeft,
+    ShiftRight
+};
+
+// Tabla de clases de nodo: copia IDENTICA del enum de
+// SemanticAnalyzer.kpp (contrato entre emisor y consumidor).
+// El orden lo fija aquella lista; un nodo nuevo va AL FINAL.
+
+enum NodeKind
+{
+    // DECLARACIONES
+    Program,
+    FunctionDeclaration,
+    StructDeclaration,
+    EnumDeclaration,
+
+    // SENTENCIAS
+    Block,
+    VariableDeclaration,
+    AssignmentStatement,
+    IfStatement,
+    WhileStatement,
+    ReturnStatement,
+    PrintStatement,
+    PrintIntegerStatement,
+
+    // EXPRESIONES
+    IntegerLiteral,
+    StringLiteral,
+    VariableExpression,
+    ArrayAccessExpression,
+    CallExpression,
+    BinaryExpression,
+
+    // AMPLIACIONES (al final, nunca en medio)
+    CallStatement,
+    BreakStatement,
+    ForStatement
+};
+
+enum IROpcode
+{
+    // ESTRUCTURA DEL PROGRAMA
+    FunctionBegin,
+    FunctionEnd,
+
+    // CONSTANTES
+    Const,
+    StringConst,
+
+    // VARIABLES Y MEMORIA
+    Declare,
+    Store,
+    Load,
+    ArrayLoad,
+    ArrayStore,
+
+    // FILE I/O
+    FileRead,
+    FileWrite,
+
+    // ARITMETICA BASICA
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+
+    // POTENCIAS Y RAICES
+    Pow,
+    Sqrt,
+
+    // LOGARITMOS Y EXPONENCIALES
+    Log,
+    Log10,
+    Exp,
+
+    // TRIGONOMETRIA
+    Sin,
+    Cos,
+    Tan,
+    Cot,
+    Sec,
+    Csc,
+
+    // TRIGONOMETRIA INVERSA
+    Asin,
+    Acos,
+    Atan,
+
+    // FUNCIONES MATEMATICAS
+    Abs,
+    Floor,
+    Ceil,
+    Round,
+    Min,
+    Max,
+
+    // MATEMATICA AVANZADA
+    Factorial,
+    Sum,
+    Integral,
+
+    // FUNCIONES
+    Call,
+    Return,
+
+    // SALIDA
+    Print,
+    PrintInteger,
+    PrintFloat,
+
+    // COMPARACIONES
+    CompareEqual,
+    CompareNotEqual,
+    CompareLess,
+    CompareLessEqual,
+    CompareGreater,
+    CompareGreaterEqual,
+
+    // LOGICA
+    LogicalAnd,
+    LogicalOr,
+    LogicalNot,
+
+    // CONTROL DE FLUJO
+    Label,
+    Jump,
+    JumpIfZero,
+    JumpIfNotZero,
+
+    // BITS (Ampliacion 4, al final)
+    BitwiseAnd,
+    BitwiseOr,
+    ShiftLeft,
+    ShiftRight
+};
+
+// ============================================================
+// LA BIBLIOTECA ARENA, INCORPORADA.
+//
+// K++ no tiene includes: un archivo es un programa, y
+// las piezas se componen por copia identica, como los
+// enum que emisor y consumidor se reparten. Lo que
+// sigue es la biblioteca de M-0 (compiler/kpp/runtime/
+// Arena.kpp, sellada en campo 108/108) sin su sonda ni
+// su main, con los ajustes de dimension para esta
+// pieza, declarados: el bloque C se declara a 131072
+// celdas (la reserva de CompilerArena de esta pieza;
+// en la biblioteca de M-0 era de 512, dimension de su
+// sonda), el bucle de cero de ese bloque llega a
+// 131072, la tabla tam_bloque da C a 131072 y el
+// comentario de tamanos dice los de esta pieza. El
+// bloque C es el mayor de las piezas migradas porque
+// aqui viven el IR y la piscina: el mundo sellado mas
+// grande usa 18176 celdas y el movimiento de
+// crecimiento de la sonda, 73472. Nada mas cambia: ni
+// una firma, ni una mecanica.
+// ============================================================
+
+// ============================================================
+// ESTADO COMPARTIDO.
+//
+// Los contadores de la biblioteca y los handles de las
+// cinco regiones, compartidos por nombre como en las
+// demas piezas. El driver guarda en region_source ..
+// region_output el handle de cada region al crearla.
+// errores_arena es la guarda comun: suma 1 por cada
+// operacion que la biblioteca no pudo cumplir, y ninguna
+// operacion fallida escribe fuera ni a medias.
+// ============================================================
+
+int errores_arena;
+int nest;
+int prov_nacq;
+int region_source;
+int region_frontend;
+int region_compiler;
+int region_backend;
+int region_output;
+
+// ============================================================
+// INICIA LA BIBLIOTECA.
+//
+// Pone a cero la contabilidad y los tres bloques, y
+// escribe el plan de solape: la region 1 (Source) vive
+// en el bloque 0 (A), la 2 (Frontend) en el 1 (B), la 3
+// (Compiler) en el 2 (C), la 4 (Backend) en el 1 (B, su
+// segunda vida) y la 5 (Output) en el 0 (A, su segunda
+// vida). Los tamanos de bloque de esta pieza: A y B con
+// 1024 celdas, C con 131072.
+// ============================================================
+
+void inicia_arena()
+{
+    int bloque_a[1024];
+    int bloque_b[8192];
+    int bloque_c[131072];
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int i;
+    i = 0;
+    while (i < 1024)
+    {
+        bloque_a[i] = 0;
+        bloque_b[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 131072)
+    {
+        bloque_c[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 6)
+    {
+        reg_bloque[i] = 0;
+        reg_reserva[i] = 0;
+        reg_usado[i] = 0;
+        reg_viva[i] = 0;
+        plan_bloque[i] = 0;
+        i = i + 1;
+    }
+    plan_bloque[1] = 0;
+    plan_bloque[2] = 1;
+    plan_bloque[3] = 2;
+    plan_bloque[4] = 1;
+    plan_bloque[5] = 0;
+    tam_bloque[0] = 1024;
+    tam_bloque[1] = 8192;
+    tam_bloque[2] = 131072;
+    i = 0;
+    while (i < 3)
+    {
+        bloque_dueno[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 129)
+    {
+        est_region[i] = 0;
+        est_base[i] = 0;
+        est_cuenta[i] = 0;
+        est_cap[i] = 0;
+        est_tipo[i] = 0;
+        est_viva[i] = 0;
+        i = i + 1;
+    }
+    errores_arena = 0;
+    nest = 0;
+    prov_nacq = 0;
+    region_source = 0;
+    region_frontend = 0;
+    region_compiler = 0;
+    region_backend = 0;
+    region_output = 0;
+}
+
+// ============================================================
+// MEMORY PROVIDER.
+//
+// La puerta entre la biblioteca y la memoria fisica.
+// En V2 son subrutinas ordinarias: memory_acquire entrega
+// el bloque fisico que el plan de solape asigna a la
+// siguiente region por nacer (las regiones nacen en
+// orden: Source, Frontend, Compiler, Backend, Output) y
+// devuelve bloque + 1, o 0 si el bloque no alcanza o
+// sigue ocupado por su vida anterior. Nunca un bloque
+// invalido, nunca un valor a medias. memory_release
+// devuelve el bloque; memory_available da el tamano del
+// bloque libre mayor, en celdas.
+// ============================================================
+
+int memory_available()
+{
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int m;
+    int b;
+    m = 0;
+    b = 0;
+    while (b < 3)
+    {
+        if (bloque_dueno[b] == 0)
+        {
+            if (tam_bloque[b] > m)
+            {
+                m = tam_bloque[b];
+            }
+        }
+        b = b + 1;
+    }
+    return m;
+}
+
+int memory_acquire(int size)
+{
+    int plan_bloque[6];
+    int tam_bloque[3];
+    int bloque_dueno[3];
+    int n;
+    int blk;
+    n = prov_nacq + 1;
+    if (n > 5)
+    {
+        return 0;
+    }
+    blk = plan_bloque[n];
+    if (size > tam_bloque[blk])
+    {
+        return 0;
+    }
+    if (bloque_dueno[blk] != 0)
+    {
+        return 0;
+    }
+    bloque_dueno[blk] = n;
+    prov_nacq = n;
+    return blk + 1;
+}
+
+void memory_release(int block)
+{
+    int bloque_dueno[3];
+    bloque_dueno[block - 1] = 0;
+}
+
+// ============================================================
+// MEMORY MANAGER.
+//
+// arena_create reserva el bloque inicial de la region y
+// devuelve su handle (0 = fallo, acusado en
+// errores_arena). El handle de la region es su numero de
+// nacimiento: 1 Source, 2 Frontend, 3 Compiler,
+// 4 Backend, 5 Output.
+// arena_alloc entrega un offset dentro de la region: el
+// espacio se entrega por avance (bump) con la alineacion
+// pedida en celdas; si no cabe en lo reservado, acusa y
+// devuelve -1 sin tocar nada. Ningun offset ya entregado
+// cambia jamas de significado.
+// arena_reset devuelve la region a vacia sin liberarla:
+// es la liberacion por fase, y de paso invalida las
+// estructuras que vivian en ella. arena_destroy la
+// libera del todo: el bloque vuelve al Provider y la
+// region muerta acusa si la llaman (la disciplina del
+// mapa contra handles de regiones muertas).
+// ============================================================
+
+int region_activa(int arena)
+{
+    int reg_viva[6];
+    int r;
+    r = 0;
+    if (arena >= 1)
+    {
+        if (arena <= 5)
+        {
+            if (reg_viva[arena] == 1)
+            {
+                r = 1;
+            }
+        }
+    }
+    return r;
+}
+
+int arena_create(int initial_size)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    int b;
+    int r;
+    if (initial_size < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    b = memory_acquire(initial_size);
+    if (b == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    r = prov_nacq;
+    reg_bloque[r] = b - 1;
+    reg_reserva[r] = initial_size;
+    reg_usado[r] = 0;
+    reg_viva[r] = 1;
+    return r;
+}
+
+int arena_alloc(int arena, int size, int alignment)
+{
+    int reg_reserva[6];
+    int reg_usado[6];
+    int off;
+    int resto;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (size < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (alignment < 1)
+    {
+        alignment = 1;
+    }
+    off = reg_usado[arena];
+    resto = off - (off / alignment) * alignment;
+    if (resto != 0)
+    {
+        off = off + (alignment - resto);
+    }
+    if (off + size > reg_reserva[arena])
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    reg_usado[arena] = off + size;
+    return off;
+}
+
+void invalida_estructuras(int arena)
+{
+    int est_region[129];
+    int est_viva[129];
+    int e;
+    e = 1;
+    while (e <= nest)
+    {
+        if (est_region[e] == arena)
+        {
+            est_viva[e] = 0;
+        }
+        e = e + 1;
+    }
+}
+
+void arena_reset(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+}
+
+void arena_destroy(int arena)
+{
+    int reg_bloque[6];
+    int reg_usado[6];
+    int reg_viva[6];
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    reg_usado[arena] = 0;
+    invalida_estructuras(arena);
+    reg_viva[arena] = 0;
+    memory_release(reg_bloque[arena] + 1);
+}
+
+int arena_get_used(int arena)
+{
+    int reg_usado[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_usado[arena];
+}
+
+int arena_get_reserved(int arena)
+{
+    int reg_reserva[6];
+    if (region_activa(arena) == 0)
+    {
+        return -1;
+    }
+    return reg_reserva[arena];
+}
+
+// ============================================================
+// ACCESO A CELDAS.
+//
+// La capa de acceso interna de la via V2: cada bloque es
+// un arreglo declarado y estas dos subrutinas son las
+// unicas que lo indexan por numero de bloque. Si un dia
+// se migra a la via V1, este es el interior que se
+// reescribe por peek/poke; la API publica no se entera.
+// ============================================================
+
+int celda_get(int bloque, int off)
+{
+    int bloque_a[1024];
+    int bloque_b[8192];
+    int bloque_c[131072];
+    int r;
+    r = 0;
+    if (bloque == 0)
+    {
+        r = bloque_a[off];
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            r = bloque_b[off];
+        }
+        else
+        {
+            r = bloque_c[off];
+        }
+    }
+    return r;
+}
+
+void celda_set(int bloque, int off, int v)
+{
+    int bloque_a[1024];
+    int bloque_b[8192];
+    int bloque_c[131072];
+    if (bloque == 0)
+    {
+        bloque_a[off] = v;
+    }
+    else
+    {
+        if (bloque == 1)
+        {
+            bloque_b[off] = v;
+        }
+        else
+        {
+            bloque_c[off] = v;
+        }
+    }
+}
+
+// ============================================================
+// LA CONTABILIDAD DE ESTRUCTURAS.
+//
+// DynamicArray, StringPool y ByteBuffer comparten la
+// misma contabilidad: por estructura, su region, la base
+// (offset de su bloque actual en la region), la cuenta,
+// la capacidad, el tipo (1 DynamicArray, 2 StringPool,
+// 3 ByteBuffer) y si vive. Los arreglos van indexados por
+// el handle de la estructura (1..128); el 0 es el fallo.
+// est_crece es el crecimiento geometrico x2, el mismo
+// para las tres clases: extension en el sitio si el
+// bloque de la estructura es el ultimo asignado de su
+// arena; si no, bloque nuevo al doble y copia, y el
+// bloque viejo queda como hueco hasta el reset de la
+// fase. La base puede cambiar al crecer con copia; los
+// handles de los datos no, porque un dato se referencia
+// por su indice dentro de la estructura, no por su
+// offset en la arena.
+// est_agrega es la unica puerta de registro: agrega al
+// final y devuelve el indice del elemento, o -1 si la
+// arena no pudo crecer (error ya acusado, una sola vez
+// por operacion fallida).
+// ============================================================
+
+int est_crea(int arena, int tipo, int capini)
+{
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int est_tipo[129];
+    int est_viva[129];
+    int off;
+    int e;
+    if (region_activa(arena) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (capini < 1)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (nest >= 128)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(arena, capini, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    nest = nest + 1;
+    e = nest;
+    est_region[e] = arena;
+    est_base[e] = off;
+    est_cuenta[e] = 0;
+    est_cap[e] = capini;
+    est_tipo[e] = tipo;
+    est_viva[e] = 1;
+    return e;
+}
+
+int est_valida(int e, int tipo)
+{
+    int est_tipo[129];
+    int est_viva[129];
+    int r;
+    r = 0;
+    if (e >= 1)
+    {
+        if (e <= nest)
+        {
+            if (est_viva[e] == 1)
+            {
+                if (tipo == 0)
+                {
+                    r = 1;
+                }
+                else
+                {
+                    if (est_tipo[e] == tipo)
+                    {
+                        r = 1;
+                    }
+                }
+            }
+        }
+    }
+    return r;
+}
+
+int est_crece(int e)
+{
+    int reg_bloque[6];
+    int reg_reserva[6];
+    int reg_usado[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int region;
+    int base;
+    int cap;
+    int nuevacap;
+    int off;
+    int blk;
+    int i;
+    region = est_region[e];
+    base = est_base[e];
+    cap = est_cap[e];
+    nuevacap = cap * 2;
+    if (base + cap == reg_usado[region])
+    {
+        if (reg_usado[region] + (nuevacap - cap) <= reg_reserva[region])
+        {
+            reg_usado[region] = reg_usado[region] + (nuevacap - cap);
+            est_cap[e] = nuevacap;
+            return 1;
+        }
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    off = arena_alloc(region, nuevacap, 1);
+    if (off < 0)
+    {
+        return 0;
+    }
+    blk = reg_bloque[region];
+    i = 0;
+    while (i < est_cuenta[e])
+    {
+        celda_set(blk, off + i, celda_get(blk, base + i));
+        i = i + 1;
+    }
+    est_base[e] = off;
+    est_cap[e] = nuevacap;
+    return 1;
+}
+
+int est_agrega(int e, int v)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int est_cap[129];
+    int idx;
+    if (est_valida(e, 0) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    if (est_cuenta[e] == est_cap[e])
+    {
+        if (est_crece(e) == 0)
+        {
+            return -1;
+        }
+    }
+    idx = est_cuenta[e];
+    celda_set(reg_bloque[est_region[e]], est_base[e] + idx, v);
+    est_cuenta[e] = idx + 1;
+    return idx;
+}
+
+// ============================================================
+// DYNAMICARRAY.
+//
+// da_create nace con la capacidad inicial pedida (en
+// elementos) y devuelve el handle del arreglo (0 = fallo
+// acusado). da_add agrega al final creciendo como manda
+// est_crece y devuelve el indice del elemento o -1.
+// da_get / da_set leen y escriben por indice, con el
+// intervalo validado antes de tocar memoria: fuera de la
+// cuenta, acusan y no tocan nada. da_count, da_capacity
+// y da_base consultan la contabilidad (valen para las
+// tres clases de estructura); handle invalido da -1.
+// ============================================================
+
+int da_create(int arena, int initial_capacity)
+{
+    return est_crea(arena, 1, initial_capacity);
+}
+
+int da_add(int arr, int value)
+{
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(arr, value);
+}
+
+int da_get(int arr, int index)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[arr]], est_base[arr] + index);
+}
+
+void da_set(int arr, int index, int value)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(arr, 1) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (index >= est_cuenta[arr])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[arr]], est_base[arr] + index, value);
+}
+
+int da_count(int arr)
+{
+    int est_cuenta[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[arr];
+}
+
+int da_capacity(int arr)
+{
+    int est_cap[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cap[arr];
+}
+
+int da_base(int arr)
+{
+    int est_base[129];
+    if (est_valida(arr, 0) == 0)
+    {
+        return -1;
+    }
+    return est_base[arr];
+}
+
+// ============================================================
+// STRINGPOOL.
+//
+// La piscina dinamica: un buffer de caracteres que crece
+// en la region pedida. string_pool_add_char agrega un
+// caracter (guardado como byte, 0..255) y devuelve su
+// offset dentro de la piscina: ese offset es el ini de
+// las referencias. El formato de la referencia no
+// cambia: ini * 128 + largo, el de la piscina de hoy;
+// string_pool_len desempaqueta el largo y
+// string_pool_get_char lee el caracter ini + i. Los
+// handles son offsets: estables hasta la muerte de la
+// region, crezca lo que crezca la piscina.
+// ============================================================
+
+int string_pool_create(int arena)
+{
+    return est_crea(arena, 2, 4);
+}
+
+int string_pool_add_char(int pool, int ch)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(pool, ch & 255);
+}
+
+int string_pool_get_char(int pool, int ini, int i)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int idx;
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    idx = ini + i;
+    if (idx < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (idx >= est_cuenta[pool])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[pool]], est_base[pool] + idx);
+}
+
+int string_pool_len(int pool, int ref)
+{
+    if (est_valida(pool, 2) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return ref - (ref / 128) * 128;
+}
+
+// ============================================================
+// BYTEBUFFER.
+//
+// El buffer de bytes que crece: el codigo del Emitter y
+// la imagen de los Writers. Una celda por byte, como
+// hoy, y cada byte guardado en 0..255.
+// bytebuffer_append agrega un byte al final y devuelve
+// su offset — la semantica de los placeholders del
+// Emitter, que ya devuelven el offset de su hueco.
+// bytebuffer_patch escribe en un offset ya entregado y
+// dentro de la cuenta: es el patch32 / patchRel32 de hoy
+// sin guarda de 256. bytebuffer_write copia count bytes
+// desde otro ByteBuffer (desde su src_offset) y los
+// agrega al final de este: lo que los Writers hacen al
+// ensamblar cabecera + codigo + datos; el intervalo de
+// origen se valida entero antes de copiar, asi que una
+// copia invalida acusa y no escribe nada.
+// bytebuffer_get lee un byte por offset, validado.
+// ============================================================
+
+int bytebuffer_create(int arena)
+{
+    return est_crea(arena, 3, 8);
+}
+
+int bytebuffer_append(int bb, int byte)
+{
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return -1;
+    }
+    return est_agrega(bb, byte & 255);
+}
+
+void bytebuffer_patch(int bb, int offset, int byte)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    celda_set(reg_bloque[est_region[bb]], est_base[bb] + offset, byte & 255);
+}
+
+void bytebuffer_write(int bb, int src, int src_offset, int count)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    int blk;
+    int i;
+    int v;
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (est_valida(src, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (count < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    if (src_offset + count > est_cuenta[src])
+    {
+        errores_arena = errores_arena + 1;
+        return;
+    }
+    blk = reg_bloque[est_region[src]];
+    i = 0;
+    while (i < count)
+    {
+        v = celda_get(blk, est_base[src] + src_offset + i);
+        if (est_agrega(bb, v) < 0)
+        {
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+int bytebuffer_get(int bb, int offset)
+{
+    int reg_bloque[6];
+    int est_region[129];
+    int est_base[129];
+    int est_cuenta[129];
+    if (est_valida(bb, 3) == 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset < 0)
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    if (offset >= est_cuenta[bb])
+    {
+        errores_arena = errores_arena + 1;
+        return 0;
+    }
+    return celda_get(reg_bloque[est_region[bb]], est_base[bb] + offset);
+}
+
+int bytebuffer_get_size(int bb)
+{
+    int est_cuenta[129];
+    if (est_valida(bb, 0) == 0)
+    {
+        return -1;
+    }
+    return est_cuenta[bb];
+}
+
+// ============================================================
+// ESTADO DEL DRIVER (codigo nuevo de D-1).
+//
+// errores_driver: el contador propio del Driver. Acusa el
+// puente cuando una tabla del Parser pasa del contrato de
+// 256, y el escritor cuando el buffer de salida se llena o
+// file_write no devuelve 0. nsal: los bytes listos en bufsal
+// (el arreglo bufsal[65536] se declara dentro de las
+// funciones que lo tocan, compartido por nombre: en K++ los
+// arreglos no viven en el nivel superior).
+// ============================================================
+
+int errores_driver;
+int nsal;
+
+// ============================================================
+// ESTADO COMPARTIDO (DATA) — el corazon del estilo subrutina
+// ============================================================
+
+int pos;
+int tok_count;
+int total;
+int nnodos;
+int errores;
+int nfun;
+int nsent;
+int npar;
+int ncam;
+int nconst;
+
+
+// ============================================================
+// HANDLES DE LA ARENA (M-4).
+//
+// Los catorce DynamicArray de FrontendArena donde
+// viven los nodos y las tablas laterales: dnkind,
+// dnini, dnfin, dnhijo1, dnsig, dnval, dnaux y dnsize
+// son el nodo partido en sus ocho campos; dpartok,
+// dcampotipo, dcampotok, dconstenum, dconstok y
+// dconstvalor son las tres tablas laterales (dos
+// columnas de campos, tres de constantes, una de
+// parametros). Los crea crea_tablas() y los consume
+// la pieza entera: el mismo papel que antes hacian
+// los arreglos compartidos por nombre, con la
+// disciplina de la arena: registrar es crecer o
+// acusar.
+// ============================================================
+
+int dnkind;
+int dnini;
+int dnfin;
+int dnhijo1;
+int dnsig;
+int dnval;
+int dnaux;
+int dnsize;
+int dpartok;
+int dcampotipo;
+int dcampotok;
+int dconstenum;
+int dconstok;
+int dconstvalor;
+
+// ============================================================
+// MAQUINARIA DEL CURSOR (Parser::current/check/match/expect)
+// ============================================================
+
+int actual()
+{
+    int tok_tipo[256];
+    if (pos < tok_count)
+    {
+        return tok_tipo[pos];
+    }
+    return TokenType::EndOfFile;
+}
+
+int es(int t)
+{
+    if (actual() == t)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+void consume()
+{
+    if (pos < tok_count)
+    {
+        pos = pos + 1;
+    }
+}
+
+int espera(int t)
+{
+    if (es(t) == 1)
+    {
+        consume();
+        return 1;
+    }
+    errores = errores + 1;
+    return 0;
+}
+
+// ============================================================
+// INICIA EL PARSER.
+//
+// El papel del driver en miniatura, como en las demas
+// piezas migradas: inicia la biblioteca y hace nacer
+// las regiones en el orden del plan de solape —
+// Source sobre el bloque A con la reserva entera del
+// bloque (1024), aunque esta pieza no la usa (su
+// fuente y su escanea son la copia sellada de la fila
+// del Lexer, migrada en su pieza en M-3), y Frontend
+// sobre el bloque B con la reserva entera del bloque
+// (8192), donde viven los catorce DynamicArray.
+// Compiler, Backend y Output nacen en sus fases, en
+// las piezas que las gobiernan. No imprime nada: la
+// corriente de la sonda queda intacta.
+// ============================================================
+
+void inicia_parser()
+{
+    inicia_arena();
+    region_source = arena_create(1024);
+    region_frontend = arena_create(8192);
+}
+
+// ============================================================
+// CREA LAS TABLAS.
+//
+// Los catorce DynamicArray de FrontendArena, nacidos
+// a 256: los ocho de nodos en el orden del contrato
+// y los seis auxiliares. 256 es hoy capacidad de
+// nacimiento, ya no techo: al registrar el elemento
+// 257 la estructura crece. Los crea reinicia() al
+// renacer cada mundo, y el movimiento de acusacion
+// de la sonda en el suyo.
+// ============================================================
+
+void crea_tablas()
+{
+    dnkind = da_create(region_frontend, 256);
+    dnini = da_create(region_frontend, 256);
+    dnfin = da_create(region_frontend, 256);
+    dnhijo1 = da_create(region_frontend, 256);
+    dnsig = da_create(region_frontend, 256);
+    dnval = da_create(region_frontend, 256);
+    dnaux = da_create(region_frontend, 256);
+    dnsize = da_create(region_frontend, 256);
+    dpartok = da_create(region_frontend, 256);
+    dcampotipo = da_create(region_frontend, 256);
+    dcampotok = da_create(region_frontend, 256);
+    dconstenum = da_create(region_frontend, 256);
+    dconstok = da_create(region_frontend, 256);
+    dconstvalor = da_create(region_frontend, 256);
+}
+
+// ============================================================
+// NODOS.
+//
+// El nodo es un indice. Sus datos viven en arreglos
+// paralelos compartidos por nombre:
+//
+// nkind  clase del nodo (NodeKind).
+// nini   primer token del nodo.
+// nfin   token siguiente al ultimo del nodo.
+//
+// EL CONTRATO AST DEFINITIVO (rebanada 15).
+//
+// nhijo1 primer hijo: la primera sentencia de un
+//        Block, la primera declaracion del Program,
+//        la condicion de if/while, el hijo izquierdo
+//        de un binario, el primer argumento de una
+//        llamada, el inicializador de una
+//        declaracion, el indice de un acceso o
+//        asignacion a arreglo. Excepcion documentada
+//        (rebanada 8): en el acceso y la asignacion
+//        a campo guarda el TOKEN del campo.
+// nsig   siguiente hermano, y NADA mas que eso: la
+//        segunda pieza de una relacion cuelga del
+//        nsig de la primera — el operando derecho
+//        del nsig del izquierdo, el bloque del then
+//        del nsig de la condicion, el cuerpo del
+//        while del nsig de su condicion, el else
+//        del nsig del bloque del then. Tambien:
+//        sentencias de un bloque, declaraciones
+//        del programa y argumentos de una llamada.
+//        nsig NUNCA representa una cantidad: solo
+//        enlaza nodos.
+// naux   atributo auxiliar, con significado fijado
+//        por la clase del nodo:
+//        - AssignmentStatement: el nodo del valor.
+//        - FunctionDeclaration, StructDeclaration y
+//          EnumDeclaration: el INICIO de su tabla
+//          lateral (parametros, campos, constantes),
+//          que no es un nodo.
+// nsize  tamano o cantidad, segun la clase: el
+//        tamano del arreglo en VariableDeclaration
+//        (0 = no es arreglo) y la cantidad de su
+//        grupo en las declaraciones (parametros,
+//        campos, constantes). Las cantidades viven
+//        aqui desde la rebanada 15 (en la 10 vivian
+//        en arrays propios).
+// nval   carga util: valor de un literal entero, codigo
+//        TokenType del operador de un nodo binario, o
+//        indice del token del nombre (variable, llamada).
+// ============================================================
+
+int emite(int kind, int ini)
+{
+    // Guarda de la arena (M-4): el primer da_add hace
+    // de guarda. Con la estructura llena y la arena
+    // sin sitio, da_add devuelve -1 y emite acusa en
+    // errores — el viejo codigo 51 con la causa
+    // nueva: la arena no pudo crecer — y devuelve -1
+    // sin escribir nada mas; la biblioteca acusa
+    // ademas en errores_arena, y los pon_ ignoran ese
+    // -1, asi que ningun consumidor enlaza un nodo
+    // inexistente. Si agrega, agregan los otros siete
+    // en el orden sellado, nnodos avanza y la doble
+    // cuenta de siempre (nnodos de la pieza, da_count
+    // de la estructura) dice lo mismo.
+    if (da_add(dnkind, kind) < 0)
+    {
+        errores = errores + 1;
+        return 0 - 1;
+    }
+    da_add(dnini, ini);
+    da_add(dnfin, pos);
+    da_add(dnhijo1, 0 - 1);
+    da_add(dnsig, 0 - 1);
+    da_add(dnval, 0);
+    da_add(dnaux, 0 - 1);
+    da_add(dnsize, 0);
+    nnodos = nnodos + 1;
+    return nnodos - 1;
+}
+
+void pon_hijo1(int nodo, int hijo)
+{
+    if (nodo < 0)
+    {
+        return;
+    }
+    if (nodo >= nnodos)
+    {
+        return;
+    }
+    da_set(dnhijo1, nodo, hijo);
+}
+
+// El atributo auxiliar del contrato (rebanada 15):
+// el valor de una asignacion, o el inicio de la
+// tabla lateral de una declaracion. Nada mas vive
+// en naux, y ningun otro setter lo escribe.
+void pon_aux(int nodo, int aux)
+{
+    if (nodo < 0)
+    {
+        return;
+    }
+    if (nodo >= nnodos)
+    {
+        return;
+    }
+    da_set(dnaux, nodo, aux);
+}
+
+void pon_sig(int nodo, int hermano)
+{
+    if (nodo < 0)
+    {
+        return;
+    }
+    if (nodo >= nnodos)
+    {
+        return;
+    }
+    da_set(dnsig, nodo, hermano);
+}
+
+// Las cantidades de las declaraciones vivieron en
+// arrays propios en la rebanada 10 (pon_cant_params,
+// pon_cant_campos, pon_cant_consts). Desde la
+// rebanada 15 viven en nsize, escritas con pon_size:
+// tamano o cantidad segun la clase del nodo. El
+// inicio de cada grupo vive en naux (pon_aux). nsig
+// es SOLO el siguiente hermano: nunca una cantidad.
+
+void pon_val(int nodo, int valor)
+{
+    if (nodo < 0)
+    {
+        return;
+    }
+    if (nodo >= nnodos)
+    {
+        return;
+    }
+    da_set(dnval, nodo, valor);
+}
+
+// El tamano del arreglo de una VariableDeclaration
+// (rebanada 11): 0 = no es arreglo. Es un atributo del
+// nodo, como en Stage 0 (arraySize).
+void pon_size(int nodo, int tam)
+{
+    if (nodo < 0)
+    {
+        return;
+    }
+    if (nodo >= nnodos)
+    {
+        return;
+    }
+    da_set(dnsize, nodo, tam);
+}
+
+// El fin del rango de un nodo contenedor (rebanada
+// 12): emite() lo escribe al emitir, cuando el nodo
+// aun no ha analizado su contenido; pon_fin lo
+// corrige en el punto de cierre.
+void pon_fin(int nodo, int fin)
+{
+    if (nodo < 0)
+    {
+        return;
+    }
+    if (nodo >= nnodos)
+    {
+        return;
+    }
+    da_set(dnfin, nodo, fin);
+}
+
+int nodo_ini(int nodo)
+{
+    if (nodo >= 0)
+    {
+        return da_get(dnini, nodo);
+    }
+    return pos;
+}
+
+// Constructor de binarios: el BinaryExpression de Stage 0,
+// con el operador guardado como codigo TokenType en nval
+// (Stage 0 lo guarda como texto: "==", "+", ...).
+int emite_bin(int op, int izq, int der)
+{
+    int n = emite(NodeKind::BinaryExpression, nodo_ini(izq));
+    pon_hijo1(n, izq);
+    pon_sig(izq, der);
+    pon_val(n, op);
+    return n;
+}
+
+int emite_lit(int valor, int ini)
+{
+    int n = emite(NodeKind::IntegerLiteral, ini);
+    pon_val(n, valor);
+    return n;
+}
+
+// ============================================================
+// CADENA DE EXPRESIONES.
+//
+// Traduccion nivel a nivel de la cadena de precedencia
+// de Parser.cpp (parseExpression ... parsePrimary).
+// Cada nivel es una subrutina que devuelve el indice del
+// nodo raiz de su subarbol, o -1 si no hubo expresion.
+//
+// PRECEDENCIA:
+//
+// 1.  ||
+// 2.  &&
+// 3.  |
+// 4.  &
+// 5.  == !=
+// 6.  < <= > >=
+// 7.  << >>
+// 8.  + -
+// 9.  * / %
+// 10. ^
+// 11. ! -
+// 12. primarios
+// ============================================================
+
+int parse_expresion()
+{
+    return parse_or();
+}
+
+// ============================================================
+// PARSE OR.
+//
+// a || b
+// ============================================================
+
+int parse_or()
+{
+    int izq = parse_and();
+    while (es(TokenType::LogicalOr) == 1)
+    {
+        consume();
+        int der = parse_and();
+        izq = emite_bin(TokenType::LogicalOr, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE AND.
+//
+// a && b
+// ============================================================
+
+int parse_and()
+{
+    int izq = parse_bor();
+    while (es(TokenType::LogicalAnd) == 1)
+    {
+        consume();
+        int der = parse_bor();
+        izq = emite_bin(TokenType::LogicalAnd, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE EQUALITY.
+//
+// a == b
+// a != b
+// ============================================================
+
+// ============================================================
+// PARSE BITS OR.
+//
+// a | b — el nivel del | en la cadena (Ampliacion
+// 4): entre el && y el &, como en C.
+// ============================================================
+
+int parse_bor()
+{
+    int izq = parse_band();
+    while (es(TokenType::BitwiseOr) == 1)
+    {
+        consume();
+        int der = parse_band();
+        izq = emite_bin(TokenType::BitwiseOr, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE BITS AND.
+//
+// a & b — el nivel del & en la cadena (Ampliacion
+// 4): entre el | y el ==, como en C.
+// ============================================================
+
+int parse_band()
+{
+    int izq = parse_igualdad();
+    while (es(TokenType::BitwiseAnd) == 1)
+    {
+        consume();
+        int der = parse_igualdad();
+        izq = emite_bin(TokenType::BitwiseAnd, izq, der);
+    }
+    return izq;
+}
+
+int parse_igualdad()
+{
+    int izq = parse_comparacion();
+    while (1)
+    {
+        int op = 0;
+        if (es(TokenType::Equal) == 1)
+        {
+            op = TokenType::Equal;
+        }
+        if (es(TokenType::NotEqual) == 1)
+        {
+            op = TokenType::NotEqual;
+        }
+        if (op == 0)
+        {
+            break;
+        }
+        consume();
+        int der = parse_comparacion();
+        izq = emite_bin(op, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE COMPARISON.
+//
+// a < b
+// a <= b
+// a > b
+// a >= b
+// ============================================================
+
+int parse_comparacion()
+{
+    int izq = parse_desplaza();
+    while (1)
+    {
+        int op = 0;
+        if (es(TokenType::Less) == 1)
+        {
+            op = TokenType::Less;
+        }
+        if (es(TokenType::LessEqual) == 1)
+        {
+            op = TokenType::LessEqual;
+        }
+        if (es(TokenType::Greater) == 1)
+        {
+            op = TokenType::Greater;
+        }
+        if (es(TokenType::GreaterEqual) == 1)
+        {
+            op = TokenType::GreaterEqual;
+        }
+        if (op == 0)
+        {
+            break;
+        }
+        consume();
+        int der = parse_desplaza();
+        izq = emite_bin(op, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE TERM.
+//
+// a + b
+// a - b
+// ============================================================
+
+// ============================================================
+// PARSE DESPLAZAMIENTOS.
+//
+// a << b
+// a >> b
+//
+// El nivel de los desplazamientos (Ampliacion 4):
+// entre la comparacion y el termino. La suma ata
+// mas que el desplazamiento, como en C: 1 << 2 + 1
+// es 1 << 3.
+// ============================================================
+
+int parse_desplaza()
+{
+    int izq = parse_termino();
+    while (1)
+    {
+        int op = 0;
+        if (es(TokenType::ShiftLeft) == 1)
+        {
+            op = TokenType::ShiftLeft;
+        }
+        if (es(TokenType::ShiftRight) == 1)
+        {
+            op = TokenType::ShiftRight;
+        }
+        if (op == 0)
+        {
+            break;
+        }
+        consume();
+        int der = parse_termino();
+        izq = emite_bin(op, izq, der);
+    }
+    return izq;
+}
+
+int parse_termino()
+{
+    int izq = parse_factor();
+    while (1)
+    {
+        int op = 0;
+        if (es(TokenType::Plus) == 1)
+        {
+            op = TokenType::Plus;
+        }
+        if (es(TokenType::Minus) == 1)
+        {
+            op = TokenType::Minus;
+        }
+        if (op == 0)
+        {
+            break;
+        }
+        consume();
+        int der = parse_factor();
+        izq = emite_bin(op, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE FACTOR.
+//
+// a * b
+// a / b
+// a % b
+// ============================================================
+
+int parse_factor()
+{
+    int izq = parse_potencia();
+    while (1)
+    {
+        int op = 0;
+        if (es(TokenType::Multiply) == 1)
+        {
+            op = TokenType::Multiply;
+        }
+        if (es(TokenType::Divide) == 1)
+        {
+            op = TokenType::Divide;
+        }
+        if (es(TokenType::Modulo) == 1)
+        {
+            op = TokenType::Modulo;
+        }
+        if (op == 0)
+        {
+            break;
+        }
+        consume();
+        int der = parse_potencia();
+        izq = emite_bin(op, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE POWER.
+//
+// a ^ b
+//
+// La potencia se mantiene separada para poder darle
+// posteriormente asociatividad propia (nota de Stage 0).
+// ============================================================
+
+int parse_potencia()
+{
+    int izq = parse_unario();
+    while (es(TokenType::Power) == 1)
+    {
+        consume();
+        int der = parse_unario();
+        izq = emite_bin(TokenType::Power, izq, der);
+    }
+    return izq;
+}
+
+// ============================================================
+// PARSE UNARY.
+//
+// !a
+// -a
+//
+// Stage 0 no tiene nodo unario: lo pliega a binario con
+// un cero a la izquierda (!x -> 0 ! x, -x -> 0 - x).
+// Esta traduccion conserva el pliegue.
+// ============================================================
+
+int parse_unario()
+{
+    if (es(TokenType::LogicalNot) == 1)
+    {
+        int ini = pos;
+        consume();
+        int der = parse_unario();
+        int cero = emite_lit(0, ini);
+        return emite_bin(TokenType::LogicalNot, cero, der);
+    }
+    if (es(TokenType::Minus) == 1)
+    {
+        int ini = pos;
+        consume();
+        int der = parse_unario();
+        int cero = emite_lit(0, ini);
+        return emite_bin(TokenType::Minus, cero, der);
+    }
+    return parse_primario();
+}
+
+// ============================================================
+// PARSE PRIMARY.
+//
+// 42
+// "HOLA"
+// x
+// x[0]
+// f(a, b)
+// p.campo
+// (x + 10)
+//
+// El nombre de una variable o llamada se guarda como
+// indice de su token en nval: el texto vive en la fuente
+// y se recupera por tinicio/tlargo cuando haga falta.
+//
+// La constante de enum con :: (Enum::Miembro) se
+// pliega a literal entero consultando la tabla de
+// constantes, como en Stage 0 (rebanada 5).
+// ============================================================
+
+int parse_primario()
+{
+    int tok_valor[256];
+    int ini = pos;
+    int t = actual();
+
+    // Numero: el valor ya viene calculado en tvalor.
+    if (t == TokenType::Number)
+    {
+        int v = tok_valor[pos];
+        consume();
+        return emite_lit(v, ini);
+    }
+
+    // Cadena: nval guarda el indice del token.
+    if (t == TokenType::String)
+    {
+        consume();
+        int n = emite(NodeKind::StringLiteral, ini);
+        pon_val(n, ini);
+        return n;
+    }
+
+    // Identificador: variable, acceso, llamada o campo.
+    if (t == TokenType::Identifier)
+    {
+        consume();
+
+        // Constante de enum: Enum::Miembro — la primera
+        // rama, como en el parsePrimary de Stage 0. Se
+        // pliega a literal entero con el valor guardado
+        // en la tabla de constantes; si el nombre no
+        // esta, es error (el "enumerador no declarado"
+        // de Stage 0).
+        if (es(TokenType::ColonColon) == 1)
+        {
+            consume();
+            int mtok = pos;
+            int ok0 = espera(TokenType::Identifier);
+            int v = busca_const(ini, mtok);
+            if (v == 0 - 1)
+            {
+                errores = errores + 1;
+                return 0 - 1;
+            }
+            return emite_lit(v, ini);
+        }
+
+        // Acceso a arreglo: x[indice]
+        if (es(TokenType::LBracket) == 1)
+        {
+            consume();
+            int idx = parse_expresion();
+            int ok = espera(TokenType::RBracket);
+            int n = emite(NodeKind::ArrayAccessExpression, ini);
+            pon_hijo1(n, idx);
+            pon_val(n, ini);
+            return n;
+        }
+
+        // Llamada: f(a, b) — los argumentos cuelgan de
+        // hijo1 y se encadenan entre si por nsig.
+        if (es(TokenType::LParen) == 1)
+        {
+            consume();
+            int n = emite(NodeKind::CallExpression, ini);
+            pon_val(n, ini);
+            int primero = 0 - 1;
+            int ultimo = 0 - 1;
+            if (es(TokenType::RParen) == 0)
+            {
+                int sigue = 1;
+                while (sigue == 1)
+                {
+                    int arg = parse_expresion();
+                    if (primero == 0 - 1)
+                    {
+                        primero = arg;
+                        pon_hijo1(n, arg);
+                    }
+                    if (ultimo != 0 - 1)
+                    {
+                        pon_sig(ultimo, arg);
+                    }
+                    ultimo = arg;
+                    if (es(TokenType::Comma) == 0)
+                    {
+                        break;
+                    }
+                    consume();
+                }
+            }
+            int ok = espera(TokenType::RParen);
+            return n;
+        }
+
+        // Acceso a campo: p.campo — hijo1 guarda el
+        // indice del token del campo (no un nodo).
+        if (es(TokenType::Dot) == 1)
+        {
+            consume();
+            int campo = pos;
+            int ok = espera(TokenType::Identifier);
+            int n = emite(NodeKind::VariableExpression, ini);
+            pon_val(n, ini);
+            pon_hijo1(n, campo);
+            return n;
+        }
+
+        // Variable simple.
+        int n = emite(NodeKind::VariableExpression, ini);
+        pon_val(n, ini);
+        return n;
+    }
+
+    // Expresion entre parentesis: no emite nodo propio.
+    if (t == TokenType::LParen)
+    {
+        consume();
+        int e = parse_expresion();
+        int ok = espera(TokenType::RParen);
+        return e;
+    }
+
+    // Nada reconocido: error y avance para no ciclar.
+    errores = errores + 1;
+    consume();
+    return 0 - 1;
+}
+
+// ============================================================
+// SENTENCIAS (Parser::parseStatement, nucleo de la rebanada)
+// ============================================================
+
+int parse_sentencia()
+{
+    int tok_valor[256];
+    int ini = pos;
+    int t = actual();
+
+    // Declaracion de variable: int nombre [N] [= expr];
+    // (tambien string). El inicializador, si lo hay, se
+    // analiza de verdad y cuelga de hijo1. Los datos de
+    // la declaracion son atributos del nodo (rebanada
+    // 11): el nombre en nval, el tamano en nsize.
+    if (t == TokenType::KwInt)
+    {
+        consume();
+        int nombre = pos;
+        int ok = espera(TokenType::Identifier);
+        int tam = 0;
+        if (es(TokenType::LBracket) == 1)
+        {
+            consume();
+            int npos = pos;
+            int ok2 = espera(TokenType::Number);
+            if (ok2 == 1)
+            {
+                tam = tok_valor[npos];
+                if (tam <= 0)
+                {
+                    errores = errores + 1;
+                }
+            }
+            int ok3 = espera(TokenType::RBracket);
+        }
+        int init = 0 - 1;
+        if (es(TokenType::Assign) == 1)
+        {
+            consume();
+            init = parse_expresion();
+        }
+        int ok4 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::VariableDeclaration, ini);
+        pon_val(n, nombre);
+        pon_size(n, tam);
+        if (init != 0 - 1)
+        {
+            pon_hijo1(n, init);
+        }
+        nsent = nsent + 1;
+        return n;
+    }
+    if (t == TokenType::KwString)
+    {
+        consume();
+        int nombre = pos;
+        int ok = espera(TokenType::Identifier);
+        int tam = 0;
+        if (es(TokenType::LBracket) == 1)
+        {
+            consume();
+            int npos = pos;
+            int ok2 = espera(TokenType::Number);
+            if (ok2 == 1)
+            {
+                tam = tok_valor[npos];
+                if (tam <= 0)
+                {
+                    errores = errores + 1;
+                }
+            }
+            int ok3 = espera(TokenType::RBracket);
+        }
+        int init = 0 - 1;
+        if (es(TokenType::Assign) == 1)
+        {
+            consume();
+            init = parse_expresion();
+        }
+        int ok4 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::VariableDeclaration, ini);
+        pon_val(n, nombre);
+        pon_size(n, tam);
+        if (init != 0 - 1)
+        {
+            pon_hijo1(n, init);
+        }
+        nsent = nsent + 1;
+        return n;
+    }
+
+    // if (condicion) bloque [else bloque | else if ...]
+    // La condicion cuelga de hijo1, el bloque del
+    // then del nsig de la condicion, y el bloque del
+    // else (real o el sintetico del else if) del
+    // nsig del bloque del then: los hijos del if son
+    // hijo1 y luego puro nsig (contrato, rebanada 15).
+    if (t == TokenType::KwIf)
+    {
+        consume();
+        int ok = espera(TokenType::LParen);
+        int cond = parse_expresion();
+        int ok2 = espera(TokenType::RParen);
+        int n = emite(NodeKind::IfStatement, ini);
+        pon_hijo1(n, cond);
+        nsent = nsent + 1;
+        int b = parse_bloque();
+        pon_sig(cond, b);
+        if (es(TokenType::KwElse) == 1)
+        {
+            consume();
+            // La decision se lee una sola vez, antes de
+            // analizar nada: tras el if anidado, el
+            // token actual ya es otro.
+            int esif = es(TokenType::KwIf);
+            if (esif == 1)
+            {
+                // ELSE IF (Stage 0): el if anidado va
+                // envuelto en un Block sintetico de una
+                // sola sentencia. El sintetico cuelga
+                // del nsig del bloque del then y el if
+                // anidado es su hijo1.
+                int nb = emite(NodeKind::Block, pos);
+                int s = parse_sentencia();
+                pon_hijo1(nb, s);
+                pon_sig(b, nb);
+                pon_fin(nb, pos);
+            }
+            if (esif == 0)
+            {
+                int b2 = parse_bloque();
+                pon_sig(b, b2);
+            }
+        }
+        pon_fin(n, pos);
+        return n;
+    }
+
+    // while (condicion) bloque — la condicion en
+    // hijo1 y el cuerpo en el nsig de la condicion.
+    if (t == TokenType::KwWhile)
+    {
+        consume();
+        int ok = espera(TokenType::LParen);
+        int cond = parse_expresion();
+        int ok2 = espera(TokenType::RParen);
+        int n = emite(NodeKind::WhileStatement, ini);
+        pon_hijo1(n, cond);
+        nsent = nsent + 1;
+        int b = parse_bloque();
+        pon_sig(cond, b);
+        pon_fin(n, pos);
+        return n;
+    }
+
+    // Bloque suelto como sentencia: { ... } — el
+    // bloque ES la sentencia (parseBlock como
+    // sentencia en Stage 0); sus sentencias cuelgan
+    // de el como en cualquier bloque. Entro en la
+    // rebanada 9, salio con su revert, y vuelve con
+    // los enlaces de la 13.
+    if (t == TokenType::LBrace)
+    {
+        int b = parse_bloque();
+        return b;
+    }
+
+    // print ( expr );
+    if (t == TokenType::KwPrint)
+    {
+        consume();
+        int ok = espera(TokenType::LParen);
+        int e = parse_expresion();
+        int ok2 = espera(TokenType::RParen);
+        int ok3 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::PrintStatement, ini);
+        pon_hijo1(n, e);
+        nsent = nsent + 1;
+        return n;
+    }
+
+    // return [expr];
+    if (t == TokenType::KwReturn)
+    {
+        consume();
+        int e = 0 - 1;
+        if (es(TokenType::Semicolon) == 0)
+        {
+            e = parse_expresion();
+        }
+        int ok = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::ReturnStatement, ini);
+        if (e != 0 - 1)
+        {
+            pon_hijo1(n, e);
+        }
+        nsent = nsent + 1;
+        return n;
+    }
+
+    // print_int(expr); — print_int no es palabra
+    // clave: llega como Identifier y se reconoce
+    // por su texto (es_print_int), igual que en
+    // Stage 0. La rama va ANTES de la asignacion:
+    // si el identificador es print_int, la
+    // sentencia es PrintIntegerStatement y su
+    // expresion cuelga de hijo1. La condicion va
+    // anidada: el && de K++ no cortocircuita y
+    // es_print_int solo debe llamarse si el
+    // token es Identifier.
+    if (t == TokenType::Identifier)
+    {
+        if (es_print_int(ini) == 1)
+        {
+            consume();
+            int ok = espera(TokenType::LParen);
+            int e = parse_expresion();
+            int ok2 = espera(TokenType::RParen);
+            int ok3 = espera(TokenType::Semicolon);
+            int n = emite(NodeKind::PrintIntegerStatement, ini);
+            pon_hijo1(n, e);
+            nsent = nsent + 1;
+            return n;
+        }
+    }
+
+    // Declaracion de tipo personalizado:
+    // Persona p; — dos Identifier seguidos solo
+    // pueden ser una declaracion (Stage 0 lo
+    // decide asi, sin consultar ninguna tabla
+    // de tipos: si el tipo existe es asunto del
+    // semantico). Sin inicializador y sin
+    // arreglo. El nodo es el mismo
+    // VariableDeclaration: el tipo queda en el
+    // token inicial y el nombre en el siguiente,
+    // guardado ademas en nval (rebanada 11: nval
+    // es el nombre en toda VariableDeclaration).
+    if (t == TokenType::Identifier)
+    {
+        if (mira(1, TokenType::Identifier) == 1)
+        {
+            consume();
+            int nombre = pos;
+            consume();
+            int ok = espera(TokenType::Semicolon);
+            int n = emite(NodeKind::VariableDeclaration, ini);
+            pon_val(n, nombre);
+            nsent = nsent + 1;
+            return n;
+        }
+    }
+
+    // Llamada como sentencia: nombre(args);
+    // (Ampliacion 1, NodeKind::CallStatement, el
+    // 18). Se reconoce por Identifier seguido de
+    // '(' — el mismo mira(1, ...) de la declaracion
+    // de tipo personalizado. La rama va ANTES de la
+    // asignacion y DESPUES de print_int (que tambien
+    // es Identifier + '(' y ya se reconocio arriba
+    // por su texto). parse_primario construye el
+    // CallExpression; este nodo lo envuelve y la
+    // llamada queda en hijo1.
+    if (t == TokenType::Identifier)
+    {
+        if (mira(1, TokenType::LParen) == 1)
+        {
+            int llamada = parse_primario();
+            int ok = espera(TokenType::Semicolon);
+            int n = emite(NodeKind::CallStatement, ini);
+            pon_hijo1(n, llamada);
+            nsent = nsent + 1;
+            return n;
+        }
+    }
+
+    // Break: break;
+    // (Ampliacion 2, NodeKind::BreakStatement, el
+    // 19). Se reconoce por su palabra clave y el
+    // punto y coma; el nodo no lleva hijos — su
+    // significado es su posicion dentro del while.
+    // Que haya un while que lo contenga es regla
+    // del analizador (codigo 52), no de esta pieza.
+    if (t == TokenType::KwBreak)
+    {
+        consume();
+        int ok = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::BreakStatement, ini);
+        nsent = nsent + 1;
+        return n;
+    }
+
+    // for (inicio; condicion; paso) bloque
+    // (Ampliacion 3, NodeKind::ForStatement, el 20).
+    // Los hijos cuelgan como en el while: hijo1 y
+    // luego puro nsig, en el orden inicio, condicion,
+    // paso, cuerpo. El inicio y el paso pueden faltar
+    // (la cadena simplemente no los trae); la
+    // condicion no falta nunca: si viene vacia, el
+    // Parser la siembra como el literal 1 — el for sin
+    // condicion es el ciclo sin salida, como un
+    // while (1). El inicio es una declaracion o una
+    // asignacion, analizado con parse_sentencia (su
+    // ';' hace de primer separador); otra sentencia en
+    // ese hueco es un error acusado, como en Stage 0.
+    // El paso es una asignacion sin ';' (lo cierra el
+    // ')'), construida aqui con la misma forma que la
+    // rama de asignacion.
+    if (t == TokenType::KwFor)
+    {
+        consume();
+        int ok = espera(TokenType::LParen);
+        int inicio = 0 - 1;
+        if (es(TokenType::Semicolon) == 1)
+        {
+            consume();
+        }
+        else
+        {
+            inicio = parse_sentencia();
+            if (inicio >= 0)
+            {
+                int ki = da_get(dnkind, inicio);
+                if (ki != NodeKind::VariableDeclaration)
+                {
+                    if (ki != NodeKind::AssignmentStatement)
+                    {
+                        errores = errores + 1;
+                    }
+                }
+            }
+        }
+        int cond = 0 - 1;
+        if (es(TokenType::Semicolon) == 1)
+        {
+            consume();
+            cond = emite_lit(1, ini);
+        }
+        else
+        {
+            cond = parse_expresion();
+            int ok2 = espera(TokenType::Semicolon);
+        }
+        int paso = 0 - 1;
+        if (es(TokenType::RParen) == 0)
+        {
+            int ini_p = pos;
+            consume();
+            int idxp = 0 - 1;
+            if (es(TokenType::LBracket) == 1)
+            {
+                consume();
+                idxp = parse_expresion();
+                int ok3 = espera(TokenType::RBracket);
+            }
+            int campop = 0 - 1;
+            if (es(TokenType::Dot) == 1)
+            {
+                consume();
+                campop = pos;
+                int ok4 = espera(TokenType::Identifier);
+            }
+            int ok5 = espera(TokenType::Assign);
+            int valorp = parse_expresion();
+            paso = emite(NodeKind::AssignmentStatement, ini_p);
+            pon_val(paso, ini_p);
+            pon_aux(paso, valorp);
+            if (idxp != 0 - 1)
+            {
+                pon_hijo1(paso, idxp);
+            }
+            if (campop != 0 - 1)
+            {
+                if (idxp != 0 - 1)
+                {
+                    errores = errores + 1;
+                }
+                else
+                {
+                    pon_hijo1(paso, campop);
+                }
+            }
+            nsent = nsent + 1;
+        }
+        int ok6 = espera(TokenType::RParen);
+        int n = emite(NodeKind::ForStatement, ini);
+        nsent = nsent + 1;
+        int cabeza = cond;
+        if (inicio >= 0)
+        {
+            cabeza = inicio;
+            pon_sig(inicio, cond);
+        }
+        if (paso >= 0)
+        {
+            pon_sig(cond, paso);
+        }
+        pon_hijo1(n, cabeza);
+        int b = parse_bloque();
+        int ultimo = cond;
+        if (paso >= 0)
+        {
+            ultimo = paso;
+        }
+        pon_sig(ultimo, b);
+        pon_fin(n, pos);
+        return n;
+    }
+
+    // Asignacion: nombre = expr;  /  nombre[i] = expr;
+    // El nombre queda en nval (indice de su token); el
+    // indice, si lo hay, en hijo1; el valor en naux
+    // (el contrato: unico naux que es un nodo). Indice
+    // y campo a la vez (nombre[i].campo = ...) es un
+    // error acusado: la forma es ilegal en K++ (los
+    // arreglos solo guardan int) y Stage 0 la rechaza
+    // en su semantico; el campo no pisa el hijo1 que
+    // ya ocupa el indice.
+    if (t == TokenType::Identifier)
+    {
+        consume();
+        int idx = 0 - 1;
+        if (es(TokenType::LBracket) == 1)
+        {
+            consume();
+            idx = parse_expresion();
+            int ok = espera(TokenType::RBracket);
+        }
+        // Acceso a campo: nombre.campo — el token
+        // del campo queda guardado para hijo1 (no
+        // es un nodo), el mismo pliegue que la
+        // lectura de parse_primario.
+        int campo = 0 - 1;
+        if (es(TokenType::Dot) == 1)
+        {
+            consume();
+            campo = pos;
+            int ok5 = espera(TokenType::Identifier);
+        }
+        int ok2 = espera(TokenType::Assign);
+        int valor = parse_expresion();
+        int ok3 = espera(TokenType::Semicolon);
+        int n = emite(NodeKind::AssignmentStatement, ini);
+        pon_val(n, ini);
+        pon_aux(n, valor);
+        if (idx != 0 - 1)
+        {
+            pon_hijo1(n, idx);
+        }
+        if (campo != 0 - 1)
+        {
+            if (idx != 0 - 1)
+            {
+                // Indice y campo a la vez: error acusado
+                // y el campo no se escribe. Sin esta
+                // guarda, pon_hijo1 pisaba el nodo del
+                // indice y lo dejaba huerfano: emitido
+                // y contado, pero inalcanzable.
+                errores = errores + 1;
+            }
+            else
+            {
+                pon_hijo1(n, campo);
+            }
+        }
+        nsent = nsent + 1;
+        return n;
+    }
+
+    // Nada reconocido: error y avance para no ciclar.
+    // No se emite nodo: devuelve -1 y parse_bloque no
+    // lo encadena.
+    errores = errores + 1;
+    consume();
+    return 0 - 1;
+}
+
+// ============================================================
+// BLOQUES Y FUNCIONES (Parser::parseBlock / parseFunction)
+// ============================================================
+
+int parse_bloque()
+{
+    int ini = pos;
+    int ok = espera(TokenType::LBrace);
+    int n = emite(NodeKind::Block, ini);
+    int primero = 0 - 1;
+    int ultimo = 0 - 1;
+    while (1)
+    {
+        if (pos >= tok_count)
+        {
+            break;
+        }
+        if (es(TokenType::RBrace) == 1)
+        {
+            break;
+        }
+        int s = parse_sentencia();
+        if (s != 0 - 1)
+        {
+            if (primero == 0 - 1)
+            {
+                primero = s;
+                pon_hijo1(n, s);
+            }
+            if (ultimo != 0 - 1)
+            {
+                pon_sig(ultimo, s);
+            }
+            ultimo = s;
+        }
+    }
+    int ok2 = espera(TokenType::RBrace);
+    pon_fin(n, pos);
+    return n;
+}
+
+void pon_param(int tok)
+{
+    if (da_add(dpartok, tok) < 0)
+    {
+        errores = errores + 1;
+        return;
+    }
+    npar = npar + 1;
+}
+
+int parse_funcion()
+{
+    int ini = pos;
+    // El tipo de retorno puede ser int o void
+    // (Ampliacion 1): el token del tipo ya queda
+    // en ini, y el semantico lo lee de nini como
+    // hasta ahora.
+    int ok = 0;
+    if (es(TokenType::KwVoid) == 1)
+    {
+        ok = espera(TokenType::KwVoid);
+    }
+    else
+    {
+        ok = espera(TokenType::KwInt);
+    }
+    int nombre = pos;
+    int ok2 = espera(TokenType::Identifier);
+    int ok3 = espera(TokenType::LParen);
+
+    // Parametros: solamente int (FASE 4.2.1 de Stage 0).
+    // Parameter no es un NodeKind: los parametros viven
+    // en su tabla lateral partok, y la funcion guarda el
+    // inicio de los suyos en naux y cuantos son en
+    // nsize (contrato definitivo, rebanada 15).
+    int pini = npar;
+    if (es(TokenType::RParen) == 0)
+    {
+        int sigue = 1;
+        while (sigue == 1)
+        {
+            int ok4 = espera(TokenType::KwInt);
+            int ptok = pos;
+            int ok5 = espera(TokenType::Identifier);
+            pon_param(ptok);
+            if (es(TokenType::Comma) == 0)
+            {
+                break;
+            }
+            consume();
+        }
+    }
+    int ok6 = espera(TokenType::RParen);
+
+    int n = emite(NodeKind::FunctionDeclaration, ini);
+    pon_val(n, nombre);
+    pon_aux(n, pini);
+    pon_size(n, npar - pini);
+    nfun = nfun + 1;
+
+    int bl = parse_bloque();
+    pon_hijo1(n, bl);
+    pon_fin(n, pos);
+    return n;
+}
+
+// ============================================================
+// CAMPOS DE STRUCT (la tabla lateral de parseStruct).
+//
+// StructField no es un NodeKind (contrato de
+// SemanticAnalyzer.kpp): los campos viven en su tabla
+// lateral, como los parametros en partok. campotipo
+// guarda el tipo como codigo TokenType (KwInt/KwString)
+// donde Stage 0 guarda el texto ("int"/"string") — el
+// mismo criterio que la rebanada 2 aplico a los
+// operadores. campotok guarda el indice del token del
+// nombre del campo.
+// ============================================================
+
+void pon_campo(int tipo, int tok)
+{
+    if (da_add(dcampotipo, tipo) < 0)
+    {
+        errores = errores + 1;
+        return;
+    }
+    da_add(dcampotok, tok);
+    ncam = ncam + 1;
+}
+
+// ============================================================
+// PARSE STRUCT (Parser::parseStruct).
+//
+// struct Nombre
+// {
+//     int campo;
+//     string campo;
+// };
+//
+// Tipos de campo admitidos: int y string, nada mas
+// (Stage 0 no admite structs anidados). La estructura
+// guarda su nombre en nval, el inicio de sus campos
+// en naux y cuantos son en nsize (contrato
+// definitivo, rebanada 15). La declaracion cierra
+// con ';' tras la '}', como exige Stage 0.
+// ============================================================
+
+int parse_estructura()
+{
+    int ini = pos;
+    int ok = espera(TokenType::KwStruct);
+    int nombre = pos;
+    int ok2 = espera(TokenType::Identifier);
+    int ok3 = espera(TokenType::LBrace);
+
+    int cini = ncam;
+    while (1)
+    {
+        if (es(TokenType::RBrace) == 1)
+        {
+            break;
+        }
+        if (pos >= tok_count)
+        {
+            break;
+        }
+        int tipo = 0;
+        if (es(TokenType::KwInt) == 1)
+        {
+            tipo = TokenType::KwInt;
+        }
+        if (es(TokenType::KwString) == 1)
+        {
+            tipo = TokenType::KwString;
+        }
+        if (tipo == 0)
+        {
+            errores = errores + 1;
+            consume();
+        }
+        if (tipo != 0)
+        {
+            consume();
+            int ctok = pos;
+            int ok4 = espera(TokenType::Identifier);
+            int ok5 = espera(TokenType::Semicolon);
+            pon_campo(tipo, ctok);
+        }
+    }
+    int ok6 = espera(TokenType::RBrace);
+    int ok7 = espera(TokenType::Semicolon);
+
+    int n = emite(NodeKind::StructDeclaration, ini);
+    pon_val(n, nombre);
+    pon_aux(n, cini);
+    pon_size(n, ncam - cini);
+    return n;
+}
+
+// ============================================================
+// CONSTANTES DE ENUM (el enumConstants de Stage 0).
+//
+// EnumValue no es un NodeKind (contrato de
+// SemanticAnalyzer.kpp): las constantes viven en su
+// tabla lateral, como los parametros en partok y los
+// campos en campotok. Tres columnas por constante:
+// constenum guarda el token del nombre del enum,
+// constok el token del nombre del miembro y
+// constvalor el valor ya calculado (el automatico o
+// el explicito tras el '=').
+//
+// Stage 0 busca por texto ("Color::Rojo") en un mapa.
+// Aqui no hay texto: hay tinicio/tlargo, que son la
+// direccion del nombre dentro de la fuente. Por eso
+// la tabla 4 carga ademas el arreglo fuente[] con los
+// caracteres de su fuente, y mismo_texto compara dos
+// nombres caracter a caracter — la misma igualdad
+// por contenido del mapa, escrita con posiciones.
+// En las tablas sin '::' nada de esto se mueve.
+// ============================================================
+
+int mismo_texto(int a, int b)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    // Cada largo y cada caracter se lee primero a una
+    // variable local y se compara despues, en
+    // sentencias separadas. La forma directa —
+    // comparar dos cargas calculadas dentro de una
+    // sola expresion — devolvio siempre distinto en
+    // campo, con el IR correcto: es la forma que esta
+    // funcion evita a proposito
+    // (sonda_mismo_texto.kpp).
+    int la = tok_largo[a];
+    int lb = tok_largo[b];
+    if (la != lb)
+    {
+        return 0;
+    }
+    int ia = tok_inicio[a];
+    int ib = tok_inicio[b];
+    int i = 0;
+    for (i = 0; i < la; i = i + 1)
+    {
+        int ca = fuente[ia + i];
+        int cb = fuente[ib + i];
+        if (ca != cb)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void pon_const(int etok, int tok, int valor)
+{
+    if (da_add(dconstenum, etok) < 0)
+    {
+        errores = errores + 1;
+        return;
+    }
+    da_add(dconstok, tok);
+    da_add(dconstvalor, valor);
+    nconst = nconst + 1;
+}
+
+// busca_const(etok, mtok): el valor de la constante
+// etok::mtok, o -1 si no esta declarada. Los valores
+// de enum nunca son negativos (Stage 0 solo admite
+// numeros tras el '='), asi que -1 es centinela
+// limpio.
+int busca_const(int etok, int mtok)
+{
+    int i = 0;
+    for (i = 0; i < nconst; i = i + 1)
+    {
+        if (mismo_texto(etok, da_get(dconstenum, i)) == 1)
+        {
+            if (mismo_texto(mtok, da_get(dconstok, i)) == 1)
+            {
+                return da_get(dconstvalor, i);
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+// ============================================================
+// ES PRINT INT (el chequeo de texto de Stage 0).
+//
+// print_int no es palabra clave en K++: el Lexer lo
+// entrega como Identifier, y Stage 0 lo reconoce en
+// parseStatement comparando el texto del token
+// (current().text == "print_int"). Aqui el nombre se
+// reconoce caracter a caracter sobre fuente[], con
+// el largo primero. Cada caracter se lee a una
+// variable local antes de comparar — la forma
+// probada en campo por mismo_texto: dos cargas
+// calculadas comparadas dentro de una sola
+// expresion devuelven siempre distinto.
+// ============================================================
+
+int es_print_int(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 9)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    int c4 = fuente[base + 4];
+    int c5 = fuente[base + 5];
+    int c6 = fuente[base + 6];
+    int c7 = fuente[base + 7];
+    int c8 = fuente[base + 8];
+    if (c0 != 112)
+    {
+        return 0;
+    }
+    if (c1 != 114)
+    {
+        return 0;
+    }
+    if (c2 != 105)
+    {
+        return 0;
+    }
+    if (c3 != 110)
+    {
+        return 0;
+    }
+    if (c4 != 116)
+    {
+        return 0;
+    }
+    if (c5 != 95)
+    {
+        return 0;
+    }
+    if (c6 != 105)
+    {
+        return 0;
+    }
+    if (c7 != 110)
+    {
+        return 0;
+    }
+    if (c8 != 116)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+// ============================================================
+// PARSE ENUM (Parser::parseEnum).
+//
+// enum Nombre
+// {
+//     Miembro,
+//     Miembro = 10,
+//     Miembro
+// };
+//
+// El valor corre solo desde 0; tras un valor
+// explicito el siguiente continua en ese valor + 1
+// (el nextValue de Stage 0). Un miembro repetido
+// dentro del mismo enum es error — el chequeo del
+// mapa de Stage 0, limitado a este enum: el mismo
+// nombre en OTRO enum es legal (bateria L08). La
+// declaracion cierra con ';' tras la '}', como la
+// de struct. El nodo guarda su nombre en nval, el
+// inicio de sus constantes en naux y cuantas son
+// en nsize (contrato definitivo, rebanada 15).
+// ============================================================
+
+int parse_enum()
+{
+    int tok_valor[256];
+    int ini = pos;
+    int ok = espera(TokenType::KwEnum);
+    int nombre = pos;
+    int ok2 = espera(TokenType::Identifier);
+    int ok3 = espera(TokenType::LBrace);
+
+    int cini = nconst;
+    int siguiente = 0;
+    while (1)
+    {
+        if (es(TokenType::RBrace) == 1)
+        {
+            break;
+        }
+        if (pos >= tok_count)
+        {
+            break;
+        }
+        int mtok = pos;
+        int ok4 = espera(TokenType::Identifier);
+        int valor = siguiente;
+        if (es(TokenType::Assign) == 1)
+        {
+            consume();
+            valor = tok_valor[pos];
+            int ok5 = espera(TokenType::Number);
+        }
+        siguiente = valor + 1;
+
+        int dup = 0;
+        int i = cini;
+        for (i = cini; i < nconst; i = i + 1)
+        {
+            if (mismo_texto(mtok, da_get(dconstok, i)) == 1)
+            {
+                dup = 1;
+            }
+        }
+        if (dup == 1)
+        {
+            errores = errores + 1;
+        }
+        if (dup == 0)
+        {
+            pon_const(nombre, mtok, valor);
+        }
+
+        if (es(TokenType::RBrace) == 0)
+        {
+            int ok6 = espera(TokenType::Comma);
+        }
+    }
+    int ok7 = espera(TokenType::RBrace);
+    int ok8 = espera(TokenType::Semicolon);
+
+    int n = emite(NodeKind::EnumDeclaration, ini);
+    pon_val(n, nombre);
+    pon_aux(n, cini);
+    pon_size(n, nconst - cini);
+    return n;
+}
+
+// ============================================================
+// PROGRAMA (Parser::parse, nivel superior de la rebanada)
+// ============================================================
+
+// mira(salto, t): el checkAhead de Stage 0 — el tipo del
+// token que esta `salto` posiciones adelante, sin consumir.
+int mira(int salto, int t)
+{
+    int tok_tipo[256];
+    if (pos + salto < tok_count)
+    {
+        if (tok_tipo[pos + salto] == t)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// int nombre; a nivel de programa: el escalar compartido
+// (parseGlobalVariable de Stage 0, la bifurcacion de L19).
+int parse_global()
+{
+    int ini = pos;
+    consume();
+    int nombre = pos;
+    int ok = espera(TokenType::Identifier);
+    int ok2 = espera(TokenType::Semicolon);
+    int n = emite(NodeKind::VariableDeclaration, ini);
+    pon_val(n, nombre);
+    return n;
+}
+
+int parse_programa()
+{
+    int ini = pos;
+    int n = emite(NodeKind::Program, ini);
+    int primero = 0 - 1;
+    int ultimo = 0 - 1;
+    while (pos < tok_count)
+    {
+        int hecho = 0;
+        int d = 0 - 1;
+        // El despacho es exclusivo: una declaracion
+        // por vuelta, guardada por la propia bandera
+        // hecho. Sin la guarda, tras un struct o un
+        // enum el token actual ya es el int de la
+        // funcion siguiente y la rama de int volvia
+        // a disparar en la misma vuelta, pisando a
+        // d: solo se enlazaba la funcion y la primera
+        // declaracion quedaba fuera de la cadena
+        // (alcanzables daba nnodos - 1 en las
+        // corridas 2, 3, 4 y 7).
+        if (es(TokenType::KwStruct) == 1)
+        {
+            // struct primero y enum detras, el orden
+            // del parse() de Stage 0.
+            d = parse_estructura();
+            hecho = 1;
+        }
+        if (hecho == 0)
+        {
+            if (es(TokenType::KwEnum) == 1)
+            {
+                d = parse_enum();
+                hecho = 1;
+            }
+        }
+        if (hecho == 0)
+        {
+            if (es(TokenType::KwInt) == 1)
+            {
+                // La bifurcacion de Stage 0 (parse()):
+                // int nombre;  -> variable global
+                // int nombre(  -> funcion
+                // La decision se lee una sola vez,
+                // antes de analizar nada (el patron
+                // esif de la rebanada 6): tras la
+                // global, un segundo mira() miraria
+                // la funcion siguiente y pisaria a d.
+                int esglobal = mira(2, TokenType::Semicolon);
+                if (esglobal == 1)
+                {
+                    d = parse_global();
+                }
+                if (esglobal == 0)
+                {
+                    d = parse_funcion();
+                }
+                hecho = 1;
+            }
+        }
+        if (hecho == 0)
+        {
+            if (es(TokenType::KwVoid) == 1)
+            {
+                d = parse_funcion();
+                hecho = 1;
+            }
+        }
+        if (hecho == 0)
+        {
+            errores = errores + 1;
+            consume();
+        }
+        if (d > 0)
+        {
+            if (primero == 0 - 1)
+            {
+                primero = d;
+                pon_hijo1(n, d);
+            }
+            if (ultimo != 0 - 1)
+            {
+                pon_sig(ultimo, d);
+            }
+            ultimo = d;
+        }
+    }
+    pon_fin(n, pos);
+    return n;
+}
+
+// ============================================================
+// FUENTES Y ESCANEO — el acople con el Lexer
+// (rebanada 14). Cada carga_fuenteN escribe el
+// texto de su fuente en fuente[]; escanea()
+// registra la tabla compartida que el Parser
+// consume. Las nueve fuentes reproducen, token
+// a token, las tablas literales que sustituyen.
+// ============================================================
+
+// ============================================================
+// ESCANEA — EL LEXER COMO SUBRUTINA (el contrato
+// compartido, rebanada 14).
+//
+// Lee fuente[0..total) y registra cada token en la
+// tabla compartida: tok_tipo, tok_inicio, tok_largo
+// y tok_valor — el valor numerico ya calculado para
+// los Number, acumulado digito a digito al escanear.
+// Los errores lexicos se suman al errores compartido
+// (escanea no lo pone a cero: en el programa acoplado
+// cada corrida lo reinicia antes).
+//
+// Es void desde la reescritura del Stage 1: ningun
+// llamador leia el valor que devolvia (main lo
+// capturaba en una variable muerta y el Parser en
+// quince). El conteo queda en tok_count, el escalar
+// compartido. Al salir deja pos = 0, listo para que
+// el Parser consuma la tabla sin copiar un solo token.
+// ============================================================
+void escanea()
+{
+    int fuente[1024];
+    int tok_tipo[256];
+    int tok_inicio[256];
+    int tok_largo[256];
+    int tok_valor[256];
+    int inicio = 0;
+    int largo = 0;
+    int tipo = 0;
+    int valor = 0;
+    int c = 0;
+    int d = 0;
+    int hay_token = 0;
+    pos = 0;
+    tok_count = 0;
+    while (pos < total)
+    {
+        c = fuente[pos];
+        hay_token = 0;
+        tipo = 0;
+        inicio = pos;
+        largo = 1;
+        valor = 0;
+
+        if (c == 32 || c == 9 || c == 10 || c == 13)
+        {
+            pos = pos + 1;
+        }
+        else if (c == 47)
+        {
+            d = 0;
+            if (pos + 1 < total)
+            {
+                d = fuente[pos + 1];
+            }
+            if (d == 47)
+            {
+                pos = pos + 2;
+                while (pos < total)
+                {
+                    c = fuente[pos];
+                    if (c == 10)
+                    {
+                        break;
+                    }
+                    pos = pos + 1;
+                }
+            }
+            else
+            {
+                tipo = 17;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+        }
+        else if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95)
+        {
+            while (pos < total)
+            {
+                c = fuente[pos];
+                if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95)
+                {
+                    pos = pos + 1;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            largo = pos - inicio;
+            tipo = 1;
+            if (largo == 2)
+            {
+                if (fuente[inicio] == 105)
+                {
+                    if (fuente[inicio + 1] == 102)
+                    {
+                        tipo = 10;
+                    }
+                }
+            }
+            if (largo == 3)
+            {
+                if (fuente[inicio] == 105)
+                {
+                    if (fuente[inicio + 1] == 110)
+                    {
+                        if (fuente[inicio + 2] == 116)
+                        {
+                            tipo = 4;
+                        }
+                    }
+                }
+                if (fuente[inicio] == 102)
+                {
+                    if (fuente[inicio + 1] == 111)
+                    {
+                        if (fuente[inicio + 2] == 114)
+                        {
+                            tipo = 41;
+                        }
+                    }
+                }
+            }
+            if (largo == 4)
+            {
+                if (fuente[inicio] == 101)
+                {
+                    if (fuente[inicio + 1] == 110)
+                    {
+                        if (fuente[inicio + 2] == 117)
+                        {
+                            if (fuente[inicio + 3] == 109)
+                            {
+                                tipo = 7;
+                            }
+                        }
+                    }
+                    if (fuente[inicio + 1] == 108)
+                    {
+                        if (fuente[inicio + 2] == 115)
+                        {
+                            if (fuente[inicio + 3] == 101)
+                            {
+                                tipo = 11;
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 118)
+                {
+                    if (fuente[inicio + 1] == 111)
+                    {
+                        if (fuente[inicio + 2] == 105)
+                        {
+                            if (fuente[inicio + 3] == 100)
+                            {
+                                tipo = 39;
+                            }
+                        }
+                    }
+                }
+            }
+            if (largo == 5)
+            {
+                if (fuente[inicio] == 112)
+                {
+                    if (fuente[inicio + 1] == 114)
+                    {
+                        if (fuente[inicio + 2] == 105)
+                        {
+                            if (fuente[inicio + 3] == 110)
+                            {
+                                if (fuente[inicio + 4] == 116)
+                                {
+                                    tipo = 9;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 119)
+                {
+                    if (fuente[inicio + 1] == 104)
+                    {
+                        if (fuente[inicio + 2] == 105)
+                        {
+                            if (fuente[inicio + 3] == 108)
+                            {
+                                if (fuente[inicio + 4] == 101)
+                                {
+                                    tipo = 12;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 98)
+                {
+                    if (fuente[inicio + 1] == 114)
+                    {
+                        if (fuente[inicio + 2] == 101)
+                        {
+                            if (fuente[inicio + 3] == 97)
+                            {
+                                if (fuente[inicio + 4] == 107)
+                                {
+                                    tipo = 40;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (largo == 6)
+            {
+                if (fuente[inicio] == 115)
+                {
+                    if (fuente[inicio + 1] == 116)
+                    {
+                        if (fuente[inicio + 2] == 114)
+                        {
+                            if (fuente[inicio + 3] == 105)
+                            {
+                                if (fuente[inicio + 4] == 110)
+                                {
+                                    if (fuente[inicio + 5] == 103)
+                                    {
+                                        tipo = 5;
+                                    }
+                                }
+                            }
+                        }
+                        if (fuente[inicio + 2] == 114)
+                        {
+                            if (fuente[inicio + 3] == 117)
+                            {
+                                if (fuente[inicio + 4] == 99)
+                                {
+                                    if (fuente[inicio + 5] == 116)
+                                    {
+                                        tipo = 6;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (fuente[inicio] == 114)
+                {
+                    if (fuente[inicio + 1] == 101)
+                    {
+                        if (fuente[inicio + 2] == 116)
+                        {
+                            if (fuente[inicio + 3] == 117)
+                            {
+                                if (fuente[inicio + 4] == 114)
+                                {
+                                    if (fuente[inicio + 5] == 110)
+                                    {
+                                        tipo = 8;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            hay_token = 1;
+        }
+        else if (c >= 48 && c <= 57)
+        {
+            // El prefijo 0x (Ampliacion 4): el literal
+            // hexadecimal nace como un Number mas, con
+            // su valor calculado en el lexing. La guarda
+            // de fin de fuente va en un if aparte, como
+            // en el resto de la pieza, y la base viaja
+            // en d: 10 decimal, 16 hexadecimal.
+            d = 10;
+            if (c == 48)
+            {
+                if (pos + 1 < total)
+                {
+                    if (fuente[pos + 1] == 120 || fuente[pos + 1] == 88)
+                    {
+                        d = 16;
+                        pos = pos + 2;
+                    }
+                }
+            }
+            while (pos < total)
+            {
+                c = fuente[pos];
+                if (c >= 48 && c <= 57)
+                {
+                    valor = valor * d + (c - 48);
+                    pos = pos + 1;
+                }
+                else if (d == 16 && c >= 97 && c <= 102)
+                {
+                    valor = valor * 16 + (c - 87);
+                    pos = pos + 1;
+                }
+                else if (d == 16 && c >= 65 && c <= 70)
+                {
+                    valor = valor * 16 + (c - 55);
+                    pos = pos + 1;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            largo = pos - inicio;
+            tipo = 2;
+            hay_token = 1;
+            if (d == 16)
+            {
+                if (largo == 2)
+                {
+                    // Un 0x sin un solo digito detras:
+                    // error, como en Stage 0, y el
+                    // token no nace.
+                    errores = errores + 1;
+                    hay_token = 0;
+                }
+            }
+        }
+        else if (c == 34)
+        {
+            pos = pos + 1;
+            inicio = pos;
+            while (pos < total)
+            {
+                c = fuente[pos];
+                if (c == 34)
+                {
+                    break;
+                }
+                pos = pos + 1;
+            }
+            largo = pos - inicio;
+            if (pos < total)
+            {
+                pos = pos + 1;
+            }
+            tipo = 3;
+            hay_token = 1;
+        }
+        else
+        {
+            d = 0;
+            if (pos + 1 < total)
+            {
+                d = fuente[pos + 1];
+            }
+            if (c == 43)
+            {
+                tipo = 14;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 45)
+            {
+                tipo = 15;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 42)
+            {
+                tipo = 16;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 37)
+            {
+                tipo = 18;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 94)
+            {
+                tipo = 19;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 40)
+            {
+                tipo = 29;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 41)
+            {
+                tipo = 30;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 91)
+            {
+                tipo = 31;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 93)
+            {
+                tipo = 32;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 123)
+            {
+                tipo = 33;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 125)
+            {
+                tipo = 34;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 44)
+            {
+                tipo = 35;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 59)
+            {
+                tipo = 36;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 46)
+            {
+                tipo = 38;
+                hay_token = 1;
+                pos = pos + 1;
+            }
+            else if (c == 61)
+            {
+                if (d == 61)
+                {
+                    tipo = 20;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 13;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 33)
+            {
+                if (d == 61)
+                {
+                    tipo = 21;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 28;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 60)
+            {
+                if (d == 60)
+                {
+                    tipo = 44;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else if (d == 61)
+                {
+                    tipo = 23;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 22;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 62)
+            {
+                if (d == 62)
+                {
+                    tipo = 45;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else if (d == 61)
+                {
+                    tipo = 25;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 24;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 38)
+            {
+                if (d == 38)
+                {
+                    tipo = 26;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 42;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 124)
+            {
+                if (d == 124)
+                {
+                    tipo = 27;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    tipo = 43;
+                    hay_token = 1;
+                    pos = pos + 1;
+                }
+            }
+            else if (c == 58)
+            {
+                if (d == 58)
+                {
+                    tipo = 37;
+                    largo = 2;
+                    hay_token = 1;
+                    pos = pos + 2;
+                }
+                else
+                {
+                    errores = errores + 1;
+                    pos = pos + 1;
+                }
+            }
+            else
+            {
+                errores = errores + 1;
+                pos = pos + 1;
+            }
+        }
+
+        if (hay_token == 1)
+        {
+            if (tok_count < 256)
+            {
+                tok_tipo[tok_count] = tipo;
+                tok_inicio[tok_count] = inicio;
+                tok_largo[tok_count] = largo;
+                tok_valor[tok_count] = valor;
+                tok_count = tok_count + 1;
+            }
+            else
+            {
+                errores = errores + 1;
+            }
+        }
+    }
+    pos = 0;
+}
+
+void reinicia()
+{
+    inicia_parser();
+    pos = 0;
+    nnodos = 0;
+    errores = 0;
+    nfun = 0;
+    nsent = 0;
+    npar = 0;
+    ncam = 0;
+    nconst = 0;
+    crea_tablas();
+}
+
+// ============================================================
+// EL PUENTE DE NODOS (codigo nuevo de D-1).
+//
+// El Parser sellado emite los nodos en sus DynamicArray de
+// FrontendArena (dnkind y familia, migracion M-4); el SA y
+// el IRGenerator sellados los leen de los arreglos planos
+// del contrato AST (nkind y familia). El puente copia los
+// ocho arreglos y las tres tablas laterales que el contrato
+// comparte (parametros y campos), en el orden del contrato.
+// Las constantes de enum no cruzan: ninguna pieza de atras
+// las lee de una tabla (viajan en los propios nodos).
+// Si una tabla pasa de 256, el puente acusa en
+// errores_driver y el Driver se detiene en la etapa PUENTE.
+// ============================================================
+
+void puente_nodos()
+{
+    int nkind[256];
+    int nini[256];
+    int nfin[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    int campotipo[256];
+    int campotok[256];
+    if (nnodos > 256)
+    {
+        errores_driver = errores_driver + 1;
+        return;
+    }
+    int i = 0;
+    while (i < nnodos)
+    {
+        nkind[i] = da_get(dnkind, i);
+        nini[i] = da_get(dnini, i);
+        nfin[i] = da_get(dnfin, i);
+        nhijo1[i] = da_get(dnhijo1, i);
+        nsig[i] = da_get(dnsig, i);
+        nval[i] = da_get(dnval, i);
+        naux[i] = da_get(dnaux, i);
+        nsize[i] = da_get(dnsize, i);
+        i = i + 1;
+    }
+    int np = da_count(dpartok);
+    if (np > 256)
+    {
+        errores_driver = errores_driver + 1;
+        return;
+    }
+    i = 0;
+    while (i < np)
+    {
+        partok[i] = da_get(dpartok, i);
+        i = i + 1;
+    }
+    int nc = da_count(dcampotok);
+    if (nc > 256)
+    {
+        errores_driver = errores_driver + 1;
+        return;
+    }
+    i = 0;
+    while (i < nc)
+    {
+        campotipo[i] = da_get(dcampotipo, i);
+        campotok[i] = da_get(dcampotok, i);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// HANDLES DE LA ARENA (M-5).
+//
+// Los diez DynamicArray de CompilerArena donde viven
+// las tablas del analizador: dsstruct, dsglobal y
+// dsfuncion (los registros de la SA-1), dssim_tok,
+// dssim_tipo, dssim_tam y dssim_nivel (los simbolos
+// de ambito de la SA-2) y dscampo_struct, dscampo_tok
+// y dscampo_tipo (las filas de campos de la SA-3).
+// ============================================================
+
+int dsstruct;
+int dsglobal;
+int dsfuncion;
+int dssim_tok;
+int dssim_tipo;
+int dssim_tam;
+int dssim_nivel;
+int dscampo_struct;
+int dscampo_tok;
+int dscampo_tipo;
+
+int nsstruct;
+int nsglobal;
+int nsfunc;
+int hay_main;
+int serr_count;
+// El eco de la Ampliacion 1: el token del tipo de
+// retorno de la funcion bajo analisis, y la bandera
+// de llamada en posicion de sentencia.
+int tipo_ret_actual;
+int llamada_en_sentencia;
+// El eco de la Ampliacion 2: la profundidad de
+// while del analisis en curso.
+int nivel_ciclo;
+
+int nsim;
+
+int nscampo;
+
+// ============================================================
+// INICIA EL SA.
+//
+// El papel del driver en miniatura, como en las demas
+// piezas migradas: inicia la biblioteca y hace nacer
+// las regiones en el orden del plan de solape —
+// Source sobre el bloque A (1024) y Frontend sobre el
+// bloque B (1024), que esta pieza no usa (su fuente,
+// sus tokens y sus nodos son las copias selladas de
+// las filas del Lexer y del Parser, migradas en sus
+// piezas en M-3 y M-4), y Compiler sobre el bloque C
+// con la reserva entera del bloque (8192), donde
+// viven los diez DynamicArray. Backend y Output
+// nacen en sus fases, en las piezas que las
+// gobiernan. No imprime nada: la corriente de la
+// sonda queda intacta.
+// ============================================================
+
+void inicia_sa()
+{
+    inicia_arena();
+    region_source = arena_create(1024);
+    region_frontend = arena_create(1024);
+    region_compiler = arena_create(8192);
+}
+
+// ============================================================
+// CREA LAS TABLAS.
+//
+// Los diez DynamicArray de CompilerArena, nacidos a
+// 256: 256 es hoy capacidad de nacimiento, ya no
+// techo: al registrar el elemento 257 la estructura
+// crece. Los crea analiza() al arrancar cada
+// analisis, y los movimientos de la sonda en los
+// suyos.
+// ============================================================
+
+void crea_tablas_sa()
+{
+    dsstruct = da_create(region_compiler, 256);
+    dsglobal = da_create(region_compiler, 256);
+    dsfuncion = da_create(region_compiler, 256);
+    dscampo_struct = da_create(region_compiler, 256);
+    dscampo_tok = da_create(region_compiler, 256);
+    dscampo_tipo = da_create(region_compiler, 256);
+    dssim_tok = da_create(region_compiler, 256);
+    dssim_tipo = da_create(region_compiler, 256);
+    dssim_tam = da_create(region_compiler, 256);
+    dssim_nivel = da_create(region_compiler, 256);
+}
+
+void anota_error(int codigo)
+{
+    int serr_codigo[256];
+    if (serr_count < 256)
+    {
+        serr_codigo[serr_count] = codigo;
+        serr_count = serr_count + 1;
+    }
+}
+
+int es_main(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 4)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    if (c0 != 109)
+    {
+        return 0;
+    }
+    if (c1 != 97)
+    {
+        return 0;
+    }
+    if (c2 != 105)
+    {
+        return 0;
+    }
+    if (c3 != 110)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+int busca_struct(int tok)
+{
+    int i = 0;
+    for (i = 0; i < nsstruct; i = i + 1)
+    {
+        int t = da_get(dsstruct, i);
+        if (mismo_texto(t, tok) == 1)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int busca_global(int tok)
+{
+    int i = 0;
+    for (i = 0; i < nsglobal; i = i + 1)
+    {
+        int t = da_get(dsglobal, i);
+        if (mismo_texto(t, tok) == 1)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int busca_funcion(int tok)
+{
+    int i = 0;
+    for (i = 0; i < nsfunc; i = i + 1)
+    {
+        int t = da_get(dsfuncion, i);
+        if (mismo_texto(t, tok) == 1)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void registra_estructuras()
+{
+    int nhijo1[256];
+    int nsig[256];
+    int nkind[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int campotipo[256];
+    int campotok[256];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        if (nkind[d] == NodeKind::StructDeclaration)
+        {
+            int nombre = nval[d];
+            if (busca_struct(nombre) == 1)
+            {
+                anota_error(1);
+            }
+            else
+            {
+                // Guarda de la arena (M-5): el primer
+                // da_add hace de guarda — si devuelve -1,
+                // acusa el 50 de siempre y la estructura
+                // no se registra; si agrega, la cuenta
+                // avanza y los campos nacen en la misma
+                // pasada.
+                int ri = da_add(dsstruct, nombre);
+                if (ri == 0 - 1)
+                {
+                    anota_error(50);
+                }
+                else
+                {
+                    nsstruct = nsstruct + 1;
+                    // Los campos nacen en esta misma pasada,
+                    // como en Stage 0: la tabla de campos de
+                    // la SA-3 se llena aqui, campo a campo,
+                    // en el orden de la declaracion.
+                    int inicio = naux[d];
+                    int cantidad = nsize[d];
+                    // El intervalo se valida ANTES de leer:
+                    // inicio no negativo, cantidad no
+                    // negativa, inicio + cantidad dentro
+                    // de la tabla lateral (256). Intervalo
+                    // invalido: acusa 51 y no se lee nada
+                    // (la estructura queda registrada sin
+                    // campos). La misma disciplina que en
+                    // Win2WSL: validar a la entrada.
+                    int malo = 0;
+                    if (inicio < 0)
+                    {
+                        malo = 1;
+                    }
+                    if (cantidad < 0)
+                    {
+                        malo = 1;
+                    }
+                    if (inicio + cantidad > 256)
+                    {
+                        malo = 1;
+                    }
+                    if (malo == 1)
+                    {
+                        anota_error(51);
+                        cantidad = 0;
+                    }
+                    int j = 0;
+                    for (j = 0; j < cantidad; j = j + 1)
+                    {
+                        int ftok = campotok[inicio + j];
+                        int fcodigo = campotipo[inicio + j];
+                        if (busca_campo_fila(nombre, ftok) == 1)
+                        {
+                            anota_error(38);
+                        }
+                        if (fcodigo != TokenType::KwInt)
+                        {
+                            if (fcodigo != TokenType::KwString)
+                            {
+                                anota_error(39);
+                            }
+                        }
+                        agrega_campo(nombre, ftok, fcodigo);
+                    }
+                }
+            }
+        }
+        d = nsig[d];
+    }
+}
+
+void registra_globales()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::VariableDeclaration)
+        {
+            int nombre = nval[d];
+            if (busca_global(nombre) == 1)
+            {
+                anota_error(2);
+            }
+            else
+            {
+                // Guarda de la arena (M-5): el primer
+                // da_add hace de guarda.
+                int ri = da_add(dsglobal, nombre);
+                if (ri == 0 - 1)
+                {
+                    anota_error(50);
+                }
+                else
+                {
+                    nsglobal = nsglobal + 1;
+                }
+            }
+        }
+        d = nsig[d];
+    }
+}
+
+void registra_funciones()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::FunctionDeclaration)
+        {
+            int nombre = nval[d];
+            if (es_main(nombre) == 1)
+            {
+                hay_main = 1;
+            }
+            if (busca_funcion(nombre) == 1)
+            {
+                anota_error(3);
+            }
+            else
+            {
+                // Guarda de la arena (M-5): el primer
+                // da_add hace de guarda.
+                int ri = da_add(dsfuncion, nombre);
+                if (ri == 0 - 1)
+                {
+                    anota_error(50);
+                }
+                else
+                {
+                    nsfunc = nsfunc + 1;
+                }
+            }
+        }
+        d = nsig[d];
+    }
+}
+
+void analiza()
+{
+    // El mundo renace en la puerta del analisis
+    // (M-5): regiones recien nacidas y las diez
+    // tablas vacias en CompilerArena, como el
+    // reinicia() del Parser en M-4 — main corre
+    // una tabla por analisis y analiza ya era el
+    // punto que lo reseteaba todo.
+    inicia_sa();
+    crea_tablas_sa();
+    serr_count = 0;
+    llamada_en_sentencia = 0;
+    nivel_ciclo = 0;
+    nsstruct = 0;
+    nsglobal = 0;
+    nsfunc = 0;
+    hay_main = 0;
+    nscampo = 0;
+    registra_estructuras();
+    registra_globales();
+    registra_funciones();
+    analiza_cuerpos();
+    // El chequeo de main va DESPUES de los cuerpos:
+    // su posicion en analyze() de Stage 0 (en la
+    // SA-1 iba tras los registros porque aun no
+    // habia cuerpos que analizar).
+    if (hay_main == 0)
+    {
+        anota_error(4);
+    }
+}
+
+void entra_ambito()
+{
+    nivel = nivel + 1;
+}
+
+void sale_ambito()
+{
+    while (1)
+    {
+        if (nsim == 0)
+        {
+            break;
+        }
+        int u = da_get(dssim_nivel, nsim - 1);
+        if (u != nivel)
+        {
+            break;
+        }
+        nsim = nsim - 1;
+    }
+    nivel = nivel - 1;
+}
+
+void registra_simbolo(int tok, int tipo, int tam)
+{
+    // Guarda de la arena (M-5): si la cuenta de la
+    // pieza va por debajo de la del DynamicArray —
+    // el hueco que dejo un ambito al cerrarse, o el
+    // reinicio por funcion de analiza_funcion — el
+    // simbolo reusa su celda con da_set, como el
+    // arreglo fijo se sobrescribia: bajar la cuenta
+    // es el sale_ambito de siempre y la arena no se
+    // entera. Si hay que crecer, el primer da_add
+    // hace de guarda: si devuelve -1, acusa el 50 de
+    // siempre y no escribe nada; si agrega, agregan
+    // los otros tres y la cuenta avanza.
+    if (nsim < da_count(dssim_tok))
+    {
+        da_set(dssim_tok, nsim, tok);
+        da_set(dssim_tipo, nsim, tipo);
+        da_set(dssim_tam, nsim, tam);
+        da_set(dssim_nivel, nsim, nivel);
+        nsim = nsim + 1;
+        return;
+    }
+    int ri = da_add(dssim_tok, tok);
+    if (ri == 0 - 1)
+    {
+        anota_error(50);
+        return;
+    }
+    da_add(dssim_tipo, tipo);
+    da_add(dssim_tam, tam);
+    da_add(dssim_nivel, nivel);
+    nsim = nsim + 1;
+}
+
+int busca_local(int tok)
+{
+    int i = nsim - 1;
+    for (i = nsim - 1; i >= 0; i = i - 1)
+    {
+        int t = da_get(dssim_tok, i);
+        if (mismo_texto(t, tok) == 1)
+        {
+            return i;
+        }
+    }
+    return 0 - 1;
+}
+
+int busca_en_actual(int tok)
+{
+    int i = 0;
+    for (i = 0; i < nsim; i = i + 1)
+    {
+        int t = da_get(dssim_tok, i);
+        int nv = da_get(dssim_nivel, i);
+        if (nv == nivel)
+        {
+            if (mismo_texto(t, tok) == 1)
+            {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+int es_int(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 3)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    if (c0 != 105)
+    {
+        return 0;
+    }
+    if (c1 != 110)
+    {
+        return 0;
+    }
+    if (c2 != 116)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+// La companera de es_int para el tipo void
+// (Ampliacion 1): el texto del token es "void",
+// largo 4 y caracteres 118, 111, 105, 100.
+int es_void(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 4)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    if (c0 != 118)
+    {
+        return 0;
+    }
+    if (c1 != 111)
+    {
+        return 0;
+    }
+    if (c2 != 105)
+    {
+        return 0;
+    }
+    if (c3 != 100)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+void camina_bloque(int b)
+{
+    int nhijo1[256];
+    int nsig[256];
+    entra_ambito();
+    int s = nhijo1[b];
+    while (s != 0 - 1)
+    {
+        analiza_sentencia(s);
+        s = nsig[s];
+    }
+    sale_ambito();
+}
+
+void analiza_sentencia(int s)
+{
+    int nkind[256];
+    int nini[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int tok_tipo[256];
+    if (nkind[s] == NodeKind::Block)
+    {
+        camina_bloque(s);
+        return;
+    }
+    if (nkind[s] == NodeKind::VariableDeclaration)
+    {
+        int nombre = nval[s];
+        int tipo = nini[s];
+        if (busca_en_actual(nombre) == 1)
+        {
+            anota_error(8);
+            return;
+        }
+        if (nsize[s] > 0)
+        {
+            if (es_int(tipo) == 0)
+            {
+                anota_error(9);
+                return;
+            }
+            if (nhijo1[s] != 0 - 1)
+            {
+                anota_error(10);
+                return;
+            }
+        }
+        // El inicializador se analiza ANTES de validar el
+        // tipo declarado y ANTES de registrar la variable:
+        // int x = x; acusa la x de dentro (orden de Stage 0).
+        int init = nhijo1[s];
+        if (init != 0 - 1)
+        {
+            analiza_expresion(init);
+        }
+        int tt = tok_tipo[tipo];
+        int valido = 0;
+        if (tt == TokenType::KwInt)
+        {
+            valido = 1;
+        }
+        if (tt == TokenType::KwString)
+        {
+            valido = 1;
+        }
+        if (tt == TokenType::Identifier)
+        {
+            if (busca_struct(tipo) == 1)
+            {
+                valido = 1;
+            }
+        }
+        if (valido == 0)
+        {
+            anota_error(11);
+            return;
+        }
+        if (init != 0 - 1)
+        {
+            int it = inferir_tipo(init);
+            if (it == 0 - 2)
+            {
+                anota_error(16);
+            }
+            else
+            {
+                if (it != 0 - 1)
+                {
+                    if (tipos_iguales(it, tipo) == 0)
+                    {
+                        anota_error(16);
+                    }
+                }
+            }
+        }
+        registra_simbolo(nombre, tipo, nsize[s]);
+        return;
+    }
+    if (nkind[s] == NodeKind::AssignmentStatement)
+    {
+        int nombre = nval[s];
+        int iloc = busca_local(nombre);
+        if (iloc == 0 - 1)
+        {
+            if (busca_global(nombre) == 0)
+            {
+                anota_error(12);
+                return;
+            }
+        }
+        int campo = es_campo(s);
+        int idx = nhijo1[s];
+        if (campo == 0)
+        {
+            if (idx != 0 - 1)
+            {
+                int tam = tamano_de(nombre);
+                if (tam <= 0)
+                {
+                    anota_error(23);
+                    return;
+                }
+                if (nkind[idx] == NodeKind::IntegerLiteral)
+                {
+                    int lv = nval[idx];
+                    if (lv < 0)
+                    {
+                        anota_error(24);
+                        return;
+                    }
+                    if (lv >= tam)
+                    {
+                        anota_error(24);
+                        return;
+                    }
+                }
+                int ttipo = tipo_de(nombre);
+                if (es_int(ttipo) == 0)
+                {
+                    anota_error(25);
+                    return;
+                }
+                analiza_expresion(idx);
+                int itx = inferir_tipo(idx);
+                if (es_tipo_int_inferido(itx) == 0)
+                {
+                    anota_error(26);
+                    return;
+                }
+            }
+        }
+        int valor = naux[s];
+        if (valor == 0 - 1)
+        {
+            anota_error(21);
+            return;
+        }
+        analiza_expresion(valor);
+        int destino = tipo_de(nombre);
+        if (campo == 1)
+        {
+            if (busca_struct(destino) == 1)
+            {
+                int fct = tipo_de_campo(destino, idx);
+                if (fct != 0 - 1)
+                {
+                    destino = fct;
+                }
+            }
+        }
+        int it2 = inferir_tipo(valor);
+        if (it2 == 0 - 2)
+        {
+            anota_error(22);
+        }
+        else
+        {
+            if (it2 != 0 - 1)
+            {
+                if (tipos_iguales(it2, destino) == 0)
+                {
+                    anota_error(22);
+                }
+            }
+        }
+        return;
+    }
+    if (nkind[s] == NodeKind::IfStatement)
+    {
+        int cond = nhijo1[s];
+        if (cond == 0 - 1)
+        {
+            anota_error(17);
+            anota_error(18);
+            return;
+        }
+        analiza_expresion(cond);
+        int thenb = nsig[cond];
+        if (thenb == 0 - 1)
+        {
+            anota_error(18);
+            return;
+        }
+        camina_bloque(thenb);
+        int els = nsig[thenb];
+        if (els != 0 - 1)
+        {
+            camina_bloque(els);
+        }
+        return;
+    }
+    if (nkind[s] == NodeKind::WhileStatement)
+    {
+        int cond = nhijo1[s];
+        if (cond == 0 - 1)
+        {
+            anota_error(19);
+            anota_error(20);
+            return;
+        }
+        analiza_expresion(cond);
+        int cuerpo = nsig[cond];
+        if (cuerpo == 0 - 1)
+        {
+            anota_error(20);
+            return;
+        }
+        nivel_ciclo = nivel_ciclo + 1;
+        camina_bloque(cuerpo);
+        nivel_ciclo = nivel_ciclo - 1;
+        return;
+    }
+    if (nkind[s] == NodeKind::ForStatement)
+    {
+        // El for (Ampliacion 3): los hijos cuelgan en
+        // cadena — el inicio (si lo hay), la condicion
+        // (siempre: el Parser siembra el literal 1 si
+        // venia vacia), el paso (si lo hay) y el
+        // cuerpo, siempre el ultimo. El inicio se
+        // analiza en el ambito que contiene al for: su
+        // variable vive ahi (v1), como en Stage 0. La
+        // condicion, el cuerpo y el paso van con el
+        // nivel de ciclo subido — el break dentro del
+        // for es legal, como dentro del while.
+        int p = nhijo1[s];
+        if (p == 0 - 1)
+        {
+            anota_error(20);
+            return;
+        }
+        if (nkind[p] == NodeKind::VariableDeclaration)
+        {
+            analiza_sentencia(p);
+            p = nsig[p];
+        }
+        else
+        {
+            if (nkind[p] == NodeKind::AssignmentStatement)
+            {
+                analiza_sentencia(p);
+                p = nsig[p];
+            }
+        }
+        if (p == 0 - 1)
+        {
+            anota_error(20);
+            return;
+        }
+        int cond = p;
+        p = nsig[p];
+        int paso = 0 - 1;
+        int cuerpo = p;
+        if (p != 0 - 1)
+        {
+            if (nkind[p] == NodeKind::AssignmentStatement)
+            {
+                paso = p;
+                cuerpo = nsig[p];
+            }
+        }
+        if (cuerpo == 0 - 1)
+        {
+            anota_error(20);
+            return;
+        }
+        nivel_ciclo = nivel_ciclo + 1;
+        analiza_expresion(cond);
+        camina_bloque(cuerpo);
+        if (paso != 0 - 1)
+        {
+            analiza_sentencia(paso);
+        }
+        nivel_ciclo = nivel_ciclo - 1;
+        return;
+    }
+    if (nkind[s] == NodeKind::ReturnStatement)
+    {
+        if (nhijo1[s] == 0 - 1)
+        {
+            // return; — valido solo en una funcion
+            // void (Ampliacion 1); en una int sigue
+            // acusando el 13 de siempre.
+            if (es_void(tipo_ret_actual) == 0)
+            {
+                anota_error(13);
+            }
+            return;
+        }
+        if (es_void(tipo_ret_actual) == 1)
+        {
+            anota_error(53);
+        }
+        analiza_expresion(nhijo1[s]);
+        return;
+    }
+    if (nkind[s] == NodeKind::PrintStatement)
+    {
+        if (nhijo1[s] == 0 - 1)
+        {
+            anota_error(14);
+            return;
+        }
+        analiza_expresion(nhijo1[s]);
+        return;
+    }
+    if (nkind[s] == NodeKind::PrintIntegerStatement)
+    {
+        if (nhijo1[s] == 0 - 1)
+        {
+            anota_error(15);
+            return;
+        }
+        analiza_expresion(nhijo1[s]);
+        return;
+    }
+    if (nkind[s] == NodeKind::CallStatement)
+    {
+        // La llamada como sentencia (Ampliacion 1):
+        // la llamada de hijo1 se analiza con la
+        // bandera de sentencia levantada. Su valor,
+        // si lo hay, se descarta; y si la funcion es
+        // void, esta es su unica posicion legal.
+        if (nhijo1[s] == 0 - 1)
+        {
+            return;
+        }
+        llamada_en_sentencia = 1;
+        analiza_expresion(nhijo1[s]);
+        llamada_en_sentencia = 0;
+        return;
+    }
+    if (nkind[s] == NodeKind::BreakStatement)
+    {
+        // El break (Ampliacion 2): su unica regla es
+        // vivir dentro de un while. La profundidad la
+        // lleva la rama de WhileStatement de esta
+        // misma pieza; los if y los bloques la heredan
+        // sin tocarla.
+        if (nivel_ciclo == 0)
+        {
+            anota_error(52);
+        }
+        return;
+    }
+}
+
+void analiza_funcion(int f)
+{
+    int nini[256];
+    int nhijo1[256];
+    int nsig[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    nsim = 0;
+    nivel = 0;
+    entra_ambito();
+    int tipo_ret = nini[f];
+    tipo_ret_actual = tipo_ret;
+    if (es_int(tipo_ret) == 0)
+    {
+        if (es_void(tipo_ret) == 0)
+        {
+            anota_error(6);
+        }
+    }
+    int pini = naux[f];
+    int pcant = nsize[f];
+    // El intervalo de parametros se valida con la
+    // misma disciplina que el de campos: inicio no
+    // negativo, cantidad no negativa, inicio +
+    // cantidad dentro de partok (256). Invalido:
+    // acusa 51 y la funcion se analiza sin parametros.
+    int malo = 0;
+    if (pini < 0)
+    {
+        malo = 1;
+    }
+    if (pcant < 0)
+    {
+        malo = 1;
+    }
+    if (pini + pcant > 256)
+    {
+        malo = 1;
+    }
+    if (malo == 1)
+    {
+        anota_error(51);
+        pcant = 0;
+    }
+    int j = 0;
+    for (j = 0; j < pcant; j = j + 1)
+    {
+        int t = partok[pini + j];
+        if (busca_en_actual(t) == 1)
+        {
+            anota_error(5);
+        }
+        else
+        {
+            // El parametro se registra con el token de
+            // SU tipo: el int que precede a su nombre en
+            // la tabla (partok solo guarda nombres, y el
+            // diseno ya lo decia: "el token int de la
+            // cabecera"). Con el tipo de retorno de la
+            // funcion, un parametro de una void quedaria
+            // registrado como si fuera void.
+            registra_simbolo(t, t - 1, 0);
+        }
+    }
+    int cuerpo = nhijo1[f];
+    if (cuerpo == 0 - 1)
+    {
+        anota_error(7);
+        sale_ambito();
+        return;
+    }
+    int s = nhijo1[cuerpo];
+    while (s != 0 - 1)
+    {
+        analiza_sentencia(s);
+        s = nsig[s];
+    }
+    sale_ambito();
+}
+
+void analiza_cuerpos()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::FunctionDeclaration)
+        {
+            analiza_funcion(d);
+        }
+        d = nsig[d];
+    }
+}
+
+int es_string(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 6)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    int c4 = fuente[base + 4];
+    int c5 = fuente[base + 5];
+    if (c0 != 115)
+    {
+        return 0;
+    }
+    if (c1 != 116)
+    {
+        return 0;
+    }
+    if (c2 != 114)
+    {
+        return 0;
+    }
+    if (c3 != 105)
+    {
+        return 0;
+    }
+    if (c4 != 110)
+    {
+        return 0;
+    }
+    if (c5 != 103)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+int es_file_read(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 9)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    int c4 = fuente[base + 4];
+    int c5 = fuente[base + 5];
+    int c6 = fuente[base + 6];
+    int c7 = fuente[base + 7];
+    int c8 = fuente[base + 8];
+    if (c0 != 102)
+    {
+        return 0;
+    }
+    if (c1 != 105)
+    {
+        return 0;
+    }
+    if (c2 != 108)
+    {
+        return 0;
+    }
+    if (c3 != 101)
+    {
+        return 0;
+    }
+    if (c4 != 95)
+    {
+        return 0;
+    }
+    if (c5 != 114)
+    {
+        return 0;
+    }
+    if (c6 != 101)
+    {
+        return 0;
+    }
+    if (c7 != 97)
+    {
+        return 0;
+    }
+    if (c8 != 100)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+int es_file_write(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int largo = tok_largo[tok];
+    if (largo != 10)
+    {
+        return 0;
+    }
+    int base = tok_inicio[tok];
+    int c0 = fuente[base + 0];
+    int c1 = fuente[base + 1];
+    int c2 = fuente[base + 2];
+    int c3 = fuente[base + 3];
+    int c4 = fuente[base + 4];
+    int c5 = fuente[base + 5];
+    int c6 = fuente[base + 6];
+    int c7 = fuente[base + 7];
+    int c8 = fuente[base + 8];
+    int c9 = fuente[base + 9];
+    if (c0 != 102)
+    {
+        return 0;
+    }
+    if (c1 != 105)
+    {
+        return 0;
+    }
+    if (c2 != 108)
+    {
+        return 0;
+    }
+    if (c3 != 101)
+    {
+        return 0;
+    }
+    if (c4 != 95)
+    {
+        return 0;
+    }
+    if (c5 != 119)
+    {
+        return 0;
+    }
+    if (c6 != 114)
+    {
+        return 0;
+    }
+    if (c7 != 105)
+    {
+        return 0;
+    }
+    if (c8 != 116)
+    {
+        return 0;
+    }
+    if (c9 != 101)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+// 1 si el nodo trae acceso a campo: el token que sigue
+// al nombre en la tabla es un Dot (la misma senal que
+// usa el recorrido del Parser).
+int es_campo(int nodo)
+{
+    int nval[256];
+    int tok_tipo[256];
+    int nombre = nval[nodo];
+    int siguiente = nombre + 1;
+    int tt = tok_tipo[siguiente];
+    if (tt == TokenType::Dot)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+// El token del tipo declarado de una global, o -1.
+int tipo_de_global(int tok)
+{
+    int nhijo1[256];
+    int nsig[256];
+    int nkind[256];
+    int nval[256];
+    int nini[256];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        if (nkind[d] == NodeKind::VariableDeclaration)
+        {
+            int dn = nval[d];
+            if (mismo_texto(dn, tok) == 1)
+            {
+                return nini[d];
+            }
+        }
+        d = nsig[d];
+    }
+    return 0 - 1;
+}
+
+// El token del tipo de una variable: el ambito local
+// manda (la sombra); si no, la global.
+int tipo_de(int tok)
+{
+    int i = busca_local(tok);
+    if (i != 0 - 1)
+    {
+        return da_get(dssim_tipo, i);
+    }
+    return tipo_de_global(tok);
+}
+
+// El tamano del arreglo: SOLO ambitos locales, como
+// lookupArraySize de Stage 0. Una global devuelve 0.
+int tamano_de(int tok)
+{
+    int i = busca_local(tok);
+    if (i != 0 - 1)
+    {
+        return da_get(dssim_tam, i);
+    }
+    return 0;
+}
+
+// El nodo de la declaracion de una funcion, o -1.
+int nodo_de_funcion(int tok)
+{
+    int nhijo1[256];
+    int nsig[256];
+    int nkind[256];
+    int nval[256];
+    int d = nhijo1[0];
+    while (d != 0 - 1)
+    {
+        if (nkind[d] == NodeKind::FunctionDeclaration)
+        {
+            int dn = nval[d];
+            if (mismo_texto(dn, tok) == 1)
+            {
+                return d;
+            }
+        }
+        d = nsig[d];
+    }
+    return 0 - 1;
+}
+
+// ------------------------------------------------------------
+// LA TABLA DE CAMPOS: filas planas (estructura, campo,
+// codigo de tipo), llenada por registra_estructuras.
+// La primera fila que coincide manda, como el mapa de
+// Stage 0, que conserva la primera version de un campo.
+// ------------------------------------------------------------
+
+void agrega_campo(int estructura, int campo, int codigo)
+{
+    // Guarda de la arena (M-5): el primer da_add
+    // hace de guarda — si devuelve -1, acusa el 50
+    // de siempre y la fila no nace; si agrega,
+    // agregan los otros dos y la cuenta avanza.
+    int ri = da_add(dscampo_struct, estructura);
+    if (ri == 0 - 1)
+    {
+        anota_error(50);
+        return;
+    }
+    da_add(dscampo_tok, campo);
+    da_add(dscampo_tipo, codigo);
+    nscampo = nscampo + 1;
+}
+
+int busca_campo_fila(int estructura, int campo)
+{
+    int i = 0;
+    for (i = 0; i < nscampo; i = i + 1)
+    {
+        int fs = da_get(dscampo_struct, i);
+        int ms = mismo_texto(fs, estructura);
+        if (ms == 1)
+        {
+            int fc = da_get(dscampo_tok, i);
+            int mf = mismo_texto(fc, campo);
+            if (mf == 1)
+            {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// El codigo TokenType del tipo de un campo, o -1 si
+// el campo no esta en la tabla.
+int codigo_de_campo(int estructura, int campo)
+{
+    int i = 0;
+    for (i = 0; i < nscampo; i = i + 1)
+    {
+        int fs = da_get(dscampo_struct, i);
+        int ms = mismo_texto(fs, estructura);
+        if (ms == 1)
+        {
+            int fc = da_get(dscampo_tok, i);
+            int mf = mismo_texto(fc, campo);
+            if (mf == 1)
+            {
+                return da_get(dscampo_tipo, i);
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+// El tipo de un campo en la representacion del
+// catalogo: -4 int, -5 string, -1 si no se conoce.
+int tipo_de_campo(int estructura, int campo)
+{
+    int c = codigo_de_campo(estructura, campo);
+    if (c == TokenType::KwInt)
+    {
+        return 0 - TokenType::KwInt;
+    }
+    if (c == TokenType::KwString)
+    {
+        return 0 - TokenType::KwString;
+    }
+    return 0 - 1;
+}
+
+// La clase de un tipo: 1 int, 2 string, 3 con nombre.
+int clase_tipo(int t)
+{
+    if (t == 0 - TokenType::KwInt)
+    {
+        return 1;
+    }
+    if (t == 0 - TokenType::KwString)
+    {
+        return 2;
+    }
+    if (es_int(t) == 1)
+    {
+        return 1;
+    }
+    if (es_string(t) == 1)
+    {
+        return 2;
+    }
+    return 3;
+}
+
+int tipos_iguales(int a, int b)
+{
+    int ca = clase_tipo(a);
+    int cb = clase_tipo(b);
+    if (ca != cb)
+    {
+        return 0;
+    }
+    if (ca == 3)
+    {
+        return mismo_texto(a, b);
+    }
+    return 1;
+}
+
+// 1 si un tipo inferido vale int: el -4 sintetico o un
+// token cuyo texto es int. Otro negativo nunca vale.
+int es_tipo_int_inferido(int it)
+{
+    if (it == 0 - TokenType::KwInt)
+    {
+        return 1;
+    }
+    if (it < 0)
+    {
+        return 0;
+    }
+    return es_int(it);
+}
+
+// ------------------------------------------------------------
+// INFERIR TIPO (inferExpressionType de Stage 0).
+// ------------------------------------------------------------
+
+int inferir_tipo(int n)
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    if (n == 0 - 1)
+    {
+        return 0 - 1;
+    }
+    if (nkind[n] == NodeKind::IntegerLiteral)
+    {
+        return 0 - TokenType::KwInt;
+    }
+    if (nkind[n] == NodeKind::StringLiteral)
+    {
+        return 0 - TokenType::KwString;
+    }
+    if (nkind[n] == NodeKind::VariableExpression)
+    {
+        int base = nval[n];
+        int tt = tipo_de(base);
+        if (tt == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        if (es_campo(n) == 0)
+        {
+            return tt;
+        }
+        int campo = nhijo1[n];
+        return tipo_de_campo(tt, campo);
+    }
+    if (nkind[n] == NodeKind::ArrayAccessExpression)
+    {
+        int base = nval[n];
+        int tt = tipo_de(base);
+        if (tt == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        if (es_int(tt) == 0)
+        {
+            return 0 - 1;
+        }
+        int idx = nhijo1[n];
+        if (idx == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        int it = inferir_tipo(idx);
+        if (es_tipo_int_inferido(it) == 0)
+        {
+            return 0 - 1;
+        }
+        return 0 - TokenType::KwInt;
+    }
+    if (nkind[n] == NodeKind::CallExpression)
+    {
+        int cal = nval[n];
+        if (es_file_read(cal) == 1)
+        {
+            return 0 - TokenType::KwInt;
+        }
+        if (es_file_write(cal) == 1)
+        {
+            return 0 - TokenType::KwInt;
+        }
+        int fd = nodo_de_funcion(cal);
+        if (fd == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        int nini[256];
+        return nini[fd];
+    }
+    if (nkind[n] == NodeKind::BinaryExpression)
+    {
+        int izq = nhijo1[n];
+        if (izq == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        int der = nsig[izq];
+        if (der == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        int lt = inferir_tipo(izq);
+        int rt = inferir_tipo(der);
+        if (lt == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        if (rt == 0 - 1)
+        {
+            return 0 - 1;
+        }
+        int li = es_tipo_int_inferido(lt);
+        int ri = es_tipo_int_inferido(rt);
+        if (li == 1)
+        {
+            if (ri == 1)
+            {
+                return 0 - TokenType::KwInt;
+            }
+        }
+        return 0 - 2;
+    }
+    return 0 - 1;
+}
+
+// ------------------------------------------------------------
+// ANALIZA EXPRESION (analyzeExpression de Stage 0).
+// ------------------------------------------------------------
+
+void analiza_expresion(int n)
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int nsize[256];
+    if (n == 0 - 1)
+    {
+        return;
+    }
+    if (nkind[n] == NodeKind::IntegerLiteral)
+    {
+        return;
+    }
+    if (nkind[n] == NodeKind::StringLiteral)
+    {
+        return;
+    }
+    if (nkind[n] == NodeKind::VariableExpression)
+    {
+        int base = nval[n];
+        int tt = tipo_de(base);
+        if (tt == 0 - 1)
+        {
+            anota_error(27);
+            return;
+        }
+        if (es_campo(n) == 1)
+        {
+            if (busca_struct(tt) == 0)
+            {
+                anota_error(28);
+                return;
+            }
+            int campotok = nhijo1[n];
+            int fc = codigo_de_campo(tt, campotok);
+            if (fc == 0 - 1)
+            {
+                anota_error(29);
+                return;
+            }
+            if (fc != TokenType::KwInt)
+            {
+                if (fc != TokenType::KwString)
+                {
+                    anota_error(30);
+                    return;
+                }
+            }
+            return;
+        }
+        if (es_int(tt) == 0)
+        {
+            if (es_string(tt) == 0)
+            {
+                anota_error(30);
+                return;
+            }
+        }
+        return;
+    }
+    if (nkind[n] == NodeKind::ArrayAccessExpression)
+    {
+        int base = nval[n];
+        int tt = tipo_de(base);
+        if (tt == 0 - 1)
+        {
+            anota_error(31);
+            return;
+        }
+        int tam = tamano_de(base);
+        if (tam <= 0)
+        {
+            anota_error(23);
+            return;
+        }
+        if (es_int(tt) == 0)
+        {
+            anota_error(25);
+            return;
+        }
+        int idx = nhijo1[n];
+        if (idx == 0 - 1)
+        {
+            anota_error(32);
+            return;
+        }
+        if (nkind[idx] == NodeKind::IntegerLiteral)
+        {
+            int lv = nval[idx];
+            if (lv < 0)
+            {
+                anota_error(24);
+                return;
+            }
+            if (lv >= tam)
+            {
+                anota_error(24);
+                return;
+            }
+        }
+        analiza_expresion(idx);
+        int itx = inferir_tipo(idx);
+        if (es_tipo_int_inferido(itx) == 0)
+        {
+            anota_error(26);
+            return;
+        }
+        return;
+    }
+    if (nkind[n] == NodeKind::CallExpression)
+    {
+        int cal = nval[n];
+        // La bandera de sentencia se consume al
+        // entrar: vale para ESTA llamada y no para
+        // las que cuelguen de sus argumentos, que
+        // ya son contexto de valor.
+        int en_sent = llamada_en_sentencia;
+        llamada_en_sentencia = 0;
+        int a1 = nhijo1[n];
+        int nargs = 0;
+        int x = a1;
+        while (x != 0 - 1)
+        {
+            nargs = nargs + 1;
+            x = nsig[x];
+        }
+        int a2 = 0 - 1;
+        int a3 = 0 - 1;
+        if (a1 != 0 - 1)
+        {
+            a2 = nsig[a1];
+            if (a2 != 0 - 1)
+            {
+                a3 = nsig[a2];
+            }
+        }
+        if (es_file_read(cal) == 1)
+        {
+            if (nargs != 2)
+            {
+                anota_error(40);
+                return;
+            }
+            if (nkind[a1] != NodeKind::StringLiteral)
+            {
+                anota_error(41);
+                return;
+            }
+            if (nkind[a2] != NodeKind::VariableExpression)
+            {
+                anota_error(42);
+                return;
+            }
+            int anombre = nval[a2];
+            int atipo = tipo_de(anombre);
+            if (atipo == 0 - 1)
+            {
+                anota_error(43);
+                return;
+            }
+            if (es_int(atipo) == 0)
+            {
+                anota_error(44);
+                return;
+            }
+            int cap = tamano_de(anombre);
+            if (cap <= 0)
+            {
+                anota_error(45);
+                return;
+            }
+            return;
+        }
+        if (es_file_write(cal) == 1)
+        {
+            if (nargs != 3)
+            {
+                anota_error(46);
+                return;
+            }
+            if (nkind[a1] != NodeKind::StringLiteral)
+            {
+                anota_error(41);
+                return;
+            }
+            if (nkind[a2] != NodeKind::VariableExpression)
+            {
+                anota_error(42);
+                return;
+            }
+            int anombre = nval[a2];
+            int atipo = tipo_de(anombre);
+            if (atipo == 0 - 1)
+            {
+                anota_error(43);
+                return;
+            }
+            if (es_int(atipo) == 0)
+            {
+                anota_error(44);
+                return;
+            }
+            int cap = tamano_de(anombre);
+            if (cap <= 0)
+            {
+                anota_error(45);
+                return;
+            }
+            analiza_expresion(a3);
+            int itc = inferir_tipo(a3);
+            if (es_tipo_int_inferido(itc) == 0)
+            {
+                anota_error(47);
+                return;
+            }
+            if (nkind[a3] == NodeKind::IntegerLiteral)
+            {
+                int cv = nval[a3];
+                if (cv < 0)
+                {
+                    anota_error(48);
+                    return;
+                }
+                if (cv > cap)
+                {
+                    anota_error(49);
+                    return;
+                }
+            }
+            return;
+        }
+        if (busca_funcion(cal) == 0)
+        {
+            anota_error(33);
+            return;
+        }
+        int fd = nodo_de_funcion(cal);
+        if (en_sent == 0)
+        {
+            int nini[256];
+            if (es_void(nini[fd]) == 1)
+            {
+                anota_error(54);
+                return;
+            }
+        }
+        if (nargs != nsize[fd])
+        {
+            anota_error(34);
+            return;
+        }
+        int arg = a1;
+        while (arg != 0 - 1)
+        {
+            analiza_expresion(arg);
+            arg = nsig[arg];
+        }
+        return;
+    }
+    if (nkind[n] == NodeKind::BinaryExpression)
+    {
+        int izq = nhijo1[n];
+        if (izq == 0 - 1)
+        {
+            anota_error(35);
+            anota_error(36);
+            return;
+        }
+        analiza_expresion(izq);
+        int der = nsig[izq];
+        if (der == 0 - 1)
+        {
+            anota_error(36);
+        }
+        else
+        {
+            analiza_expresion(der);
+        }
+        int op = nval[n];
+        if (op < 14)
+        {
+            anota_error(37);
+            return;
+        }
+        if (op > 28)
+        {
+            // El segundo tramo valido (Ampliacion 4):
+            // los operadores de bits, 42 a 45. Fuera
+            // de los dos tramos el operador no existe.
+            if (op < 42)
+            {
+                anota_error(37);
+                return;
+            }
+            if (op > 45)
+            {
+                anota_error(37);
+                return;
+            }
+        }
+        return;
+    }
+}
+
+// ============================================================
+// HANDLES DE LA ARENA (M-6).
+//
+// Los seis DynamicArray del IR, los cinco del registro
+// de ambitos y el StringPool de la piscina, todos en
+// CompilerArena.
+// ============================================================
+
+int diop;
+int dinombre;
+int dioperando;
+int diresultado;
+int diaux;
+int divalor;
+int dvscope_tok;
+int dvscope_campo;
+int dvscope_ref;
+int dvscope_tam;
+int dvscope_nivel;
+int dpiscina;
+
+// ============================================================
+// ESTADO DEL GENERADOR.
+// ============================================================
+
+int nir;
+int pool_len;
+int ntemp;
+int contvar;
+int nvar;
+int nivel;
+int netiq;
+// El contador de la Fase 2. G-1: suma 1 por cada texto
+// que no cabe en su referencia. G-2: suma 1 por cada
+// unidad que un techo descarta — una instruccion sobre
+// 2048, un caracter sobre 16384, una fila sobre 256.
+// G-3: suma 1 por cada capacidad 0 en file_read o
+// file_write, por cada argumento de llamada que pasa
+// de 32 y por cada operador binario fuera de 14 a 28
+// — los tres casos en que Stage 0 aborta y este
+// generador seguia emitiendo en silencio.
+int errores_ir;
+// El eco de la Ampliacion 1: 1 si la funcion que
+// se esta generando es void.
+int fun_es_void;
+// El eco de la Ampliacion 2: el tope de la pila de
+// etiquetas de fin de los while en generacion. La
+// pila en si se declara dentro de genera_sentencia,
+// como las demas tablas de la pieza (compartida
+// por nombre); el tope es un escalar compartido.
+int fin_tope;
+// El tope de la arena de temporales de argumento de
+// las llamadas en generacion. El arreglo temps se
+// declara dentro de genera_expresion (compartido por
+// nombre, como las demas tablas), y cada llamada
+// colecciona sus temporales en las ranuras que
+// empiezan en su base — un escalar local — para que
+// una llamada anidada no pise los de la externa. El
+// tope marca la primera ranura libre: es el mismo
+// patron que fin_tope con su pila.
+int temps_tope;
+
+// ============================================================
+// INICIA EL GENERADOR.
+//
+// El papel del driver en miniatura, como en las demas
+// piezas migradas: inicia la biblioteca y hace nacer
+// las regiones en el orden del plan de solape —
+// Source sobre el bloque A (1024) y Frontend sobre el
+// bloque B (1024), que esta pieza no usa (su fuente,
+// sus tokens y sus nodos son las copias selladas de
+// las filas del Lexer y del Parser, migradas en sus
+// piezas en M-3 y M-4), y Compiler sobre el bloque C
+// con la reserva entera del bloque (131072), donde
+// viven el IR, el registro de ambitos y la piscina.
+// Backend y Output nacen en sus fases, en las piezas
+// que las gobiernan. No imprime nada: la corriente de
+// la sonda queda intacta.
+// ============================================================
+
+void inicia_irgen()
+{
+    inicia_arena();
+    region_source = arena_create(1024);
+    region_frontend = arena_create(1024);
+    region_compiler = arena_create(131072);
+}
+
+// ============================================================
+// CREA LAS ESTRUCTURAS.
+//
+// Los seis DynamicArray del IR nacen a 2048 — la
+// vieja guarda de emite_ir como capacidad de
+// nacimiento — y los cinco del registro de ambitos a
+// 256, la vieja guarda de registra_var. La piscina
+// nace la ultima, con el literal de la biblioteca
+// (4 celdas): es la estructura que mas crece, y
+// naciendo la ultima sus crecimientos se extienden en
+// el sitio. Los crea genera() al arrancar cada
+// programa, y los movimientos de la sonda en los
+// suyos.
+// ============================================================
+
+void crea_ir()
+{
+    diop = da_create(region_compiler, 2048);
+    dinombre = da_create(region_compiler, 2048);
+    dioperando = da_create(region_compiler, 2048);
+    diresultado = da_create(region_compiler, 2048);
+    diaux = da_create(region_compiler, 2048);
+    divalor = da_create(region_compiler, 2048);
+    dvscope_tok = da_create(region_compiler, 256);
+    dvscope_campo = da_create(region_compiler, 256);
+    dvscope_ref = da_create(region_compiler, 256);
+    dvscope_tam = da_create(region_compiler, 256);
+    dvscope_nivel = da_create(region_compiler, 256);
+    dpiscina = string_pool_create(region_compiler);
+}
+
+// ============================================================
+// LA PISCINA DE TEXTO.
+// ============================================================
+
+int agrega_car(int c)
+{
+    int r = string_pool_add_char(dpiscina, c);
+    if (r < 0)
+    {
+        errores_ir = errores_ir + 1;
+    }
+    else
+    {
+        pool_len = pool_len + 1;
+    }
+    return 0;
+}
+
+int agrega_token(int tok)
+{
+    int tok_inicio[256];
+    int tok_largo[256];
+    int fuente[1024];
+    int ini = tok_inicio[tok];
+    int n = tok_largo[tok];
+    int i = 0;
+    for (i = 0; i < n; i = i + 1)
+    {
+        int c = fuente[ini + i];
+        int a = agrega_car(c);
+    }
+    return 0;
+}
+
+int agrega_tramo(int ini, int largo)
+{
+    int i = 0;
+    for (i = 0; i < largo; i = i + 1)
+    {
+        int c = string_pool_get_char(dpiscina, ini, i);
+        int a = agrega_car(c);
+    }
+    return 0;
+}
+
+int agrega_numero(int n)
+{
+    if (n >= 10)
+    {
+        int a = agrega_numero(n / 10);
+    }
+    int d = n - (n / 10) * 10;
+    int b = agrega_car(48 + d);
+    return 0;
+}
+
+int empaqueta_ref(int ini)
+{
+    int largo = pool_len - ini;
+    if (largo >= 128)
+    {
+        errores_ir = errores_ir + 1;
+        return 0;
+    }
+    return ini * 128 + largo;
+}
+
+int ref_token(int tok)
+{
+    int tok_largo[256];
+    int largo_tok = tok_largo[tok];
+    if (largo_tok >= 128)
+    {
+        errores_ir = errores_ir + 1;
+        return 0;
+    }
+    int ini = pool_len;
+    int a = agrega_token(tok);
+    int r = empaqueta_ref(ini);
+    return r;
+}
+
+int ref_temp()
+{
+    int ini = pool_len;
+    int a = agrega_car(37);
+    int b = agrega_numero(ntemp);
+    ntemp = ntemp + 1;
+    int r = empaqueta_ref(ini);
+    return r;
+}
+
+// ============================================================
+// EMITIR UNA INSTRUCCION.
+// ============================================================
+
+int emite_ir(int op, int nombre, int operando, int resultado, int aux, int valor)
+{
+    if (da_add(diop, op) < 0)
+    {
+        errores_ir = errores_ir + 1;
+        return 0;
+    }
+    int a = da_add(dinombre, nombre);
+    int b = da_add(dioperando, operando);
+    int c = da_add(diresultado, resultado);
+    int d = da_add(diaux, aux);
+    int e = da_add(divalor, valor);
+    nir = nir + 1;
+    return 0;
+}
+
+void sale_ambito_gen()
+{
+    while (1)
+    {
+        if (nvar == 0)
+        {
+            break;
+        }
+        int u = da_get(dvscope_nivel, nvar - 1);
+        if (u != nivel)
+        {
+            break;
+        }
+        nvar = nvar - 1;
+    }
+    nivel = nivel - 1;
+}
+
+void registra_var(int tok, int campo, int ref, int tam)
+{
+    if (nvar < da_count(dvscope_tok))
+    {
+        da_set(dvscope_tok, nvar, tok);
+        da_set(dvscope_campo, nvar, campo);
+        da_set(dvscope_ref, nvar, ref);
+        da_set(dvscope_tam, nvar, tam);
+        da_set(dvscope_nivel, nvar, nivel);
+        nvar = nvar + 1;
+        return;
+    }
+    if (da_add(dvscope_tok, tok) < 0)
+    {
+        errores_ir = errores_ir + 1;
+        return;
+    }
+    int a = da_add(dvscope_campo, campo);
+    int b = da_add(dvscope_ref, ref);
+    int c = da_add(dvscope_tam, tam);
+    int d = da_add(dvscope_nivel, nivel);
+    nvar = nvar + 1;
+}
+
+int busca_var(int tok, int campo)
+{
+    int i = nvar - 1;
+    for (i = nvar - 1; i >= 0; i = i - 1)
+    {
+        int t = da_get(dvscope_tok, i);
+        if (mismo_texto(t, tok) == 1)
+        {
+            int c = da_get(dvscope_campo, i);
+            if (c == campo)
+            {
+                return i;
+            }
+            if (c >= 0)
+            {
+                if (campo >= 0)
+                {
+                    if (mismo_texto(c, campo) == 1)
+                    {
+                        return i;
+                    }
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+int resuelve(int tok)
+{
+    int f = busca_var(tok, -1);
+    if (f >= 0)
+    {
+        int r = da_get(dvscope_ref, f);
+        return r;
+    }
+    return ref_token(tok);
+}
+
+// ============================================================
+// LA DECLARACION DE STRUCT DE UN TIPO, o -1.
+// ============================================================
+
+int struct_de(int tipo)
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int d = nhijo1[0];
+    while (d >= 0)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::StructDeclaration)
+        {
+            int nt = nval[d];
+            if (mismo_texto(nt, tipo) == 1)
+            {
+                return d;
+            }
+        }
+        d = nsig[d];
+    }
+    return -1;
+}
+
+// ============================================================
+// AYUDANTES DE LAS EXPRESIONES (IR-3).
+// ============================================================
+
+int agrega_ref(int ref)
+{
+    int ini = ref / 128;
+    int largo = ref - ini * 128;
+    int a = agrega_tramo(ini, largo);
+    return 0;
+}
+
+int une_refs(int a, int b)
+{
+    int ini = pool_len;
+    int x = agrega_ref(a);
+    int c1 = agrega_car(44);
+    int c2 = agrega_car(32);
+    int y = agrega_ref(b);
+    int r = empaqueta_ref(ini);
+    return r;
+}
+
+int op_binaria(int op)
+{
+    if (op == 14)
+    {
+        return IROpcode::Add;
+    }
+    if (op == 15)
+    {
+        return IROpcode::Sub;
+    }
+    if (op == 16)
+    {
+        return IROpcode::Mul;
+    }
+    if (op == 17)
+    {
+        return IROpcode::Div;
+    }
+    if (op == 18)
+    {
+        return IROpcode::Mod;
+    }
+    if (op == 19)
+    {
+        return IROpcode::Pow;
+    }
+    if (op == 20)
+    {
+        return IROpcode::CompareEqual;
+    }
+    if (op == 21)
+    {
+        return IROpcode::CompareNotEqual;
+    }
+    if (op == 22)
+    {
+        return IROpcode::CompareLess;
+    }
+    if (op == 23)
+    {
+        return IROpcode::CompareLessEqual;
+    }
+    if (op == 24)
+    {
+        return IROpcode::CompareGreater;
+    }
+    if (op == 25)
+    {
+        return IROpcode::CompareGreaterEqual;
+    }
+    if (op == 26)
+    {
+        return IROpcode::LogicalAnd;
+    }
+    if (op == 27)
+    {
+        return IROpcode::LogicalOr;
+    }
+    if (op == 28)
+    {
+        return IROpcode::LogicalNot;
+    }
+    if (op == 42)
+    {
+        return IROpcode::BitwiseAnd;
+    }
+    if (op == 43)
+    {
+        return IROpcode::BitwiseOr;
+    }
+    if (op == 44)
+    {
+        return IROpcode::ShiftLeft;
+    }
+    if (op == 45)
+    {
+        return IROpcode::ShiftRight;
+    }
+    return -1;
+}
+
+int capacidad_de(int tok)
+{
+    int f = busca_var(tok, -1);
+    if (f >= 0)
+    {
+        int t = da_get(dvscope_tam, f);
+        return t;
+    }
+    return 0;
+}
+
+// ============================================================
+// GENERAR EXPRESION (completa, IR-3).
+// ============================================================
+//
+// Devuelve la referencia al temporal que guarda el
+// valor de la expresion.
+
+int genera_expresion(int e)
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int k = nkind[e];
+    if (k == NodeKind::IntegerLiteral)
+    {
+        int t = ref_temp();
+        int v = nval[e];
+        int em = emite_ir(IROpcode::Const, 0, 0, t, 0, v);
+        return t;
+    }
+    if (k == NodeKind::StringLiteral)
+    {
+        int t2 = ref_temp();
+        int nt = nval[e];
+        int nombre = ref_token(nt);
+        int em2 = emite_ir(IROpcode::StringConst, nombre, 0, t2, 0, 0);
+        return t2;
+    }
+    if (k == NodeKind::VariableExpression)
+    {
+        int h = nhijo1[e];
+        int t3 = ref_temp();
+        int nt3 = nval[e];
+        if (h >= 0)
+        {
+            int nom3 = resuelve_campo(nt3, h);
+            int em3 = emite_ir(IROpcode::Load, nom3, 0, t3, 0, 0);
+            return t3;
+        }
+        int nom4 = resuelve(nt3);
+        int em4 = emite_ir(IROpcode::Load, nom4, 0, t3, 0, 0);
+        return t3;
+    }
+    if (k == NodeKind::ArrayAccessExpression)
+    {
+        int hi = nhijo1[e];
+        int ti = genera_expresion(hi);
+        int t4 = ref_temp();
+        int nt4 = nval[e];
+        int nom5 = resuelve(nt4);
+        int em5 = emite_ir(IROpcode::ArrayLoad, nom5, ti, t4, 0, 0);
+        return t4;
+    }
+    if (k == NodeKind::BinaryExpression)
+    {
+        int izq = nhijo1[e];
+        int der = nsig[izq];
+        int ti2 = genera_expresion(izq);
+        int td = genera_expresion(der);
+        int t5 = ref_temp();
+        int op = nval[e];
+        int iop2 = op_binaria(op);
+        if (iop2 < 0)
+        {
+            errores_ir = errores_ir + 1;
+        }
+        if (iop2 == IROpcode::LogicalNot)
+        {
+            int em6 = emite_ir(iop2, 0, td, t5, 0, 0);
+            return t5;
+        }
+        int par = une_refs(ti2, td);
+        int em7 = emite_ir(iop2, 0, par, t5, 0, 0);
+        return t5;
+    }
+    if (k == NodeKind::CallExpression)
+    {
+        int ct = nval[e];
+        int a1 = nhijo1[e];
+        if (es_file_read(ct) == 1)
+        {
+            int a2 = nsig[a1];
+            int t6 = ref_temp();
+            int ruta1 = nval[a1];
+            int nom6 = ref_token(ruta1);
+            int arr1 = nval[a2];
+            int ident1 = resuelve(arr1);
+            int cap1 = capacidad_de(arr1);
+            if (cap1 == 0)
+            {
+                errores_ir = errores_ir + 1;
+            }
+            int em8 = emite_ir(IROpcode::FileRead, nom6, ident1, t6, 0, cap1);
+            return t6;
+        }
+        if (es_file_write(ct) == 1)
+        {
+            int a2w = nsig[a1];
+            int a3w = nsig[a2w];
+            int tc = genera_expresion(a3w);
+            int t7 = ref_temp();
+            int ruta2 = nval[a1];
+            int nom7 = ref_token(ruta2);
+            int arr2 = nval[a2w];
+            int ident2 = resuelve(arr2);
+            int cap2 = capacidad_de(arr2);
+            if (cap2 == 0)
+            {
+                errores_ir = errores_ir + 1;
+            }
+            int em9 = emite_ir(IROpcode::FileWrite, nom7, ident2, t7, tc, cap2);
+            return t7;
+        }
+        int temps[256];
+        int base = temps_tope;
+        int narg = 0;
+        int arg = a1;
+        while (arg >= 0)
+        {
+            int ta = genera_expresion(arg);
+            if (narg < 32)
+            {
+                int hueco = base + narg;
+                if (hueco < 256)
+                {
+                    temps[hueco] = ta;
+                    narg = narg + 1;
+                    temps_tope = base + narg;
+                }
+            }
+            else
+            {
+                errores_ir = errores_ir + 1;
+            }
+            arg = nsig[arg];
+        }
+        int unidos = 0;
+        if (narg > 0)
+        {
+            int ini_u = pool_len;
+            int j = 0;
+            for (j = 0; j < narg; j = j + 1)
+            {
+                if (j > 0)
+                {
+                    int c1 = agrega_car(44);
+                    int c2 = agrega_car(32);
+                }
+                int tj = temps[base + j];
+                int aj = agrega_ref(tj);
+            }
+            unidos = empaqueta_ref(ini_u);
+        }
+        temps_tope = base;
+        int t8 = ref_temp();
+        int nom8 = ref_token(ct);
+        int em10 = emite_ir(IROpcode::Call, nom8, unidos, t8, 0, 0);
+        return t8;
+    }
+    return 0;
+}
+
+int ref_etiqueta()
+{
+    int ini = pool_len;
+    int a = agrega_car(76);
+    int b = agrega_numero(netiq);
+    netiq = netiq + 1;
+    int r = empaqueta_ref(ini);
+    return r;
+}
+
+// ============================================================
+// ES CAMPO — la lectura doble de hijo1 en la
+// asignacion: si el token que sigue al nombre del
+// destino es Dot (38), hijo1 es el token del campo;
+// si es LBracket, hijo1 es el nodo del indice.
+// ============================================================
+
+int es_campo_gen(int s)
+{
+    int nini[256];
+    int tok_tipo[256];
+    int ini = nini[s];
+    int t = tok_tipo[ini + 1];
+    if (t == 38)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+// ============================================================
+// RESOLVER UN CAMPO — el nombre aplanado registrado
+// (base, campo); si no esta (una global de struct,
+// que no se aplana), se compone el texto nombre.
+// campo en la piscina, como hace Stage 0 al caer
+// en el nombre original.
+// ============================================================
+
+int resuelve_campo(int tok, int campo)
+{
+    int f = busca_var(tok, campo);
+    if (f >= 0)
+    {
+        int r = da_get(dvscope_ref, f);
+        return r;
+    }
+    int ini = pool_len;
+    int a = agrega_token(tok);
+    int b = agrega_car(46);
+    int c = agrega_token(campo);
+    int r = empaqueta_ref(ini);
+    return r;
+}
+
+// ============================================================
+// GENERAR UN BLOQUE con su ambito: lo usan la
+// sentencia Block y los bloques de if/while.
+// ============================================================
+
+void genera_bloque(int b)
+{
+    int nhijo1[256];
+    int nsig[256];
+    entra_ambito();
+    int s = nhijo1[b];
+    while (s >= 0)
+    {
+        genera_sentencia(s);
+        s = nsig[s];
+    }
+    sale_ambito_gen();
+}
+
+// ============================================================
+// GENERAR SENTENCIA (cobertura IR-1 e IR-2).
+// ============================================================
+
+void genera_sentencia(int s)
+{
+    int nkind[256];
+    int nini[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int campotok[256];
+    int fin_pila[256];
+    int k = nkind[s];
+    if (k == NodeKind::VariableDeclaration)
+    {
+        int nt = nval[s];
+        int ini_m = pool_len;
+        int a1 = agrega_token(nt);
+        int a2 = agrega_car(64);
+        int a3 = agrega_numero(contvar);
+        int mangled = empaqueta_ref(ini_m);
+        int largo_m = pool_len - ini_m;
+        contvar = contvar + 1;
+        int tam = nsize[s];
+        registra_var(nt, -1, mangled, tam);
+        int e1 = emite_ir(IROpcode::Declare, mangled, 0, 0, 0, tam);
+        int tipo = nini[s];
+        int est = struct_de(tipo);
+        if (est >= 0)
+        {
+            int ci = naux[est];
+            int cc = nsize[est];
+            int j = 0;
+            for (j = 0; j < cc; j = j + 1)
+            {
+                int ct = campotok[ci + j];
+                int ini_f = pool_len;
+                int b1 = agrega_tramo(ini_m, largo_m);
+                int b2 = agrega_car(46);
+                int b3 = agrega_token(ct);
+                int fmang = empaqueta_ref(ini_f);
+                registra_var(nt, ct, fmang, 0);
+                int e2 = emite_ir(IROpcode::Declare, fmang, 0, 0, 0, 0);
+            }
+        }
+        int ini = nhijo1[s];
+        if (ini >= 0)
+        {
+            int ki = nkind[ini];
+            if (ki == NodeKind::IntegerLiteral)
+            {
+                int t = ref_temp();
+                int v = nval[ini];
+                int e3 = emite_ir(IROpcode::Const, 0, 0, t, 0, v);
+                int e4 = emite_ir(IROpcode::Store, mangled, t, 0, 0, 0);
+                return;
+            }
+            int t2 = genera_expresion(ini);
+            int e5 = emite_ir(IROpcode::Store, mangled, t2, 0, 0, 0);
+            return;
+        }
+        return;
+    }
+    if (k == NodeKind::AssignmentStatement)
+    {
+        int valor = naux[s];
+        int h = nhijo1[s];
+        int nt2 = nval[s];
+        if (h >= 0)
+        {
+            if (es_campo_gen(s) == 1)
+            {
+                int tv = genera_expresion(valor);
+                int dest = resuelve_campo(nt2, h);
+                int e6 = emite_ir(IROpcode::Store, dest, tv, 0, 0, 0);
+                return;
+            }
+            int ti = genera_expresion(h);
+            int tv2 = genera_expresion(valor);
+            int arr = resuelve(nt2);
+            int e7 = emite_ir(IROpcode::ArrayStore, arr, ti, tv2, 0, 0);
+            return;
+        }
+        int tv3 = genera_expresion(valor);
+        int dest2 = resuelve(nt2);
+        int e8 = emite_ir(IROpcode::Store, dest2, tv3, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::Block)
+    {
+        genera_bloque(s);
+        return;
+    }
+    if (k == NodeKind::IfStatement)
+    {
+        int cond = nhijo1[s];
+        int tc = genera_expresion(cond);
+        int fin = ref_etiqueta();
+        int els = ref_etiqueta();
+        int entonces = nsig[cond];
+        int sino = -1;
+        if (entonces >= 0)
+        {
+            sino = nsig[entonces];
+        }
+        int destino = fin;
+        if (sino >= 0)
+        {
+            destino = els;
+        }
+        int e9 = emite_ir(IROpcode::JumpIfZero, destino, tc, 0, 0, 0);
+        if (entonces >= 0)
+        {
+            genera_bloque(entonces);
+        }
+        if (sino >= 0)
+        {
+            int e10 = emite_ir(IROpcode::Jump, fin, 0, 0, 0, 0);
+            int e11 = emite_ir(IROpcode::Label, els, 0, 0, 0, 0);
+            genera_bloque(sino);
+        }
+        int e12 = emite_ir(IROpcode::Label, fin, 0, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::WhileStatement)
+    {
+        int ini_e = ref_etiqueta();
+        int fin_e = ref_etiqueta();
+        int e13 = emite_ir(IROpcode::Label, ini_e, 0, 0, 0, 0);
+        int cond2 = nhijo1[s];
+        int tc2 = genera_expresion(cond2);
+        int e14 = emite_ir(IROpcode::JumpIfZero, fin_e, tc2, 0, 0, 0);
+        int cuerpo = nsig[cond2];
+        if (cuerpo >= 0)
+        {
+            fin_pila[fin_tope] = fin_e;
+            fin_tope = fin_tope + 1;
+            genera_bloque(cuerpo);
+            fin_tope = fin_tope - 1;
+        }
+        int e15 = emite_ir(IROpcode::Jump, ini_e, 0, 0, 0, 0);
+        int e16 = emite_ir(IROpcode::Label, fin_e, 0, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::ForStatement)
+    {
+        // El for (Ampliacion 3): los hijos cuelgan en
+        // cadena — el inicio (si lo hay), la condicion
+        // (siempre: el Parser siembra el literal 1 si
+        // venia vacia), el paso (si lo hay) y el
+        // cuerpo. El inicio se genera una vez, antes de
+        // la etiqueta de la condicion; el salto en
+        // falso cae en la etiqueta de fin, que la pila
+        // guarda durante el cuerpo (el break cae ahi);
+        // el paso se genera tras el cuerpo y el salto
+        // de vuelta cierra el ciclo. La forma de saltos
+        // es la del while, con el inicio delante y el
+        // paso detras.
+        int pf = nhijo1[s];
+        int iniciog = 0 - 1;
+        if (nkind[pf] == NodeKind::VariableDeclaration)
+        {
+            iniciog = pf;
+            pf = nsig[pf];
+        }
+        else
+        {
+            if (nkind[pf] == NodeKind::AssignmentStatement)
+            {
+                iniciog = pf;
+                pf = nsig[pf];
+            }
+        }
+        int condf = pf;
+        pf = nsig[pf];
+        int pasof = 0 - 1;
+        int cuerpof = pf;
+        if (nkind[pf] == NodeKind::AssignmentStatement)
+        {
+            pasof = pf;
+            cuerpof = nsig[pf];
+        }
+        if (iniciog >= 0)
+        {
+            genera_sentencia(iniciog);
+        }
+        int in_e = ref_etiqueta();
+        int fn_e = ref_etiqueta();
+        int e23 = emite_ir(IROpcode::Label, in_e, 0, 0, 0, 0);
+        int tcf = genera_expresion(condf);
+        int e24 = emite_ir(IROpcode::JumpIfZero, fn_e, tcf, 0, 0, 0);
+        if (cuerpof >= 0)
+        {
+            fin_pila[fin_tope] = fn_e;
+            fin_tope = fin_tope + 1;
+            genera_bloque(cuerpof);
+            fin_tope = fin_tope - 1;
+        }
+        if (pasof >= 0)
+        {
+            genera_sentencia(pasof);
+        }
+        int e25 = emite_ir(IROpcode::Jump, in_e, 0, 0, 0, 0);
+        int e26 = emite_ir(IROpcode::Label, fn_e, 0, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::BreakStatement)
+    {
+        // El break (Ampliacion 2): salta a la etiqueta
+        // de fin del while mas interno, la de la cima
+        // de la pila que mantiene la rama de while.
+        int destino = fin_pila[fin_tope - 1];
+        int eb = emite_ir(IROpcode::Jump, destino, 0, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::PrintStatement)
+    {
+        int ep = nhijo1[s];
+        int tp = genera_expresion(ep);
+        int e17 = emite_ir(IROpcode::Print, 0, tp, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::PrintIntegerStatement)
+    {
+        int ei = nhijo1[s];
+        int ti2 = genera_expresion(ei);
+        int e18 = emite_ir(IROpcode::PrintInteger, 0, ti2, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::ReturnStatement)
+    {
+        int e = nhijo1[s];
+        if (e < 0)
+        {
+            // Sin expresion: en una funcion void es
+            // el return; de la Ampliacion 1 y SI se
+            // emite, como Return de valor 0 (el mismo
+            // que emite el Stage 0). En una int el
+            // analizador ya lo acuso (codigo 13) y
+            // aqui no se emite.
+            if (fun_es_void == 1)
+            {
+                int e0 = emite_ir(IROpcode::Return, 0, 0, 0, 0, 0);
+            }
+            return;
+        }
+        int ke = nkind[e];
+        if (ke == NodeKind::IntegerLiteral)
+        {
+            int v = nval[e];
+            int e19 = emite_ir(IROpcode::Return, 0, 0, 0, 0, v);
+            return;
+        }
+        int t = genera_expresion(e);
+        int e20 = emite_ir(IROpcode::Return, 0, t, 0, 0, 0);
+        return;
+    }
+    if (k == NodeKind::CallStatement)
+    {
+        // La llamada como sentencia (Ampliacion 1):
+        // la llamada se genera y su temporal queda
+        // sin leer — descartado, como en el Stage 0.
+        int tc = genera_expresion(nhijo1[s]);
+        return;
+    }
+}
+
+// ============================================================
+// GENERAR FUNCION.
+// ============================================================
+
+void genera_funcion(int f)
+{
+    int nini[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int naux[256];
+    int nsize[256];
+    int partok[256];
+    ntemp = 0;
+    contvar = 0;
+    netiq = 0;
+    fun_es_void = es_void(nini[f]);
+    fin_tope = 0;
+    temps_tope = 0;
+    entra_ambito();
+    int nt = nval[f];
+    int nombre = ref_token(nt);
+    int params = 0;
+    int inicio = naux[f];
+    int cant = nsize[f];
+    if (cant > 0)
+    {
+        int ini_p = pool_len;
+        int j = 0;
+        for (j = 0; j < cant; j = j + 1)
+        {
+            if (j > 0)
+            {
+                int c1 = agrega_car(44);
+                int c2 = agrega_car(32);
+            }
+            int pt = partok[inicio + j];
+            int a = agrega_token(pt);
+        }
+        params = empaqueta_ref(ini_p);
+    }
+    int e1 = emite_ir(IROpcode::FunctionBegin, nombre, params, 0, 0, 0);
+    int cuerpo = nhijo1[f];
+    if (cuerpo >= 0)
+    {
+        int s = nhijo1[cuerpo];
+        while (s >= 0)
+        {
+            genera_sentencia(s);
+            s = nsig[s];
+        }
+    }
+    int e2 = emite_ir(IROpcode::FunctionEnd, 0, 0, 0, 0, 0);
+    sale_ambito_gen();
+}
+
+// ============================================================
+// GENERAR EL PROGRAMA.
+// ============================================================
+
+void genera()
+{
+    int nkind[256];
+    int nhijo1[256];
+    int nsig[256];
+    int nval[256];
+    int nsize[256];
+    // La puerta de la arena (M-6): cada programa
+    // nace en un mundo nuevo — inicia_irgen y
+    // crea_ir antes del reseteo de contadores de
+    // siempre, como la puerta de analiza() en M-5.
+    inicia_irgen();
+    crea_ir();
+    nir = 0;
+    pool_len = 0;
+    nvar = 0;
+    nivel = 0;
+    errores_ir = 0;
+    int d = nhijo1[0];
+    while (d >= 0)
+    {
+        int k = nkind[d];
+        if (k == NodeKind::VariableDeclaration)
+        {
+            int nt = nval[d];
+            int nombre = ref_token(nt);
+            int tam = nsize[d];
+            int e = emite_ir(IROpcode::Declare, nombre, 0, 0, 0, tam);
+        }
+        d = nsig[d];
+    }
+    d = nhijo1[0];
+    while (d >= 0)
+    {
+        int k2 = nkind[d];
+        if (k2 == NodeKind::FunctionDeclaration)
+        {
+            genera_funcion(d);
+        }
+        d = nsig[d];
+    }
+}
+
+// ============================================================
+// EL ESCRITOR DE IR (codigo nuevo de D-1).
+//
+// Reproduce en un buffer el recorrido de imprime_ir de la
+// pieza IRGenerator y lo vuelca de una vez con file_write
+// sobre IR.TXT: por instruccion, el nombre del opcode, las
+// cuatro referencias (ini y largo, ref = ini * 128 + largo)
+// y el valor; despues pool_len y un entero por caracter de
+// la piscina. La tabla de nombres de escribe_op se genero
+// mecanicamente del imprime_op sellado (37 nombres); el
+// opcode sin nombre se escribe como numero, como alli.
+// ============================================================
+
+void agrega_sal(int c)
+{
+    int bufsal[65536];
+    if (nsal >= 65536)
+    {
+        errores_driver = errores_driver + 1;
+        return;
+    }
+    bufsal[nsal] = c;
+    nsal = nsal + 1;
+}
+
+void agrega_entero(int n)
+{
+    if (n < 0)
+    {
+        agrega_sal(45);
+        agrega_entero(0 - n);
+        return;
+    }
+    if (n >= 10)
+    {
+        agrega_entero(n / 10);
+    }
+    int q = n / 10;
+    agrega_sal(48 + (n - q * 10));
+}
+
+void escribe_op(int op)
+{
+    if (op == IROpcode::FunctionBegin)
+    {
+        agrega_sal(70);
+        agrega_sal(85);
+        agrega_sal(78);
+        agrega_sal(67);
+        agrega_sal(84);
+        agrega_sal(73);
+        agrega_sal(79);
+        agrega_sal(78);
+        agrega_sal(95);
+        agrega_sal(66);
+        agrega_sal(69);
+        agrega_sal(71);
+        agrega_sal(73);
+        agrega_sal(78);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::FunctionEnd)
+    {
+        agrega_sal(70);
+        agrega_sal(85);
+        agrega_sal(78);
+        agrega_sal(67);
+        agrega_sal(84);
+        agrega_sal(73);
+        agrega_sal(79);
+        agrega_sal(78);
+        agrega_sal(95);
+        agrega_sal(69);
+        agrega_sal(78);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Const)
+    {
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(78);
+        agrega_sal(83);
+        agrega_sal(84);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::StringConst)
+    {
+        agrega_sal(83);
+        agrega_sal(84);
+        agrega_sal(82);
+        agrega_sal(73);
+        agrega_sal(78);
+        agrega_sal(71);
+        agrega_sal(95);
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(78);
+        agrega_sal(83);
+        agrega_sal(84);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Declare)
+    {
+        agrega_sal(68);
+        agrega_sal(69);
+        agrega_sal(67);
+        agrega_sal(76);
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Store)
+    {
+        agrega_sal(83);
+        agrega_sal(84);
+        agrega_sal(79);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Load)
+    {
+        agrega_sal(76);
+        agrega_sal(79);
+        agrega_sal(65);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::ArrayLoad)
+    {
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(82);
+        agrega_sal(65);
+        agrega_sal(89);
+        agrega_sal(95);
+        agrega_sal(76);
+        agrega_sal(79);
+        agrega_sal(65);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::ArrayStore)
+    {
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(82);
+        agrega_sal(65);
+        agrega_sal(89);
+        agrega_sal(95);
+        agrega_sal(83);
+        agrega_sal(84);
+        agrega_sal(79);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::FileRead)
+    {
+        agrega_sal(70);
+        agrega_sal(73);
+        agrega_sal(76);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(65);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::FileWrite)
+    {
+        agrega_sal(70);
+        agrega_sal(73);
+        agrega_sal(76);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(87);
+        agrega_sal(82);
+        agrega_sal(73);
+        agrega_sal(84);
+        agrega_sal(69);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Add)
+    {
+        agrega_sal(65);
+        agrega_sal(68);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Sub)
+    {
+        agrega_sal(83);
+        agrega_sal(85);
+        agrega_sal(66);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Mul)
+    {
+        agrega_sal(77);
+        agrega_sal(85);
+        agrega_sal(76);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Div)
+    {
+        agrega_sal(68);
+        agrega_sal(73);
+        agrega_sal(86);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Mod)
+    {
+        agrega_sal(77);
+        agrega_sal(79);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Pow)
+    {
+        agrega_sal(80);
+        agrega_sal(79);
+        agrega_sal(87);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Call)
+    {
+        agrega_sal(67);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(76);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Return)
+    {
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(84);
+        agrega_sal(85);
+        agrega_sal(82);
+        agrega_sal(78);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Print)
+    {
+        agrega_sal(80);
+        agrega_sal(82);
+        agrega_sal(73);
+        agrega_sal(78);
+        agrega_sal(84);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::PrintInteger)
+    {
+        agrega_sal(80);
+        agrega_sal(82);
+        agrega_sal(73);
+        agrega_sal(78);
+        agrega_sal(84);
+        agrega_sal(95);
+        agrega_sal(73);
+        agrega_sal(78);
+        agrega_sal(84);
+        agrega_sal(69);
+        agrega_sal(71);
+        agrega_sal(69);
+        agrega_sal(82);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::CompareEqual)
+    {
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(69);
+        agrega_sal(81);
+        agrega_sal(85);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::CompareNotEqual)
+    {
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(78);
+        agrega_sal(79);
+        agrega_sal(84);
+        agrega_sal(95);
+        agrega_sal(69);
+        agrega_sal(81);
+        agrega_sal(85);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::CompareLess)
+    {
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(76);
+        agrega_sal(69);
+        agrega_sal(83);
+        agrega_sal(83);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::CompareLessEqual)
+    {
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(76);
+        agrega_sal(69);
+        agrega_sal(83);
+        agrega_sal(83);
+        agrega_sal(95);
+        agrega_sal(69);
+        agrega_sal(81);
+        agrega_sal(85);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::CompareGreater)
+    {
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(71);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(65);
+        agrega_sal(84);
+        agrega_sal(69);
+        agrega_sal(82);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::CompareGreaterEqual)
+    {
+        agrega_sal(67);
+        agrega_sal(79);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(65);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(71);
+        agrega_sal(82);
+        agrega_sal(69);
+        agrega_sal(65);
+        agrega_sal(84);
+        agrega_sal(69);
+        agrega_sal(82);
+        agrega_sal(95);
+        agrega_sal(69);
+        agrega_sal(81);
+        agrega_sal(85);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::LogicalAnd)
+    {
+        agrega_sal(76);
+        agrega_sal(79);
+        agrega_sal(71);
+        agrega_sal(73);
+        agrega_sal(67);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(95);
+        agrega_sal(65);
+        agrega_sal(78);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::LogicalOr)
+    {
+        agrega_sal(76);
+        agrega_sal(79);
+        agrega_sal(71);
+        agrega_sal(73);
+        agrega_sal(67);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(95);
+        agrega_sal(79);
+        agrega_sal(82);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::LogicalNot)
+    {
+        agrega_sal(76);
+        agrega_sal(79);
+        agrega_sal(71);
+        agrega_sal(73);
+        agrega_sal(67);
+        agrega_sal(65);
+        agrega_sal(76);
+        agrega_sal(95);
+        agrega_sal(78);
+        agrega_sal(79);
+        agrega_sal(84);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Label)
+    {
+        agrega_sal(76);
+        agrega_sal(65);
+        agrega_sal(66);
+        agrega_sal(69);
+        agrega_sal(76);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::Jump)
+    {
+        agrega_sal(74);
+        agrega_sal(85);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::JumpIfZero)
+    {
+        agrega_sal(74);
+        agrega_sal(85);
+        agrega_sal(77);
+        agrega_sal(80);
+        agrega_sal(95);
+        agrega_sal(73);
+        agrega_sal(70);
+        agrega_sal(95);
+        agrega_sal(90);
+        agrega_sal(69);
+        agrega_sal(82);
+        agrega_sal(79);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::BitwiseAnd)
+    {
+        agrega_sal(66);
+        agrega_sal(73);
+        agrega_sal(84);
+        agrega_sal(87);
+        agrega_sal(73);
+        agrega_sal(83);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(65);
+        agrega_sal(78);
+        agrega_sal(68);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::BitwiseOr)
+    {
+        agrega_sal(66);
+        agrega_sal(73);
+        agrega_sal(84);
+        agrega_sal(87);
+        agrega_sal(73);
+        agrega_sal(83);
+        agrega_sal(69);
+        agrega_sal(95);
+        agrega_sal(79);
+        agrega_sal(82);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::ShiftLeft)
+    {
+        agrega_sal(83);
+        agrega_sal(72);
+        agrega_sal(73);
+        agrega_sal(70);
+        agrega_sal(84);
+        agrega_sal(95);
+        agrega_sal(76);
+        agrega_sal(69);
+        agrega_sal(70);
+        agrega_sal(84);
+        agrega_sal(10);
+        return;
+    }
+    if (op == IROpcode::ShiftRight)
+    {
+        agrega_sal(83);
+        agrega_sal(72);
+        agrega_sal(73);
+        agrega_sal(70);
+        agrega_sal(84);
+        agrega_sal(95);
+        agrega_sal(82);
+        agrega_sal(73);
+        agrega_sal(71);
+        agrega_sal(72);
+        agrega_sal(84);
+        agrega_sal(10);
+        return;
+    }
+    agrega_entero(op);
+    agrega_sal(10);
+}
+
+void escribe_ref(int ref)
+{
+    int ini = ref / 128;
+    agrega_entero(ini);
+    agrega_sal(10);
+    int largo = ref - ini * 128;
+    agrega_entero(largo);
+    agrega_sal(10);
+}
+
+void escribe_ir()
+{
+    int bufsal[65536];
+    nsal = 0;
+    int i = 0;
+    while (i < nir)
+    {
+        int op = da_get(diop, i);
+        escribe_op(op);
+        escribe_ref(da_get(dinombre, i));
+        escribe_ref(da_get(dioperando, i));
+        escribe_ref(da_get(diresultado, i));
+        escribe_ref(da_get(diaux, i));
+        agrega_entero(da_get(divalor, i));
+        agrega_sal(10);
+        i = i + 1;
+    }
+    agrega_entero(pool_len);
+    agrega_sal(10);
+    i = 0;
+    while (i < pool_len)
+    {
+        int ch = string_pool_get_char(dpiscina, i, 0);
+        agrega_entero(ch);
+        agrega_sal(10);
+        i = i + 1;
+    }
+    if (errores_driver != 0)
+    {
+        return;
+    }
+    int r = file_write("IR.TXT", bufsal, nsal);
+    if (r != 0)
+    {
+        errores_driver = errores_driver + 1;
+    }
+}
+
+// ============================================================
+// LA VIGILANCIA ENTRE ETAPAS (codigo nuevo de D-1).
+//
+// paro imprime la detencion: el letrero, la etapa (1 LEXER,
+// 2 PARSER, 3 PUENTE, 4 SEMANTICO, 5 IR, 6 SALIDA) y los
+// contadores en orden fijo: errores (lexer y parser),
+// serr_count, errores_ir, errores_arena y errores_driver.
+// ============================================================
+
+void paro(int etapa)
+{
+    print("D-1 DETENIDO");
+    print_int(etapa);
+    print_int(errores);
+    print_int(serr_count);
+    print_int(errores_ir);
+    print_int(errores_arena);
+    print_int(errores_driver);
+}
+
+// ============================================================
+// MAIN — EL DRIVER (codigo nuevo de D-1).
+//
+// El orden es el de src/main.cpp de Stage 0: leer la fuente,
+// Lexer, Parser, SemanticAnalyzer, IRGenerator. Tras cada
+// etapa, la vigilancia: si un contador acusa, paro y vuelta
+// con 1, sin escribir el IR. La fuente se lee de FUENTE.KPP
+// (la convencion de la casa) y el IR se escribe en IR.TXT.
+// Cada etapa abre su propio mundo en su puerta (reinicia,
+// analiza y genera llaman a sus inicia_*), como en las
+// piezas selladas: lo que cruza entre etapas vive en los
+// arreglos planos compartidos por nombre.
+// ============================================================
+
+int main()
+{
+    int fuente[1024];
+    print("COMPILADOR D-1");
+    int n = file_read("FUENTE.KPP", fuente);
+    if (n < 0)
+    {
+        print("D-1 SIN FUENTE");
+        print_int(n);
+        return 1;
+    }
+    total = n;
+    reinicia();
+    escanea();
+    if (errores != 0)
+    {
+        paro(1);
+        return 1;
+    }
+    if (errores_arena != 0)
+    {
+        paro(1);
+        return 1;
+    }
+    int raiz = parse_programa();
+    if (errores != 0)
+    {
+        paro(2);
+        return 1;
+    }
+    if (errores_arena != 0)
+    {
+        paro(2);
+        return 1;
+    }
+    puente_nodos();
+    if (errores_driver != 0)
+    {
+        paro(3);
+        return 1;
+    }
+    analiza();
+    if (serr_count != 0)
+    {
+        paro(4);
+        return 1;
+    }
+    if (errores_arena != 0)
+    {
+        paro(4);
+        return 1;
+    }
+    genera();
+    if (errores_ir != 0)
+    {
+        paro(5);
+        return 1;
+    }
+    if (errores_arena != 0)
+    {
+        paro(5);
+        return 1;
+    }
+    escribe_ir();
+    if (errores_driver != 0)
+    {
+        paro(6);
+        return 1;
+    }
+    print("IR.TXT ESCRITO");
+    print_int(nir);
+    print_int(pool_len);
+    return 0;
+}
