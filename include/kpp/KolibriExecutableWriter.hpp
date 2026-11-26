@@ -12,7 +12,8 @@ public:
 
     bool write(
         const std::string& filename,
-        const std::vector<std::uint8_t>& code);
+        const std::vector<std::uint8_t>& code,
+        std::uint32_t bssSize);
 
 private:
 

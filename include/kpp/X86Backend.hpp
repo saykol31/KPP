@@ -20,6 +20,12 @@ public:
     std::vector<std::uint8_t> generate(
         const IRProgram& program);
 
+    // REBANADA BSS: tamaño de la zona BSS (datos que
+    // nacen en cero y no se escriben en el archivo)
+    // del último generate(). El writer la coloca
+    // entre imageEnd y memoryEnd.
+    std::size_t bssSize() const;
+
 private:
 
 
@@ -212,6 +218,9 @@ private:
         functionCallPatches;
 
     X86Emitter emitter;
+
+    // Tamaño de la corriente BSS del último generate().
+    std::size_t generatedBssSize = 0;
 
     // Estado del marco EBP de la función actualmente generada.
     bool frameActive = false;

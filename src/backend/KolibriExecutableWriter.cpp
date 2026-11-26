@@ -36,7 +36,8 @@ void KolibriExecutableWriter::write32(
 
 bool KolibriExecutableWriter::write(
     const std::string& filename,
-    const std::vector<std::uint8_t>& code)
+    const std::vector<std::uint8_t>& code,
+    std::uint32_t bssSize)
 {
     /*
      * ========================================================
@@ -67,9 +68,14 @@ bool KolibriExecutableWriter::write(
                 code.size());
 
 
+    // REBANADA BSS: entre imageEnd y memoryEnd vive la
+    // zona BSS — datos que nacen en cero y no se
+    // escriben en el archivo; el cargador la rellena
+    // con ceros. La pila queda tras la BSS, como antes.
     const std::uint32_t
         stackTop =
             imageEnd +
+            bssSize +
             StackSize;
 
 

@@ -1585,7 +1585,9 @@ int main(int argc, char** argv)
 
         if (!kolibriWriter.write(
                 kolibriOutput,
-                machineCode))
+                machineCode,
+                static_cast<std::uint32_t>(
+                    x86Backend.bssSize())))
         {
             std::cerr
                 << "✘ K++: no se pudo generar: "

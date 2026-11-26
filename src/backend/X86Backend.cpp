@@ -487,6 +487,13 @@ KOLIBRI_HEADER_SIZE = 36;
 // GENERATE
 // ============================================================
 
+std::size_t
+X86Backend::bssSize() const
+{
+    return generatedBssSize;
+}
+
+
 std::vector<std::uint8_t>
 X86Backend::generate(
     const IRProgram& program)
@@ -504,7 +511,26 @@ X86Backend::generate(
 
     std::vector<std::string> stringConstTexts;
 
+    // REBANADA BSS — DOS CORRIENTES DE DATA
+    //
+    // data: corriente BSS. Solo reservas que nacen en
+    // cero (DECLARE de usuario y celdas de runtime).
+    // No se escribe en el archivo: el cargador la
+    // rellena con ceros entre imageEnd y memoryEnd.
+    //
+    // dataInit: corriente inicializada. Contenido real
+    // (pool de strings, constantes, rutas de File I/O,
+    // textos del menú). Es la única que viaja al BIN
+    // detrás del código.
+    //
+    // Durante la pasada, los offsets de cada corriente
+    // son locales a ella. Al cerrar DATA se suman a los
+    // de la corriente BSS el tamaño de la inicializada,
+    // porque en el layout final la BSS queda al final,
+    // detrás de la inicializada.
     std::vector<std::uint8_t> data;
+
+    std::vector<std::uint8_t> dataInit;
 
     // KPP_FILE_IO_RUNTIME_BACKEND_PHASE2
     //
@@ -4159,17 +4185,17 @@ else if (instruction.opcode ==
                 // ------------------------------------------------
 
                 const std::size_t pathDataOffset =
-                    data.size();
+                    dataInit.size();
 
                 for (const char c : instruction.name)
                 {
-                    data.push_back(
+                    dataInit.push_back(
                         static_cast<std::uint8_t>(
                             static_cast<unsigned char>(c)));
                 }
 
                 // Terminador C.
-                data.push_back(0);
+                dataInit.push_back(0);
 
                 // ------------------------------------------------
                 // EAX = DIRECCIÓN DE RUTA
@@ -4469,17 +4495,17 @@ else if (instruction.opcode ==
                 // ------------------------------------------------
 
                 const std::size_t pathDataOffset =
-                    data.size();
+                    dataInit.size();
 
                 for (const char c : instruction.name)
                 {
-                    data.push_back(
+                    dataInit.push_back(
                         static_cast<std::uint8_t>(
                             static_cast<unsigned char>(c)));
                 }
 
                 // Terminador C.
-                data.push_back(0);
+                dataInit.push_back(0);
 
                 // ------------------------------------------------
                 // EAX = DIRECCIÓN DE RUTA
@@ -5487,7 +5513,7 @@ data.resize(
     0);
 
 menuTextoDataOffset =
-    data.size();
+    dataInit.size();
 
 {
     // KPP_KONSOLE_FILE_MENU_V1
@@ -5511,7 +5537,7 @@ menuTextoDataOffset =
          i < sizeof(menuTexto);
          ++i)
     {
-        data.push_back(
+        dataInit.push_back(
             static_cast<std::uint8_t>(
                 menuTexto[i]));
     }
@@ -5530,18 +5556,18 @@ std::vector<std::size_t>
          strings)
     {
         stringOffsets.push_back(
-            data.size());
+            dataInit.size());
 
         for (const char c :
              text)
         {
-            data.push_back(
+            dataInit.push_back(
                 static_cast<std::uint8_t>(
                     c));
         }
 
         // terminador C
-        data.push_back(0);
+        dataInit.push_back(0);
     }
 
     // ========================================================
@@ -5555,18 +5581,18 @@ std::vector<std::size_t>
         stringConstTexts)
     {
         stringConstOffsets.push_back(
-            data.size());
+            dataInit.size());
 
         for (const char c :
             text)
         {
-            data.push_back(
+            dataInit.push_back(
                 static_cast<std::uint8_t>(
                     c));
         }
 
         // terminador C
-        data.push_back(0);
+        dataInit.push_back(0);
     }
 
     // ========================================================
@@ -5587,7 +5613,10 @@ std::vector<std::size_t>
             0);
 
         // Alinear el comienzo del bloque a cuatro bytes.
-        while ((data.size() % 4u) != 0u)
+        // La alineación se calcula sobre el tamaño lógico
+        // total de DATA (inicializada + BSS): es el offset
+        // que el bloque tendrá en el layout final.
+        while (((dataInit.size() + data.size()) % 4u) != 0u)
         {
             data.push_back(0);
         }
@@ -5598,6 +5627,70 @@ std::vector<std::size_t>
         data.resize(
             data.size() + sizeof(KolibriFileIoParams),
             0);
+    }
+
+
+    // ========================================================
+    // REBANADA BSS — CIERRE DE DATA
+    //
+    // Layout final de DATA dentro de la imagen:
+    //
+    //     [código][inicializada][BSS]
+    //
+    // Los offsets de la corriente inicializada ya son
+    // finales. Los de la corriente BSS se desplazan con
+    // el tamaño de la inicializada: variables (contextos
+    // por función), celdas de runtime de la cola y el
+    // bloque de File I/O. Cada DECLARE queda entero en
+    // su corriente; su layout interno no cambia.
+    // ========================================================
+
+    const std::size_t initDataSize =
+        dataInit.size();
+
+    generatedBssSize =
+        data.size();
+
+    const std::size_t totalDataSize =
+        initDataSize + generatedBssSize;
+
+    for (auto& functionEntry : functionVariables)
+    {
+        for (auto& variableEntry : functionEntry.second)
+        {
+            VariableLocation& location =
+                variableEntry.second;
+
+            if (!location.isStackLocal)
+            {
+                location.dataOffset += initDataSize;
+            }
+        }
+    }
+
+    if (!integerBufferPatches.empty())
+    {
+        integerBufferOffset += initDataSize;
+    }
+
+    lineHeadDataOffset += initDataSize;
+    lineCountDataOffset += initDataSize;
+    firstVisibleDataOffset += initDataSize;
+    repaintCursorDataOffset += initDataSize;
+    lineBufferDataOffset += initDataSize;
+    thumbTopDataOffset += initDataSize;
+    thumbHeightDataOffset += initDataSize;
+    dragStateDataOffset += initDataSize;
+    dragGrabDataOffset += initDataSize;
+    menuAbiertoDataOffset += initDataSize;
+    seleccionDataOffset += initDataSize;
+    clipLenDataOffset += initDataSize;
+    clipBufferDataOffset += initDataSize;
+
+    if (needsFileIoRuntime)
+    {
+        fileIoScratchOffset += initDataSize;
+        fileIoParamsOffset += initDataSize;
     }
 
 
@@ -5812,7 +5905,7 @@ std::vector<std::size_t>
             const std::size_t arrayDataOffset =
                 arrayLocation.dataOffset;
 
-            if (arrayDataOffset >= data.size())
+            if (arrayDataOffset >= totalDataSize)
             {
                 throw std::runtime_error(
                     std::string(
@@ -5828,7 +5921,7 @@ std::vector<std::size_t>
             // los límites para prevenir desbordamientos.
 
             const std::size_t remainingData =
-                data.size() - arrayDataOffset;
+                totalDataSize - arrayDataOffset;
 
             if (arrayLocation.arrayCapacity >
                 remainingData / sizeof(std::uint32_t))
@@ -5845,7 +5938,7 @@ std::vector<std::size_t>
             // VALIDAR OFFSET DE LA RUTA DENTRO DE DATA
             // ------------------------------------------------
 
-            if (patch.pathDataOffset >= data.size())
+            if (patch.pathDataOffset >= totalDataSize)
             {
                 throw std::runtime_error(
                     std::string(
@@ -6480,10 +6573,14 @@ for (const auto& patch :
         result =
             emitter.code();
 
+    // REBANADA BSS: al archivo viaja solo la corriente
+    // inicializada. La BSS no se escribe: queda
+    // reservada en la cabecera, entre imageEnd y
+    // memoryEnd, y el cargador la rellena con ceros.
     result.insert(
         result.end(),
-        data.begin(),
-        data.end());
+        dataInit.begin(),
+        dataInit.end());
 
 
     return result;
