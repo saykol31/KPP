@@ -1381,7 +1381,7 @@ int string_pool_get_char(int pool, int ini, int i)
 
 int actual()
 {
-    int tok_tipo[256];
+    int tok_tipo[131072];
     if (pos < tok_count)
     {
         return tok_tipo[pos];
@@ -1442,7 +1442,7 @@ void inicia_parser()
 {
     inicia_arena();
     region_source = arena_create(1024);
-    region_frontend = arena_create(8192);
+    region_frontend = arena_create(1048576);
 }
 
 
@@ -2063,7 +2063,7 @@ int parse_unario()
 
 int parse_primario()
 {
-    int tok_valor[256];
+    int tok_valor[131072];
     int ini = pos;
     int t = actual();
 
@@ -2198,7 +2198,7 @@ int parse_primario()
 
 int parse_sentencia()
 {
-    int tok_valor[256];
+    int tok_valor[131072];
     int ini = pos;
     int t = actual();
 
@@ -2899,9 +2899,9 @@ int parse_estructura()
 
 int mismo_texto(int a, int b)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     // Cada largo y cada caracter se lee primero a una
     // variable local y se compara despues, en
     // sentencias separadas. La forma directa —
@@ -2984,9 +2984,9 @@ int busca_const_gen(int etok, int mtok)
 
 int es_print_int(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int largo = tok_largo[tok];
     if (largo != 9)
     {
@@ -3066,7 +3066,7 @@ int es_print_int(int tok)
 
 int parse_enum()
 {
-    int tok_valor[256];
+    int tok_valor[131072];
     int ini = pos;
     int ok = espera(TokenType::KwEnum);
     int nombre = pos;
@@ -3138,7 +3138,7 @@ int parse_enum()
 // token que esta `salto` posiciones adelante, sin consumir.
 int mira(int salto, int t)
 {
-    int tok_tipo[256];
+    int tok_tipo[131072];
     if (pos + salto < tok_count)
     {
         if (tok_tipo[pos + salto] == t)
@@ -3286,11 +3286,11 @@ int parse_programa()
 // ============================================================
 void escanea()
 {
-    int fuente[1024];
-    int tok_tipo[256];
-    int tok_inicio[256];
-    int tok_largo[256];
-    int tok_valor[256];
+    int fuente[524288];
+    int tok_tipo[131072];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int tok_valor[131072];
     int inicio = 0;
     int largo = 0;
     int tipo = 0;
@@ -3839,7 +3839,7 @@ void escanea()
 
         if (hay_token == 1)
         {
-            if (tok_count < 256)
+            if (tok_count < 131072)
             {
                 tok_tipo[tok_count] = tipo;
                 tok_inicio[tok_count] = inicio;
@@ -3889,18 +3889,18 @@ void reinicia()
 
 void puente_nodos()
 {
-    int nkind[256];
-    int nini[256];
-    int nfin[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
-    int naux[256];
-    int nsize[256];
-    int partok[256];
-    int campotipo[256];
-    int campotok[256];
-    if (nnodos > 256)
+    int nkind[65536];
+    int nini[65536];
+    int nfin[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
+    int naux[65536];
+    int nsize[65536];
+    int partok[1024];
+    int campotipo[32768];
+    int campotok[32768];
+    if (nnodos > 65536)
     {
         errores_driver = errores_driver + 1;
         return;
@@ -3919,7 +3919,7 @@ void puente_nodos()
         i = i + 1;
     }
     int np = da_count(dpartok);
-    if (np > 256)
+    if (np > 1024)
     {
         errores_driver = errores_driver + 1;
         return;
@@ -3931,7 +3931,7 @@ void puente_nodos()
         i = i + 1;
     }
     int nc = da_count(dcampotok);
-    if (nc > 256)
+    if (nc > 32768)
     {
         errores_driver = errores_driver + 1;
         return;
@@ -3969,7 +3969,7 @@ void inicia_sa()
     inicia_arena();
     region_source = arena_create(1024);
     region_frontend = arena_create(1024);
-    region_compiler = arena_create(8192);
+    region_compiler = arena_create(1310720);
 }
 
 
@@ -4012,9 +4012,9 @@ void anota_error(int codigo)
 
 int es_main(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int largo = tok_largo[tok];
     if (largo != 4)
     {
@@ -4092,14 +4092,14 @@ int busca_funcion(int tok)
 
 void registra_estructuras()
 {
-    int nhijo1[256];
-    int nsig[256];
-    int nkind[256];
-    int nval[256];
-    int naux[256];
-    int nsize[256];
-    int campotipo[256];
-    int campotok[256];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nkind[65536];
+    int nval[65536];
+    int naux[65536];
+    int nsize[65536];
+    int campotipo[32768];
+    int campotok[32768];
     int d = nhijo1[0];
     while (d != 0 - 1)
     {
@@ -4135,7 +4135,7 @@ void registra_estructuras()
                     // El intervalo se valida ANTES de leer:
                     // inicio no negativo, cantidad no
                     // negativa, inicio + cantidad dentro
-                    // de la tabla lateral (256). Intervalo
+                    // de la tabla lateral (32768). Intervalo
                     // invalido: acusa 51 y no se lee nada
                     // (la estructura queda registrada sin
                     // campos). La misma disciplina que en
@@ -4149,7 +4149,7 @@ void registra_estructuras()
                     {
                         malo = 1;
                     }
-                    if (inicio + cantidad > 256)
+                    if (inicio + cantidad > 32768)
                     {
                         malo = 1;
                     }
@@ -4186,10 +4186,10 @@ void registra_estructuras()
 
 void registra_globales()
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
     int d = nhijo1[0];
     while (d != 0 - 1)
     {
@@ -4223,10 +4223,10 @@ void registra_globales()
 
 void registra_funciones()
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
     int d = nhijo1[0];
     while (d != 0 - 1)
     {
@@ -4391,9 +4391,9 @@ int busca_en_actual(int tok)
 
 int es_int(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int largo = tok_largo[tok];
     if (largo != 3)
     {
@@ -4424,9 +4424,9 @@ int es_int(int tok)
 // largo 4 y caracteres 118, 111, 105, 100.
 int es_void(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int largo = tok_largo[tok];
     if (largo != 4)
     {
@@ -4459,8 +4459,8 @@ int es_void(int tok)
 
 void camina_bloque(int b)
 {
-    int nhijo1[256];
-    int nsig[256];
+    int nhijo1[65536];
+    int nsig[65536];
     entra_ambito();
     int s = nhijo1[b];
     while (s != 0 - 1)
@@ -4474,14 +4474,14 @@ void camina_bloque(int b)
 
 void analiza_sentencia(int s)
 {
-    int nkind[256];
-    int nini[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
-    int naux[256];
-    int nsize[256];
-    int tok_tipo[256];
+    int nkind[65536];
+    int nini[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
+    int naux[65536];
+    int nsize[65536];
+    int tok_tipo[131072];
     if (nkind[s] == NodeKind::Block)
     {
         camina_bloque(s);
@@ -4831,12 +4831,12 @@ void analiza_sentencia(int s)
 
 void analiza_funcion(int f)
 {
-    int nini[256];
-    int nhijo1[256];
-    int nsig[256];
-    int naux[256];
-    int nsize[256];
-    int partok[256];
+    int nini[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int naux[65536];
+    int nsize[65536];
+    int partok[1024];
     nsim = 0;
     nivel = 0;
     entra_ambito();
@@ -4865,7 +4865,7 @@ void analiza_funcion(int f)
     {
         malo = 1;
     }
-    if (pini + pcant > 256)
+    if (pini + pcant > 1024)
     {
         malo = 1;
     }
@@ -4913,9 +4913,9 @@ void analiza_funcion(int f)
 
 void analiza_cuerpos()
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
     int d = nhijo1[0];
     while (d != 0 - 1)
     {
@@ -4931,9 +4931,9 @@ void analiza_cuerpos()
 
 int es_string(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int largo = tok_largo[tok];
     if (largo != 6)
     {
@@ -4976,9 +4976,9 @@ int es_string(int tok)
 
 int es_file_read(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int largo = tok_largo[tok];
     if (largo != 9)
     {
@@ -5036,9 +5036,9 @@ int es_file_read(int tok)
 
 int es_file_write(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int largo = tok_largo[tok];
     if (largo != 10)
     {
@@ -5104,8 +5104,8 @@ int es_file_write(int tok)
 // usa el recorrido del Parser).
 int es_campo(int nodo)
 {
-    int nval[256];
-    int tok_tipo[256];
+    int nval[65536];
+    int tok_tipo[131072];
     int nombre = nval[nodo];
     int siguiente = nombre + 1;
     int tt = tok_tipo[siguiente];
@@ -5120,11 +5120,11 @@ int es_campo(int nodo)
 // El token del tipo declarado de una global, o -1.
 int tipo_de_global(int tok)
 {
-    int nhijo1[256];
-    int nsig[256];
-    int nkind[256];
-    int nval[256];
-    int nini[256];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nkind[65536];
+    int nval[65536];
+    int nini[65536];
     int d = nhijo1[0];
     while (d != 0 - 1)
     {
@@ -5171,10 +5171,10 @@ int tamano_de(int tok)
 // El nodo de la declaracion de una funcion, o -1.
 int nodo_de_funcion(int tok)
 {
-    int nhijo1[256];
-    int nsig[256];
-    int nkind[256];
-    int nval[256];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nkind[65536];
+    int nval[65536];
     int d = nhijo1[0];
     while (d != 0 - 1)
     {
@@ -5339,10 +5339,10 @@ int es_tipo_int_inferido(int it)
 
 int inferir_tipo(int n)
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
     if (n == 0 - 1)
     {
         return 0 - 1;
@@ -5410,7 +5410,7 @@ int inferir_tipo(int n)
         {
             return 0 - 1;
         }
-        int nini[256];
+        int nini[65536];
         return nini[fd];
     }
     if (nkind[n] == NodeKind::BinaryExpression)
@@ -5456,11 +5456,11 @@ int inferir_tipo(int n)
 
 void analiza_expresion(int n)
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
-    int nsize[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
+    int nsize[65536];
     if (n == 0 - 1)
     {
         return;
@@ -5695,7 +5695,7 @@ void analiza_expresion(int n)
         int fd = nodo_de_funcion(cal);
         if (en_sent == 0)
         {
-            int nini[256];
+            int nini[65536];
             if (es_void(nini[fd]) == 1)
             {
                 anota_error(54);
@@ -5784,7 +5784,7 @@ void inicia_irgen()
     inicia_arena();
     region_source = arena_create(1024);
     region_frontend = arena_create(1024);
-    region_compiler = arena_create(131072);
+    region_compiler = arena_create(1310720);
 }
 
 
@@ -5841,9 +5841,9 @@ int agrega_car(int c)
 
 int agrega_token(int tok)
 {
-    int tok_inicio[256];
-    int tok_largo[256];
-    int fuente[1024];
+    int tok_inicio[131072];
+    int tok_largo[131072];
+    int fuente[524288];
     int ini = tok_inicio[tok];
     int n = tok_largo[tok];
     int i = 0;
@@ -5894,7 +5894,7 @@ int empaqueta_ref(int ini)
 
 int ref_token(int tok)
 {
-    int tok_largo[256];
+    int tok_largo[131072];
     int largo_tok = tok_largo[tok];
     if (largo_tok >= 128)
     {
@@ -6031,10 +6031,10 @@ int resuelve(int tok)
 
 int struct_de(int tipo)
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
     int d = nhijo1[0];
     while (d >= 0)
     {
@@ -6181,10 +6181,10 @@ int capacidad_de(int tok)
 
 int genera_expresion(int e)
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
     int k = nkind[e];
     if (k == NodeKind::IntegerLiteral)
     {
@@ -6356,8 +6356,8 @@ int ref_etiqueta()
 
 int es_campo_gen(int s)
 {
-    int nini[256];
-    int tok_tipo[256];
+    int nini[65536];
+    int tok_tipo[131072];
     int ini = nini[s];
     int t = tok_tipo[ini + 1];
     if (t == 38)
@@ -6400,8 +6400,8 @@ int resuelve_campo(int tok, int campo)
 
 void genera_bloque(int b)
 {
-    int nhijo1[256];
-    int nsig[256];
+    int nhijo1[65536];
+    int nsig[65536];
     entra_ambito();
     int s = nhijo1[b];
     while (s >= 0)
@@ -6419,14 +6419,14 @@ void genera_bloque(int b)
 
 void genera_sentencia(int s)
 {
-    int nkind[256];
-    int nini[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
-    int naux[256];
-    int nsize[256];
-    int campotok[256];
+    int nkind[65536];
+    int nini[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
+    int naux[65536];
+    int nsize[65536];
+    int campotok[32768];
     int fin_pila[256];
     int k = nkind[s];
     if (k == NodeKind::VariableDeclaration)
@@ -6690,13 +6690,13 @@ void genera_sentencia(int s)
 
 void genera_funcion(int f)
 {
-    int nini[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
-    int naux[256];
-    int nsize[256];
-    int partok[256];
+    int nini[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
+    int naux[65536];
+    int nsize[65536];
+    int partok[1024];
     ntemp = 0;
     contvar = 0;
     netiq = 0;
@@ -6747,11 +6747,11 @@ void genera_funcion(int f)
 
 void genera_ir()
 {
-    int nkind[256];
-    int nhijo1[256];
-    int nsig[256];
-    int nval[256];
-    int nsize[256];
+    int nkind[65536];
+    int nhijo1[65536];
+    int nsig[65536];
+    int nval[65536];
+    int nsize[65536];
     // La puerta de la arena (M-6): cada programa
     // nace en un mundo nuevo — inicia_irgen y
     // crea_ir antes del reseteo de contadores de
@@ -6877,9 +6877,9 @@ int ref_canonico(int ref)
 
 void inicia_arena()
 {
-    int bloque_a[1024];
+    int bloque_a[524288];
     int bloque_b[1048576];
-    int bloque_c[131072];
+    int bloque_c[1310720];
     int reg_bloque[6];
     int reg_reserva[6];
     int reg_usado[6];
@@ -6927,9 +6927,9 @@ void inicia_arena()
     plan_bloque[3] = 2;
     plan_bloque[4] = 1;
     plan_bloque[5] = 0;
-    tam_bloque[0] = 1024;
+    tam_bloque[0] = 524288;
     tam_bloque[1] = 1048576;
-    tam_bloque[2] = 131072;
+    tam_bloque[2] = 1310720;
     i = 0;
     while (i < 3)
     {
@@ -7011,9 +7011,9 @@ void arena_destroy(int arena)
 
 int celda_get(int bloque, int off)
 {
-    int bloque_a[1024];
+    int bloque_a[524288];
     int bloque_b[1048576];
-    int bloque_c[131072];
+    int bloque_c[1310720];
     int r;
     r = 0;
     if (bloque == 0)
@@ -7037,9 +7037,9 @@ int celda_get(int bloque, int off)
 
 void celda_set(int bloque, int off, int v)
 {
-    int bloque_a[1024];
+    int bloque_a[524288];
     int bloque_b[1048576];
-    int bloque_c[131072];
+    int bloque_c[1310720];
     if (bloque == 0)
     {
         bloque_a[off] = v;
@@ -14934,7 +14934,7 @@ void paro(int etapa)
 // cada mundo de la mitad trasera abre su arena de cero y
 // lo que cruza vive en los planos, como entre las etapas
 // delanteras de D-1. Las cotas son los techos del propio
-// IRGenerator (2048 instrucciones; la piscina, 8192
+// IRGenerator (65536 instrucciones; la piscina, 524288
 // caracteres): si el IR los pasara, el puente acusa en
 // errores_driver y la cadena se detiene en la etapa 6.
 // Las cuentas salvadas quedan en nir_tras y pool_tras,
@@ -14943,22 +14943,22 @@ void paro(int etapa)
 
 void puente_ir()
 {
-    int fir_op[2048];
-    int fir_nom[2048];
-    int fir_ope[2048];
-    int fir_res[2048];
-    int fir_aux[2048];
-    int fir_val[2048];
-    int fir_pool[8192];
+    int fir_op[65536];
+    int fir_nom[65536];
+    int fir_ope[65536];
+    int fir_res[65536];
+    int fir_aux[65536];
+    int fir_val[65536];
+    int fir_pool[524288];
     int i;
     nir_tras = nir;
     pool_tras = pool_len;
-    if (nir_tras > 2048)
+    if (nir_tras > 65536)
     {
         errores_driver = errores_driver + 1;
         return;
     }
-    if (pool_tras > 8192)
+    if (pool_tras > 524288)
     {
         errores_driver = errores_driver + 1;
         return;
@@ -15010,7 +15010,7 @@ void mundo_sondeo()
     rf = arena_create(256);
     region_compiler = arena_create(256);
     arena_destroy(rf);
-    rb = arena_create(32768);
+    rb = arena_create(1048576);
     region_backend = rb;
     reinicia_back();
     reinicia_ir();
@@ -15049,13 +15049,13 @@ void mundo_ensamblador(int cap)
 
 void carga_ir_memoria()
 {
-    int fir_op[2048];
-    int fir_nom[2048];
-    int fir_ope[2048];
-    int fir_res[2048];
-    int fir_aux[2048];
-    int fir_val[2048];
-    int fir_pool[8192];
+    int fir_op[65536];
+    int fir_nom[65536];
+    int fir_ope[65536];
+    int fir_res[65536];
+    int fir_aux[65536];
+    int fir_val[65536];
+    int fir_pool[524288];
     int i;
     int r;
     int op;
@@ -15123,7 +15123,7 @@ void carga_ir_memoria()
 
 int main()
 {
-    int fuente[1024];
+    int fuente[524288];
     print("COMPILADOR D-2");
     int n = file_read("FUENTE.KPP", fuente);
     if (n < 0)
